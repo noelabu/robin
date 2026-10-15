@@ -8,6 +8,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import urllib.parse
 import uuid
 import webbrowser
 from pathlib import Path
@@ -507,6 +508,25 @@ def cmd_synthesize(args: argparse.Namespace) -> None:
     cmd_context(args)
 
 
+def cmd_search(args: argparse.Namespace) -> None:
+    with client(args.data) as c:
+        params = {"q": " ".join(args.query), "limit": str(args.limit), "offset": str(args.offset)}
+        for key in ("kind", "task", "session", "runtime"):
+            value = getattr(args, key)
+            if value:
+                params[{"task": "task_id", "session": "session_id"}.get(key, key)] = value
+        r = call(c, "GET", "/search?" + urllib.parse.urlencode(params))
+    if not r["results"]:
+        print("no matches")
+    for x in r["results"]:
+        where = x["session_id"][:8] if x["session_id"] else (x["task_id"] or "")[:8]
+        print(f"{x['at'][:19]}  {x['kind']:<9} {where:<9} {x['title'][:40]:<40}  {x['snippet']}")
+    if r["more"]:
+        print(f"… more results (--offset {r['next_offset']})")
+    if r["pending_events"]:
+        print(f"({r['pending_events']} newest events not indexed yet)")
+
+
 def cmd_hooks(args: argparse.Namespace) -> None:
     """Opt-in, observe-only hooks (TR-076). Shows exactly what changes and writes only on confirmation."""
     from robin.hooks import install as hooks
@@ -770,6 +790,18 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--excerpt", action="append", help="SESSION:AFTER:THROUGH event cursors")
     p.add_argument("--revoke", metavar="GRANT_ID")
     p.set_defaults(func=cmd_grant)
+
+    p = sub.add_parser(
+        "search", parents=[common], help="search messages, tools, tasks, findings and sessions"
+    )
+    p.add_argument("query", nargs="+")
+    p.add_argument("--kind", choices=["event", "task", "finding", "synthesis", "session"])
+    p.add_argument("--task")
+    p.add_argument("--session")
+    p.add_argument("--runtime")
+    p.add_argument("--limit", type=int, default=20)
+    p.add_argument("--offset", type=int, default=0, help="skip this many results (for the next page)")
+    p.set_defaults(func=cmd_search)
 
     p = sub.add_parser("hooks", parents=[common], help="opt-in hooks for sessions started outside Robin")
     p.add_argument("action", choices=["status", "install", "uninstall"])

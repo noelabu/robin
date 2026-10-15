@@ -32,17 +32,20 @@ class ServiceRuntime:
         self.version = 0  # bumped on every change; waiters compare against what they last saw
         self.supervisor_connected = False
         self._task: asyncio.Task[None] | None = None
+        self._indexer: asyncio.Task[None] | None = None
         self._client: SupervisorClient | None = None
 
     async def start(self) -> None:
         await self.manager.recover()
         self._task = asyncio.create_task(self._link())
+        self._indexer = asyncio.create_task(self._index())
 
     async def stop(self) -> None:
-        if self._task:
-            self._task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._task
+        for task in (self._task, self._indexer):
+            if task:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
         if self._client:
             await self._client.close()
 
@@ -59,6 +62,18 @@ class ServiceRuntime:
             except TimeoutError:
                 pass
             return self.version
+
+    async def _index(self) -> None:
+        """Keep the search index caught up, off the request path (TR-081)."""
+        from robin import search
+
+        seen = -1
+        while True:
+            try:
+                await asyncio.to_thread(search.catch_up, self.store)
+            except Exception:
+                log.exception("search indexing failed; retrying")
+            seen = await self.wait_change(seen, 5.0)
 
     async def _on_committed(self, records: list[SupervisorRecord]) -> None:
         await self.manager.on_committed(records)

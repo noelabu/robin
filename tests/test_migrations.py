@@ -11,7 +11,7 @@ from sqlalchemy import create_engine
 
 from robin.store import StoreLocked, open_store
 from robin.store.migrate import MIGRATIONS, MigrationFailed, SchemaTooNew, alembic_config, current_revision
-from robin.store.models import Base
+from robin.store.models import UNMODELED, Base
 
 HEAD = ScriptDirectory.from_config(alembic_config()).get_current_head()
 
@@ -55,7 +55,12 @@ def test_models_match_migrations(store):
     """The frozen baseline DDL and the SQLAlchemy models describe the same schema."""
     engine = create_engine(f"sqlite:///{store.db_path}")
     with engine.connect() as conn:
-        diff = compare_metadata(MigrationContext.configure(conn), Base.metadata)
+        # FTS5 virtual tables (and their shadow tables) live only in migrations; alembic can't model them.
+        ctx = MigrationContext.configure(
+            conn,
+            opts={"include_name": lambda name, kind, _: not (kind == "table" and name.startswith(UNMODELED))},
+        )
+        diff = compare_metadata(ctx, Base.metadata)
     engine.dispose()
     assert diff == []
 

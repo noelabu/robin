@@ -524,6 +524,40 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         await runtime.notify()
         return result
 
+    @app.get(f"{API}/search")
+    async def search_route(
+        q: str,
+        _: str = Authed,
+        kind: str | None = None,
+        session_id: str | None = None,
+        task_id: str | None = None,
+        project_id: str | None = None,
+        runtime: str | None = None,
+        limit: int = Query(50, ge=1, le=100),
+        offset: int = Query(0, ge=0),
+    ) -> dict[str, Any]:
+        """Full-text search; secrets are masked at index time, so results and snippets never carry them."""
+        from robin import search
+
+        try:
+            return dict(
+                await asyncio.to_thread(
+                    lambda: search.search(
+                        store,
+                        q,
+                        kind=kind,
+                        session_id=session_id,
+                        task_id=task_id,
+                        project_id=project_id,
+                        runtime=runtime,
+                        limit=limit,
+                        offset=offset,
+                    )
+                )
+            )
+        except ValueError as exc:
+            raise ApiError(422, "invalid_request", str(exc), "fix_request") from exc
+
     @app.get(f"{API}/actions/{{action_id}}")
     async def get_action(action_id: str, _: str = Authed) -> dict[str, Any]:
         action = await runtime.manager.get_action(action_id)

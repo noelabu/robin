@@ -64,6 +64,7 @@ SUBMISSION_STATES = ("accepted", "rejected")
 LINEAGE_RELATIONS = ("parent", "input")
 PACKET_STATES = ("previewed", "confirmed", "invalidated", "delivered")
 GRANT_KINDS = ("artifact", "excerpt")
+UNMODELED = ("search_index",)  # FTS5 virtual tables, defined only in migrations
 
 
 class Meta(Base):
@@ -575,3 +576,13 @@ class RetrievalRead(Base):
     content_blob: Mapped[str] = mapped_column(ForeignKey("blob.sha256"))
     size: Mapped[int] = mapped_column(Integer)
     at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class SearchDoc(Base):
+    """Search index rows for things other than events (tasks, findings, syntheses, sessions). Event rows use
+    their global cursor as the FTS rowid; these get negative rowids so the two never collide."""
+
+    __tablename__ = "search_doc"
+    doc_key: Mapped[str] = mapped_column(String, primary_key=True)  # "<kind>:<id>"
+    fts_rowid: Mapped[int] = mapped_column(Integer, unique=True)
+    indexed_at: Mapped[datetime] = mapped_column(UTCDateTime)

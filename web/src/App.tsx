@@ -5,6 +5,7 @@ import { AttentionPanel } from "./components/AttentionPanel";
 import { LaunchForm } from "./components/LaunchForm";
 import { Navigator } from "./components/Navigator";
 import { NewTaskForm } from "./components/NewTaskForm";
+import { SearchBox } from "./components/SearchBox";
 import { SessionDetail } from "./components/SessionDetail";
 import { SessionList } from "./components/SessionList";
 import { TaskDetail } from "./components/TaskDetail";
@@ -76,6 +77,13 @@ export function App() {
     <div className="shell">
       <header className="topbar">
         <span className="brand">Robin</span>
+        <SearchBox
+          onOpenSession={(id) => {
+            setPanel("none");
+            setSelected(id);
+          }}
+          onOpenTask={(id) => choose({ kind: "task", id })}
+        />
         <span className={`pill ${ws.supervisorConnected ? "ok" : "warn"}`} role="status">
           Supervisor {ws.supervisorConnected ? "connected" : "unavailable"}
         </span>

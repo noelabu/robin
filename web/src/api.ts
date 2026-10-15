@@ -127,6 +127,16 @@ export type Artifact = {
   content: { title?: string; text?: string; author?: Author; label?: string } & Record<string, unknown>;
 };
 
+export type SearchResult = {
+  kind: "event" | "task" | "finding" | "synthesis" | "session";
+  ref: string;
+  session_id: string | null;
+  task_id: string | null;
+  title: string;
+  snippet: string;
+  at: string;
+};
+
 export type Workspace = {
   watermark: number;
   sessions: Session[];
@@ -230,6 +240,11 @@ export const api = {
     ),
   openTerminal: (sessionId: string) => request<{ opened: boolean }>("POST", `/sessions/${sessionId}/terminal/open`),
   adapters: () => request<{ adapters: { runtime: string; level: string }[] }>("GET", "/adapters"),
+  search: (q: string) =>
+    request<{ results: SearchResult[]; more: boolean; pending_events: number }>(
+      "GET",
+      `/search?${new URLSearchParams({ q, limit: "30" })}`,
+    ),
   findings: (taskId: string) =>
     request<{ findings: { finding_id: string }[] }>("GET", `/findings?task_id=${encodeURIComponent(taskId)}`),
   finding: (id: string) => request<Finding>("GET", `/findings/${id}`),
