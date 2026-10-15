@@ -18,3 +18,10 @@ def store(data_dir: Path) -> Iterator[Store]:
         yield s
     finally:
         s.close()
+
+
+@pytest.fixture
+def session_id(store: Store) -> str:
+    from robin.events.ingest import ensure_session
+
+    return ensure_session(store, runtime="claude", mode="observed")
