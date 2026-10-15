@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
-import { api, type RobinEvent, type Session } from "./api";
+import { api, type Project, type RobinEvent, type Session, type Task, type Workspace } from "./api";
 
 export type FeedItem = RobinEvent & { preview: string | null };
 
 type State = {
   ready: boolean;
   sessions: Record<string, Session>;
+  projects: Project[];
+  tasks: Task[];
   feed: FeedItem[];
   seen: Set<string>;
   cursor: number;
@@ -16,7 +18,7 @@ type State = {
 };
 
 type Msg =
-  | { kind: "snapshot"; sessions: Session[]; watermark: number; supervisorConnected: boolean }
+  | { kind: "snapshot"; ws: Workspace }
   | { kind: "event"; event: RobinEvent; session: Session; preview: string | null }
   | { kind: "stream"; state: State["streamState"] };
 
@@ -28,9 +30,11 @@ function reducer(s: State, m: Msg): State {
       return {
         ...s,
         ready: true,
-        sessions: Object.fromEntries(m.sessions.map((x) => [x.session_id, x])),
-        cursor: Math.max(s.cursor, m.watermark),
-        supervisorConnected: m.supervisorConnected,
+        sessions: Object.fromEntries(m.ws.sessions.map((x) => [x.session_id, x])),
+        projects: m.ws.projects,
+        tasks: m.ws.tasks,
+        cursor: Math.max(s.cursor, m.ws.watermark),
+        supervisorConnected: m.ws.supervisor.connected,
       };
     case "event": {
       if (s.seen.has(m.event.event_id)) return s; // dedupe replays by event id (TR-034)
@@ -58,6 +62,8 @@ function reducer(s: State, m: Msg): State {
 const initial: State = {
   ready: false,
   sessions: {},
+  projects: [],
+  tasks: [],
   feed: [],
   seen: new Set(),
   cursor: 0,
@@ -75,7 +81,7 @@ export function useWorkspace(enabled: boolean) {
   const connect = useCallback(async () => {
     source.current?.close();
     const ws = await api.workspace();
-    dispatch({ kind: "snapshot", sessions: ws.sessions, watermark: ws.watermark, supervisorConnected: ws.supervisor.connected });
+    dispatch({ kind: "snapshot", ws });
     const es = new EventSource(`/api/v1/stream?after=${ws.watermark}`); // reconnects send Last-Event-ID
     source.current = es;
     es.onopen = () => dispatch({ kind: "stream", state: "live" });
@@ -93,7 +99,7 @@ export function useWorkspace(enabled: boolean) {
     const refresh = window.setInterval(async () => {
       try {
         const ws = await api.workspace();
-        dispatch({ kind: "snapshot", sessions: ws.sessions, watermark: ws.watermark, supervisorConnected: ws.supervisor.connected });
+        dispatch({ kind: "snapshot", ws });
       } catch {
         /* the stream shows reconnecting */
       }
@@ -104,5 +110,9 @@ export function useWorkspace(enabled: boolean) {
     };
   }, [enabled, connect]);
 
-  return state;
+  const reload = useCallback(async () => {
+    dispatch({ kind: "snapshot", ws: await api.workspace() });
+  }, []);
+
+  return { ...state, reload };
 }

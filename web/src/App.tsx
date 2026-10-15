@@ -1,27 +1,64 @@
 import { useEffect, useMemo, useState } from "react";
 import { signIn, type Session } from "./api";
-import { ActivityFeed } from "./components/ActivityFeed";
+import { ActivityFeed, type FeedScope } from "./components/ActivityFeed";
 import { AttentionPanel } from "./components/AttentionPanel";
 import { LaunchForm } from "./components/LaunchForm";
+import { Navigator } from "./components/Navigator";
+import { NewTaskForm } from "./components/NewTaskForm";
 import { SessionDetail } from "./components/SessionDetail";
 import { SessionList } from "./components/SessionList";
+import { TaskDetail } from "./components/TaskDetail";
+import { inScope, type Scope } from "./scope";
 import { useWorkspace } from "./useWorkspace";
+
+const ACTIVE_FIRST = (a: Session, b: Session) => b.updated_at.localeCompare(a.updated_at);
 
 export function App() {
   const [auth, setAuth] = useState<"checking" | "ok" | "signed_out">("checking");
+  const [scope, setScope] = useState<Scope>({ kind: "all" });
   const [selected, setSelected] = useState<string | null>(null);
-  const [launching, setLaunching] = useState(false);
+  const [panel, setPanel] = useState<"none" | "launch" | "task">("none");
+  const [runtimeFilter, setRuntimeFilter] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const ws = useWorkspace(auth === "ok");
 
   useEffect(() => {
     void signIn().then((ok) => setAuth(ok ? "ok" : "signed_out"));
   }, []);
 
-  const sessions = useMemo(
-    () => Object.values(ws.sessions).sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
-    [ws.sessions],
+  const task = scope.kind === "task" ? ws.tasks.find((t) => t.task_id === scope.id) ?? null : null;
+  const project =
+    scope.kind === "project"
+      ? ws.projects.find((p) => p.project_id === scope.id)
+      : task
+        ? ws.projects.find((p) => p.project_id === task.project_id)
+        : undefined;
+
+  const all = useMemo(() => Object.values(ws.sessions).sort(ACTIVE_FIRST), [ws.sessions]);
+  const runtimes = useMemo(() => [...new Set(all.map((s) => s.runtime))].sort(), [all]);
+  const sessions = all.filter(
+    (s) => inScope(s, scope, null) && (showArchived || !s.archived) && (!runtimeFilter || s.runtime === runtimeFilter),
   );
-  const current: Session | undefined = selected ? ws.sessions[selected] : sessions[0];
+  const writers = all.filter((s) => !s.archived && !["stopped", "failed"].includes(s.runtime_state) && s.mode === "managed");
+  const current: Session | undefined = selected
+    ? ws.sessions[selected]
+    : scope.kind === "task"
+      ? undefined
+      : sessions[0];
+
+  const choose = (next: Scope) => {
+    setScope(next);
+    setSelected(null);
+    setPanel("none");
+  };
+  const feedScope: FeedScope = current
+    ? { session_id: current.session_id }
+    : scope.kind === "task"
+      ? { task_id: scope.id }
+      : scope.kind === "project"
+        ? { project_id: scope.id }
+        : {};
 
   if (auth === "checking") return <main className="center" aria-busy="true">Connecting…</main>;
   if (auth === "signed_out")
@@ -50,30 +87,90 @@ export function App() {
             Gap in coverage
           </span>
         )}
-        <button className="primary" onClick={() => setLaunching(true)}>
+        {scope.kind === "project" && project && (
+          <button onClick={() => setPanel("task")}>New task</button>
+        )}
+        <button className="primary" onClick={() => setPanel("launch")}>
           Launch session
         </button>
       </header>
-      <nav className="sidebar" aria-label="Sessions">
+      <nav className="sidebar" aria-label="Projects and sessions">
+        <Navigator
+          projects={ws.projects}
+          tasks={ws.tasks}
+          scope={scope}
+          showArchived={showArchived}
+          onScope={choose}
+          onChanged={() => void ws.reload()}
+        />
+        <div className="filters">
+          <label className="inline">
+            Runtime
+            <select value={runtimeFilter} onChange={(e) => setRuntimeFilter(e.target.value)}>
+              <option value="">all</option>
+              {runtimes.map((r) => (
+                <option key={r}>{r}</option>
+              ))}
+            </select>
+          </label>
+          <label className="inline">
+            <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} /> Show
+            archived
+          </label>
+        </div>
         <SessionList sessions={sessions} selected={current?.session_id ?? null} onSelect={setSelected} />
       </nav>
       <main className="main">
         <AttentionPanel refreshKey={ws.attentionVersion} onOpenSession={setSelected} />
-        {launching && (
+        {notice && (
+          <p className="hint warn" role="status">
+            {notice}
+          </p>
+        )}
+        {panel === "launch" && (
           <LaunchForm
-            onCancel={() => setLaunching(false)}
-            onLaunched={(sid) => {
-              setLaunching(false);
+            task={task}
+            defaultCwd={project?.path ?? ""}
+            writers={writers}
+            onCancel={() => setPanel("none")}
+            onLaunched={(sid, warnings) => {
+              setPanel("none");
+              setNotice(warnings.length ? warnings.join(" ") : null);
               setSelected(sid);
             }}
           />
         )}
-        {current ? (
-          <SessionDetail session={current} />
-        ) : (
-          !launching && <p className="empty">No sessions yet. Launch one to get started.</p>
+        {panel === "task" && project && (
+          <NewTaskForm
+            project={project}
+            onCancel={() => setPanel("none")}
+            onCreated={(t) => {
+              void ws.reload();
+              choose({ kind: "task", id: t.task_id });
+            }}
+          />
         )}
-        <ActivityFeed items={ws.feed} sessionId={current?.session_id ?? null} ready={ws.ready} />
+        {task && !selected && (
+          <TaskDetail
+            taskId={task.task_id}
+            project={project}
+            refreshKey={ws.attentionVersion}
+            onOpenSession={setSelected}
+            onLaunch={() => setPanel("launch")}
+            onChanged={() => void ws.reload()}
+          />
+        )}
+        {current ? (
+          <SessionDetail session={current} onChanged={() => void ws.reload()} />
+        ) : (
+          panel === "none" &&
+          !task && (
+            <p className="empty">
+              {all.length ? "No sessions here." : "No sessions yet. Launch one, or add a project to get started."}
+            </p>
+          )
+        )}
+        <ActivityFeed items={ws.feed} scope={feedScope} sessions={ws.sessions} ready={ws.ready} />
       </main>
     </div>
   );

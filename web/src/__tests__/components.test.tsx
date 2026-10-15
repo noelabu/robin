@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, vi } from "vitest";
 import type { Session } from "../api";
 import { ActivityFeed } from "../components/ActivityFeed";
 import { SessionDetail } from "../components/SessionDetail";
@@ -16,6 +17,11 @@ const session = (over: Partial<Session> = {}): Session => ({
   execution_cwd: "/work/app",
   lease_generation: 0,
   control_owner: "robin",
+  project_id: null,
+  current_task_id: null,
+  archived: false,
+  branch: "main",
+  shared_folder_with: [],
   created_at: "2026-10-15T00:00:00Z",
   updated_at: "2026-10-15T00:00:00Z",
   controls: {
@@ -30,17 +36,17 @@ const session = (over: Partial<Session> = {}): Session => ({
   ...over,
 });
 
-test("agent text renders as text, never as markup", () => {
+test("agent text renders as text, never as markup", async () => {
   const item: FeedItem = {
     global_cursor: 1, event_id: "e1", session_id: "s1", runtime: "claude", event_family: "message",
     event_type: "message.completed", evidence_kind: "reported", source_time: null,
-    ingested_at: "2026-10-15T00:00:00Z", payload_ref: null,
+    ingested_at: "2026-10-15T00:00:00Z", payload_ref: null, task_id: null,
     preview: '<img src=x onerror="alert(1)"><script>alert(2)</script>',
   };
-  const { container } = render(<ActivityFeed items={[item]} sessionId={null} ready />);
+  const { container } = render(<ActivityFeed items={[item]} scope={{}} sessions={{}} ready />);
+  expect(await screen.findByText(/onerror/)).toBeTruthy();
   expect(container.querySelector("img")).toBeNull();
   expect(container.querySelector("script")).toBeNull();
-  expect(screen.getByText(/onerror/)).toBeTruthy();
 });
 
 test("disabled controls say why", () => {
@@ -73,4 +79,50 @@ test("a handed-off session shows the resume command and only Take back control",
   expect(screen.getByRole("button", { name: "Take back control" })).toHaveProperty("disabled", false);
   expect(screen.queryByRole("button", { name: "Hand off to terminal" })).toBeNull();
   expect(screen.getByRole("button", { name: "Interrupt" })).toHaveProperty("disabled", true);
+});
+
+const feedItem = (over: Partial<FeedItem>): FeedItem => ({
+  global_cursor: 1, event_id: "e1", session_id: "s1", runtime: "claude", event_family: "message",
+  event_type: "message.completed", evidence_kind: "reported", source_time: null,
+  ingested_at: "2026-10-15T00:00:00Z", payload_ref: null, task_id: null, preview: null, ...over,
+});
+
+beforeEach(() => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ events: [] }), { status: 200 })));
+});
+
+test("an empty feed says whether nothing happened or Robin couldn't see", async () => {
+  const s = session({ connection_state: "disconnected" });
+  render(<ActivityFeed items={[]} scope={{ session_id: "s1" }} sessions={{ s1: s }} ready />);
+  expect(await screen.findByText(/Robin is disconnected from this session, so activity may be missing/)).toBeTruthy();
+});
+
+test("a connected session with no events says so plainly", async () => {
+  render(<ActivityFeed items={[]} scope={{ session_id: "s1" }} sessions={{ s1: session() }} ready />);
+  expect(await screen.findByText(/No activity yet. Robin is connected/)).toBeTruthy();
+});
+
+test("evidence kinds are labelled separately and can be filtered", async () => {
+  const items = [
+    feedItem({ event_id: "a", global_cursor: 2, evidence_kind: "reported", event_type: "message.completed" }),
+    feedItem({ event_id: "b", global_cursor: 1, evidence_kind: "inferred", event_type: "session.state_changed" }),
+  ];
+  render(<ActivityFeed items={items} scope={{}} sessions={{}} ready />);
+  expect(await screen.findByText("session.state_changed")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Evidence"), { target: { value: "reported" } });
+  expect(screen.queryByText("session.state_changed")).toBeNull();
+  expect(screen.getByText("message.completed")).toBeTruthy();
+});
+
+test("a session sharing its folder warns about collisions and shows its branch", () => {
+  render(<SessionDetail session={session({ shared_folder_with: ["s2"] })} />);
+  expect(screen.getByRole("alert").textContent).toMatch(/Another session may be editing this folder/);
+  expect(screen.getByText("main")).toBeTruthy();
+});
+
+test("archive is offered, and restore once archived", () => {
+  const { rerender } = render(<SessionDetail session={session()} />);
+  expect(screen.getByRole("button", { name: "Archive" })).toBeTruthy();
+  rerender(<SessionDetail session={session({ archived: true })} />);
+  expect(screen.getByRole("button", { name: "Restore" })).toBeTruthy();
 });

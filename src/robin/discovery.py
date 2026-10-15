@@ -17,8 +17,8 @@ from robin.events.ingest import ensure_session
 from robin.events.tailer import JsonlTailer, RecordMapper
 from robin.ids import utc_now
 from robin.store import Store
-from robin.store.models import Project
 from robin.store.models import Session as SessionRow
+from robin.workspace import tasks as ws
 
 
 @dataclass
@@ -49,7 +49,7 @@ def scan(
         except Exception as exc:  # this runtime's discoverer failed; the others carry on
             report.errors.append(f"discovery failed: {type(exc).__name__}: {exc}")
             continue
-        projects = _projects(store)
+        projects = ws.project_paths(store)
         for native in sessions:
             report.found += 1
             try:
@@ -86,7 +86,7 @@ def _ingest_session(
         native_session_id=native.native_id,
         execution_cwd=native.cwd,
     )
-    project_id = _project_for(native.cwd, projects)
+    project_id = ws.project_for(native.cwd, projects)
     if project_id:
         store.writer.call(
             lambda c: c.execute(
@@ -103,19 +103,3 @@ def _ingest_session(
             tailer.close()
         report.events += r.inserted
         report.quarantined += r.quarantined
-
-
-def _projects(store: Store) -> list[tuple[str, str]]:
-    with store.reader.connect() as conn:
-        rows = conn.execute(select(Project.project_id, Project.path)).all()
-    return sorted(((pid, path) for pid, path in rows), key=lambda p: -len(p[1]))  # deepest first
-
-
-def _project_for(cwd: str | None, projects: list[tuple[str, str]]) -> str | None:
-    if not cwd:
-        return None
-    here = Path(cwd)
-    for pid, path in projects:
-        if here == Path(path) or here.is_relative_to(path):
-            return pid
-    return None

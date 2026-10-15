@@ -174,6 +174,8 @@ def cmd_run(args: argparse.Namespace) -> None:
             },
         )
         print(f"session {r['session_id']}")
+        for warning in r.get("warnings") or []:
+            print(f"warning: {warning}", file=sys.stderr)
         print_action(wait_action(c, aid, args.wait) if args.wait else r["action"])
 
 

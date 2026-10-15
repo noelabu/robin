@@ -30,6 +30,7 @@ from robin.service.auth import COOKIE, CSRF_HEADER, Auth
 from robin.service.runtime import ServiceRuntime
 from robin.store.models import Event
 from robin.store.models import Session as SessionRow
+from robin.workspace import folders
 from robin.workspace import tasks as ws
 
 API = "/api/v1"
@@ -89,7 +90,7 @@ class ExchangeBody(BaseModel):
 CONTROL_TYPES = ("message", "interrupt", "stop", "approval", "handoff", "reclaim")
 
 
-def session_view(r: Any) -> dict[str, Any]:
+def session_view(r: Any, shared: list[str] | None = None) -> dict[str, Any]:
     caps = capabilities_for(r["runtime"])
     controls = {}
     for action in CONTROL_TYPES:
@@ -120,6 +121,8 @@ def session_view(r: Any) -> dict[str, Any]:
         "current_task_id": r["current_task_id"],
         "pending_task_id": r["pending_task_id"],
         "archived": bool(r["archived"]),
+        "branch": None if r["archived"] else folders.branch_of(r["execution_cwd"]),
+        "shared_folder_with": shared or [],
         "created_at": r["created_at"].isoformat(),
         "updated_at": r["updated_at"].isoformat(),
         "controls": controls,
@@ -140,11 +143,35 @@ def action_view(a: Action) -> dict[str, Any]:
     }
 
 
-def _sessions(conn: Connection, session_id: str | None = None) -> list[dict[str, Any]]:
+def _sessions(
+    conn: Connection, session_id: str | None = None, writers: list[Any] | None = None
+) -> list[dict[str, Any]]:
     q = select(SessionRow).order_by(SessionRow.updated_at.desc())
     if session_id:
         q = q.where(SessionRow.session_id == session_id)
-    return [session_view(r) for r in conn.execute(q).mappings()]
+    rows = list(conn.execute(q).mappings())
+    writers = _writers(conn) if writers is None else writers
+    return [
+        session_view(
+            r,
+            folders.shared_with(writers, r["execution_cwd"], r["session_id"]) if folders.is_writer(r) else [],
+        )
+        for r in rows
+    ]
+
+
+def _writers(conn: Connection) -> list[Any]:
+    return [
+        r
+        for r in conn.execute(
+            select(SessionRow).where(
+                SessionRow.archived == 0,
+                SessionRow.execution_cwd.is_not(None),
+                SessionRow.runtime_state.not_in(folders.ENDED),
+            )
+        ).mappings()
+        if folders.is_writer(r)
+    ]
 
 
 def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
@@ -258,6 +285,8 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         return {
             "watermark": watermark,
             "sessions": sessions,
+            "projects": await asyncio.to_thread(ws.list_projects, store),
+            "tasks": await asyncio.to_thread(ws.list_tasks, store, include_archived=True),
             "supervisor": {"connected": runtime.supervisor_connected},
         }
 
@@ -326,6 +355,11 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         ok, reason = caps.allows("launch")
         if not ok:
             raise ApiError(409, "unsupported", reason or "unsupported")
+        if project is None:
+            pid = ws.project_for(str(checked.path), await asyncio.to_thread(ws.project_paths, store))
+            project = {"project_id": pid} if pid else None
+        with store.reader.connect() as conn:
+            shared = folders.shared_with(_writers(conn), str(checked.path))
         sid = await asyncio.to_thread(
             ensure_session, store, runtime=body.runtime, mode="managed", execution_cwd=str(checked.path)
         )
@@ -343,7 +377,12 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
                 sid, runtime=body.runtime, cwd=str(checked.path), action_id=body.action_id, prompt=body.prompt
             )
         )
-        return {"action": action_view(action), "session_id": sid}
+        warnings = (
+            [f"{len(shared)} other session(s) may be editing this folder: {', '.join(shared)}"]
+            if shared
+            else []
+        )
+        return {"action": action_view(action), "session_id": sid, "warnings": warnings}
 
     @app.post(f"{API}/sessions/{{session_id}}/actions", status_code=202)
     async def act(session_id: str, body: ActionBody, _: str = Authed) -> dict[str, Any]:
@@ -448,9 +487,26 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         after: int = Query(0, ge=0),
         limit: int = Query(100, ge=1, le=500),
         session_id: str | None = None,
+        task_id: str | None = None,
+        project_id: str | None = None,
+        latest: bool = False,
+        previews: bool = False,
     ) -> dict[str, Any]:
-        evs = await asyncio.to_thread(read_events, store, session_id=session_id, after=after, limit=limit)
+        """Forward from `after`, or with `latest` the most recent `limit` events (oldest first)."""
+        evs = await asyncio.to_thread(
+            read_events,
+            store,
+            session_id=session_id,
+            task_id=task_id,
+            project_id=project_id,
+            after=after,
+            limit=limit,
+            latest=latest,
+        )
         items = [e.model_dump(mode="json") for e in evs]
+        if previews:
+            for item, e in zip(items, evs, strict=True):
+                item["preview"] = await asyncio.to_thread(_preview, e.global_cursor, e.payload_ref)
         return {"events": items, "next_after": items[-1]["global_cursor"] if items else after}
 
     @app.get(f"{API}/stream")
@@ -480,7 +536,8 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
             if evs:
                 touched = {e.session_id for e in evs}
                 with store.reader.connect() as conn:
-                    views = {s: _sessions(conn, s)[0] for s in touched}
+                    writers = _writers(conn)
+                    views = {s: _sessions(conn, s, writers)[0] for s in touched}
                 for e in evs:
                     data = {
                         "event": e.model_dump(mode="json"),

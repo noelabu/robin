@@ -15,7 +15,7 @@ function resumeCommand(runtime: string, id: string): string {
   return `robin open ${id}`;
 }
 
-export function SessionDetail({ session }: { session: Session }) {
+export function SessionDetail({ session, onChanged }: { session: Session; onChanged?: () => void }) {
   const [text, setText] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const c = session.controls;
@@ -63,6 +63,8 @@ export function SessionDetail({ session }: { session: Session }) {
         <dl className="facts">
           <dt>Folder</dt>
           <dd>{session.execution_cwd ?? "—"}</dd>
+          <dt>Branch</dt>
+          <dd>{session.branch ?? "not a git repository"}</dd>
           <dt>Native ID</dt>
           <dd>{session.native_session_id ?? "not reported yet"}</dd>
           <dt>Evidence</dt>
@@ -77,6 +79,13 @@ export function SessionDetail({ session }: { session: Session }) {
           )}
         </dl>
       </div>
+
+      {session.shared_folder_with.length > 0 && (
+        <p className="hint warn" role="alert">
+          {session.shared_folder_with.length === 1 ? "Another session" : `${session.shared_folder_with.length} other sessions`}{" "}
+          may be editing this folder. Their changes can collide with this one&apos;s.
+        </p>
+      )}
 
       {session.mode === "managed" && (
         <div className="terminal">
@@ -144,6 +153,20 @@ export function SessionDetail({ session }: { session: Session }) {
             onClick={() => void act({ type: "interrupt" }, "Interrupt")}
           >
             Interrupt
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                await api.archiveSession(session.session_id, !session.archived);
+                setStatus(session.archived ? "Restored" : "Archived: hidden from default views, nothing deleted");
+                onChanged?.();
+              } catch (e) {
+                setStatus(e instanceof ApiError ? `Archive failed: ${e.message}` : "Archive failed");
+              }
+            }}
+          >
+            {session.archived ? "Restore" : "Archive"}
           </button>
           <button
             type="button"

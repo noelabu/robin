@@ -16,7 +16,14 @@ export function SessionList(props: { sessions: Session[]; selected: string | nul
             <StateBadge session={s} />
             <span className="cwd" title={s.execution_cwd ?? ""}>
               {s.execution_cwd?.split("/").filter(Boolean).pop() ?? "—"}
+              {s.branch ? ` · ${s.branch}` : ""}
+              {s.archived ? " · archived" : ""}
             </span>
+            {s.shared_folder_with.length > 0 && (
+              <span className="shared" title="Another session may be editing this folder">
+                shared folder
+              </span>
+            )}
           </button>
         </li>
       ))}

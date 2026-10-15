@@ -14,6 +14,11 @@ export type Session = {
   execution_cwd: string | null;
   lease_generation: number;
   control_owner: "robin" | "terminal" | null;
+  project_id: string | null;
+  current_task_id: string | null;
+  archived: boolean;
+  branch: string | null;
+  shared_folder_with: string[];
   created_at: string;
   updated_at: string;
   controls: Record<"message" | "interrupt" | "stop" | "approval" | "handoff" | "reclaim", Control>;
@@ -31,6 +36,31 @@ export type RobinEvent = {
   source_time: string | null;
   ingested_at: string;
   payload_ref: string | null;
+  task_id: string | null;
+};
+
+export type Project = {
+  project_id: string;
+  name: string;
+  path: string;
+  git: { remote: string | null; branch: string | null } | null;
+  last_activity_at: string | null;
+};
+
+export type Task = {
+  task_id: string;
+  project_id: string;
+  title: string;
+  objective: string;
+  status: "open" | "completed" | "abandoned";
+  completion_evidence: string | null;
+  archived: boolean;
+  revision: number;
+  updated_at: string;
+};
+
+export type TaskDetail = Task & {
+  sessions: { session_id: string; runtime: string; role: string | null; runtime_state: string; current: boolean }[];
 };
 
 export type Action = {
@@ -53,7 +83,13 @@ export type AttentionItem = {
   created_at: string;
 };
 
-export type Workspace = { watermark: number; sessions: Session[]; supervisor: { connected: boolean } };
+export type Workspace = {
+  watermark: number;
+  sessions: Session[];
+  projects: Project[];
+  tasks: Task[];
+  supervisor: { connected: boolean };
+};
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string, public retry: string) {
@@ -104,13 +140,27 @@ export const newActionId = () => `ui-${crypto.randomUUID()}`;
 
 export const api = {
   workspace: () => request<Workspace>("GET", "/workspace"),
-  launch: (runtime: string, cwd: string, prompt: string | null) =>
-    request<{ action: Action; session_id: string }>("POST", "/sessions/launch", {
+  launch: (runtime: string, cwd: string | null, prompt: string | null, taskId: string | null = null) =>
+    request<{ action: Action; session_id: string; warnings: string[] }>("POST", "/sessions/launch", {
       runtime,
-      cwd,
+      cwd: cwd || null,
       prompt: prompt || null,
+      task_id: taskId,
       action_id: newActionId(),
     }),
+  history: (scope: { session_id?: string; task_id?: string; project_id?: string }, limit = 200) =>
+    request<{ events: (RobinEvent & { preview: string | null })[] }>(
+      "GET",
+      `/events?${new URLSearchParams({ ...scope, latest: "true", previews: "true", limit: String(limit) })}`,
+    ),
+  createProject: (path: string) => request<Project>("POST", "/projects", { path }),
+  createTask: (projectId: string, title: string, objective: string) =>
+    request<Task>("POST", "/tasks", { project_id: projectId, title, objective }),
+  task: (taskId: string) => request<TaskDetail>("GET", `/tasks/${taskId}`),
+  patchTask: (task: Task, changes: Partial<Pick<Task, "status" | "archived" | "completion_evidence">>) =>
+    request<Task>("PATCH", `/tasks/${task.task_id}`, { expected_revision: task.revision, ...changes }),
+  archiveSession: (sessionId: string, archived: boolean) =>
+    request<{ archived: boolean }>("PATCH", `/sessions/${sessionId}`, { archived }),
   act: (
     sessionId: string,
     body: { type: string; text?: string; request_id?: string; allow?: boolean; interrupt_running?: boolean },

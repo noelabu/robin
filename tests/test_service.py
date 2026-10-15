@@ -466,3 +466,35 @@ def test_handoff_and_reclaim_through_the_api(service):
         time.sleep(0.05)
     assert c.get(f"/api/v1/sessions/{sid}").json()["control_owner"] == "robin"
     c.post(f"/api/v1/sessions/{sid}/actions", json={"type": "stop", "action_id": aid()})
+
+
+def test_launch_warns_when_sessions_share_a_folder_and_history_is_filtered(service):
+    store, port, auth = service
+    c = browser(port, auth)
+    folder = work(store)
+    first = c.post(
+        "/api/v1/sessions/launch", json={"runtime": "fake", "cwd": folder, "action_id": aid()}
+    ).json()
+    assert first["warnings"] == []
+    second = c.post(
+        "/api/v1/sessions/launch", json={"runtime": "fake", "cwd": folder, "action_id": aid()}
+    ).json()
+    assert first["session_id"] in second["warnings"][0]
+    a, b = first["session_id"], second["session_id"]
+    deadline = time.time() + 10
+    while not c.get(f"/api/v1/sessions/{a}").json()["shared_folder_with"] and time.time() < deadline:
+        time.sleep(0.05)
+    assert c.get(f"/api/v1/sessions/{a}").json()["shared_folder_with"] == [b]
+    ws = c.get("/api/v1/workspace").json()
+    assert "projects" in ws and "tasks" in ws
+    while len(c.get(f"/api/v1/events?session_id={a}").json()["events"]) < 3 and time.time() < deadline:
+        time.sleep(0.05)
+    latest = c.get(f"/api/v1/events?session_id={a}&latest=true&limit=2&previews=true").json()["events"]
+    every = c.get(f"/api/v1/events?session_id={a}&limit=500").json()["events"]
+    assert [e["global_cursor"] for e in latest] == [e["global_cursor"] for e in every[-2:]]
+    assert all("preview" in e and e["session_id"] == a for e in latest)
+    for sid in (a, b):
+        c.post(f"/api/v1/sessions/{sid}/actions", json={"type": "stop", "action_id": aid()})
+    # an archived or stopped session no longer counts
+    c.patch(f"/api/v1/sessions/{b}", json={"archived": True})
+    assert c.get(f"/api/v1/sessions/{a}").json()["shared_folder_with"] == []

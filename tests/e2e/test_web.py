@@ -132,3 +132,46 @@ def test_approve_from_the_attention_panel(running):
         expect(page.get_by_text("Nothing is waiting on you.")).to_be_visible(timeout=10_000)
         expect(page.get_by_text("session.turn_started").first).to_be_visible()
         browser.close()
+
+
+def test_reach_a_task_session_in_three_clicks_and_see_shared_folder_warnings(running):
+    from playwright.sync_api import expect, sync_playwright
+
+    store, port, auth = running
+    folder = store.data_dir.parent / "nav-project"
+    folder.mkdir()
+    cli = httpx.Client(
+        base_url=f"http://127.0.0.1:{port}", headers={"authorization": f"Bearer {auth.cli_token}"}
+    )
+    project = cli.post("/api/v1/projects", json={"path": str(folder), "name": "navproj"}).json()
+    task = cli.post(
+        "/api/v1/tasks",
+        json={"project_id": project["project_id"], "title": "Fix login", "objective": "Make it work"},
+    ).json()
+    sid = cli.post(
+        "/api/v1/sessions/launch",
+        json={"runtime": "fake", "task_id": task["task_id"], "action_id": f"e2e-{uuid.uuid4().hex}"},
+    ).json()["session_id"]
+    cli.post(
+        "/api/v1/sessions/launch",
+        json={"runtime": "fake", "cwd": str(folder), "action_id": f"e2e-{uuid.uuid4().hex}"},
+    )
+    with sync_playwright() as p:
+        browser = launch_browser(p)
+        page = browser.new_page()
+        page.goto(f"http://127.0.0.1:{port}/#bootstrap={auth.new_bootstrap()}")
+        expect(page.get_by_text("Supervisor connected")).to_be_visible(timeout=10_000)
+        page.get_by_role("button", name="navproj").click()  # 1
+        page.get_by_role("button", name="Fix login").click()  # 2
+        expect(page.get_by_role("heading", name="Fix login")).to_be_visible()
+        page.locator(".task-sessions").get_by_role("button").first.click()  # 3
+        expect(page.locator(".detail .facts")).to_contain_text(str(folder))
+        expect(page.get_by_role("alert")).to_contain_text("may be editing this folder", timeout=10_000)
+        expect(page.locator(".feed-item").first).to_be_visible(timeout=10_000)  # history for this session
+        browser.close()
+    for s in cli.get("/api/v1/workspace").json()["sessions"]:
+        cli.post(
+            f"/api/v1/sessions/{s['session_id']}/actions",
+            json={"type": "stop", "action_id": f"e2e-{uuid.uuid4().hex}"},
+        )
+    assert sid

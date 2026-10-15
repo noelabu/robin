@@ -118,3 +118,30 @@ h2 { font-size: 15px; margin: 0 0 8px; display: flex; gap: 8px; align-items: bas
 .attention-head .kind { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 .attention-detail { display: block; margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 .muted { color: var(--muted); }
+
+.navigator { display: grid; gap: 6px; margin-bottom: 10px; }
+.nav-list, .nav-tasks { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.nav-tasks { padding-left: 12px; }
+.nav-item {
+  width: 100%; text-align: left; display: flex; justify-content: space-between; gap: 8px; border-color: transparent;
+}
+.nav-item.active { border-color: var(--accent); }
+.nav-item .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-item .branch, .task-status { color: var(--muted); font-size: 11px; font-family: var(--mono); }
+.status-completed { color: var(--ok); }
+.status-abandoned { color: var(--muted); }
+button.link { border: 0; background: none; padding: 2px 0; color: var(--accent); text-align: left; }
+.filters { display: flex; gap: 10px; flex-wrap: wrap; padding: 8px 0; border-top: 1px solid var(--line); }
+label.inline { display: inline-flex; gap: 6px; align-items: center; margin: 0; font-size: 12px; }
+label.inline select { width: auto; padding: 2px 4px; }
+label.inline input[type="checkbox"] { width: auto; }
+.feed-head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.feed-head h2 { margin-right: auto; }
+.hint.warn { color: var(--warn); }
+.session-item .shared { grid-column: 1 / -1; font-size: 11px; color: var(--warn); }
+.objective { margin: 0 0 10px; white-space: pre-wrap; }
+.task-sessions { list-style: none; margin: 0 0 6px; padding: 0; }
+h3 { font-size: 13px; margin: 12px 0 4px; color: var(--muted); }
+.evidence.ev-reported { color: var(--ink); }
+.evidence.ev-observed { color: var(--ok); }
+.evidence.ev-inferred { color: var(--warn); }

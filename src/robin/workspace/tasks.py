@@ -122,6 +122,23 @@ def list_projects(store: Store) -> list[dict[str, Any]]:
     return [_project_view(r, lasts.get(r["project_id"])) for r in rows]
 
 
+def project_paths(store: Store) -> list[tuple[str, str]]:
+    with store.reader.connect() as conn:
+        rows = conn.execute(select(Project.project_id, Project.path)).all()
+    return sorted(((pid, path) for pid, path in rows), key=lambda p: -len(p[1]))  # deepest first
+
+
+def project_for(cwd: str | None, projects: list[tuple[str, str]]) -> str | None:
+    """The registered project whose folder holds `cwd` (the deepest one)."""
+    if not cwd:
+        return None
+    here = Path(cwd)
+    for pid, path in projects:
+        if here == Path(path) or here.is_relative_to(path):
+            return pid
+    return None
+
+
 def _project_view(r: Any, last_activity: Any) -> dict[str, Any]:
     return {
         "project_id": r["project_id"],

@@ -315,13 +315,30 @@ def _duplicate_candidate(conn: Connection, ev: NewEvent) -> int | None:
 
 
 def read_events(
-    store: Store, *, session_id: str | None = None, after: int = 0, limit: int = 500
+    store: Store,
+    *,
+    session_id: str | None = None,
+    task_id: str | None = None,
+    project_id: str | None = None,
+    after: int = 0,
+    limit: int = 500,
+    latest: bool = False,
 ) -> list[EventEnvelope]:
-    q = select(Event).where(Event.global_cursor > after).order_by(Event.global_cursor).limit(limit)
+    """Events after a cursor in commit order. With `latest`, the newest `limit` of them, oldest first."""
+    q = select(Event).where(Event.global_cursor > after)
     if session_id is not None:
         q = q.where(Event.session_id == session_id)
+    if task_id is not None:
+        q = q.where(Event.task_id == task_id)
+    if project_id is not None:
+        q = q.where(
+            Event.session_id.in_(select(SessionRow.session_id).where(SessionRow.project_id == project_id))
+        )
+    q = q.order_by(Event.global_cursor.desc() if latest else Event.global_cursor).limit(limit)
     with store.reader.connect() as conn:
         rows = list(conn.execute(q).mappings())
+    if latest:
+        rows.reverse()
     return [_envelope(r) for r in rows]
 
 
