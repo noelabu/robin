@@ -22,7 +22,11 @@ import os
 import sys
 import uuid
 
+from findings import TOOL_DESCRIPTION, TOOL_SCHEMA, parse_message_blocks, submission_event, validate
 from protocol import MAX_LINE
+
+# Finding publication path for this session: "tool" (MCP / extension tool) or "message" (final-message block)
+PUBLISH_PATH = os.environ.get("ROBIN_PUBLISH_PATH", "tool")
 
 
 def emit(event: dict):
@@ -120,8 +124,8 @@ def describe(message) -> dict:
 
 
 async def run_claude(args):
-    from claude_agent_sdk import (ClaudeAgentOptions, ClaudeSDKClient,
-                                  PermissionResultAllow, PermissionResultDeny)
+    from claude_agent_sdk import (ClaudeAgentOptions, ClaudeSDKClient, PermissionResultAllow,
+                                  PermissionResultDeny, ResultMessage, create_sdk_mcp_server, tool)
 
     approvals = Approvals()
 
@@ -131,7 +135,19 @@ async def run_claude(args):
             return PermissionResultAllow(updated_input=input_data)
         return PermissionResultDeny(message=decision.get("message") or "Denied in Robin")
 
+    @tool("finding_publish", TOOL_DESCRIPTION, TOOL_SCHEMA)
+    async def finding_publish(payload):
+        emit(submission_event("tool", payload, native_ref=uuid.uuid4().hex))
+        errors = validate(payload)
+        text = ("REJECTED: " + "; ".join(errors)) if errors else "ACCEPTED: Robin recorded this finding."
+        return {"content": [{"type": "text", "text": text}]}
+
+    mcp = {}
+    if PUBLISH_PATH == "tool":  # in-process MCP server, so attribution is this runtime host's session
+        mcp = {"robin": create_sdk_mcp_server(name="robin", version="0", tools=[finding_publish])}
     options = ClaudeAgentOptions(
+        mcp_servers=mcp,
+        allowed_tools=["mcp__robin__finding_publish"] if mcp else [],
         cwd=args.cwd,
         setting_sources=["user", "project", "local"],  # load the user's harness settings (FR-012)
         permission_mode="default",                       # never more permissive than the harness default
@@ -144,6 +160,9 @@ async def run_claude(args):
         async def pump():
             async for message in client.receive_messages():
                 emit(describe(message))
+                if PUBLISH_PATH == "message" and isinstance(message, ResultMessage):
+                    for block in parse_message_blocks(message.result or ""):
+                        emit(submission_event("message", block, native_ref=message.uuid or uuid.uuid4().hex))
 
         pump_task = asyncio.create_task(pump())
         async for c in stdin_commands():
@@ -211,6 +230,10 @@ async def run_codex(args):
         if method in APPROVAL_METHODS:
             decision = await approvals.request(method, params)
             await rpc.respond(msg["id"], {"decision": "accept" if decision.get("allow") else "decline"})
+        elif method == "mcpServer/elicitation/request":  # e.g. MCP tool-call approval
+            decision = await approvals.request(method, params)
+            await rpc.respond(msg["id"], {"action": "accept", "content": {}} if decision.get("allow")
+                              else {"action": "decline"})
         else:  # not handled by the spike; refuse explicitly rather than hang the turn
             emit({"type": "codex_unhandled_request", "method": method})
             await rpc.respond(msg["id"], error={"code": -32601, "message": "not supported by robin-spike"})
@@ -232,7 +255,23 @@ async def run_codex(args):
                     approvals.expire_all("turn ended")
                     state["turn"] = None
                 emit({"type": "codex_notification", "method": msg["method"], "params": params})
+                if msg["method"] == "item/completed":
+                    codex_findings(params.get("item") or {})
         emit({"type": "codex_exited", "returncode": await proc.wait()})
+
+    def codex_findings(item):
+        if (PUBLISH_PATH == "tool" and item.get("type") == "mcpToolCall" and item.get("server") == "robin"
+                and item.get("tool") == "finding_publish" and item.get("status") == "completed"):
+            args = item.get("arguments")
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except ValueError:
+                    pass
+            emit(submission_event("tool", args, native_ref=item.get("id", "")))
+        elif PUBLISH_PATH == "message" and item.get("type") == "agentMessage" and item.get("phase") == "final_answer":
+            for block in parse_message_blocks(item.get("text", "")):
+                emit(submission_event("message", block, native_ref=item.get("id", "")))
 
     pump_task = asyncio.create_task(pump())
     init = await rpc.call("initialize", {"clientInfo": {"name": "robin-spike", "version": "0"}})
@@ -241,6 +280,10 @@ async def run_codex(args):
           "launch_token": os.environ.get("ROBIN_LAUNCH_TOKEN")})
     # Inherit the user's ~/.codex/config.toml; only ever request a stricter policy.
     start = {"cwd": args.cwd}
+    if PUBLISH_PATH == "tool":  # Robin's MCP server for this thread only
+        start["config"] = {"mcp_servers": {"robin": {
+            "command": sys.executable,
+            "args": [os.path.join(os.path.dirname(os.path.abspath(__file__)), "robin_mcp.py")]}}}
     if os.environ.get("ROBIN_CODEX_APPROVAL_POLICY"):
         start["approvalPolicy"] = os.environ["ROBIN_CODEX_APPROVAL_POLICY"]
     started = await rpc.call("thread/start", start)
@@ -321,6 +364,16 @@ async def run_pi(args):
         else:  # fire-and-forget UI (notify, setStatus, ...): record, no reply
             emit({"type": "pi_ui", "method": msg.get("method")})
 
+    def pi_findings(kind, msg):
+        if PUBLISH_PATH == "tool" and kind == "tool_execution_start" and msg.get("toolName") == "robin_finding_publish":
+            emit(submission_event("tool", msg.get("args"), native_ref=msg.get("toolCallId", "")))
+        elif PUBLISH_PATH == "message" and kind == "message_end" and (msg.get("message") or {}).get("role") == "assistant":
+            content = msg["message"].get("content")
+            text = content if isinstance(content, str) else "".join(
+                c.get("text", "") for c in content or [] if isinstance(c, dict) and c.get("type") == "text")
+            for block in parse_message_blocks(text):
+                emit(submission_event("message", block, native_ref=str(msg["message"].get("timestamp", ""))))
+
     async def pump():
         while line := await proc.stdout.readline():  # splits on LF only, as Pi's framing requires
             msg = json.loads(line.rstrip(b"\r\n"))
@@ -340,6 +393,7 @@ async def run_pi(args):
                     state["busy"] = False
                     approvals.expire_all("run settled")
                 emit({"type": "pi_event", "event": kind, "data": msg})
+                pi_findings(kind, msg)
         emit({"type": "pi_exited", "returncode": await proc.wait()})
 
     pump_task = asyncio.create_task(pump())

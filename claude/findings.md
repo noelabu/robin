@@ -14,7 +14,7 @@
 | Follow-up message | Pending live run | `client.query()` on an open client continues the session |
 | Interruption | Pending live run | `client.interrupt()`; the docs say to drain to the `ResultMessage` afterwards (`terminal_reason`) |
 | Approval response | Pending live run | `can_use_tool` callback awaits Robin's answer. It only fires when the permission flow falls through to a prompt: allow rules, `allowed_tools` and `permission_mode` approve calls before it runs. |
-| Finding publication path | Not started | Candidate: in-process SDK MCP server (`create_sdk_mcp_server`) exposing `finding.publish`, attributed by the runtime host's launch identity |
+| Finding publication path | Code ready; live run pending the API key | **Tool:** in-process SDK MCP server (`create_sdk_mcp_server`) with `finding_publish`, allowed through `allowed_tools` so it needs no approval. The handler runs inside the runtime host, so attribution is that session. **Message:** a `robin-finding` block parsed from `ResultMessage.result`. Run `test_publish.py claude tool|message`. |
 | Hosting under the supervisor | **Passed with the scripted runtime.** Claude run pending. | `supervisor/test_restart.py`, 2026-10-15: the host survived a service SIGKILL, events 1..9 replayed with no gaps or duplicates, the prompt was delivered once, an approval was answered after reconnect, a duplicate reply was rejected, interrupt was acknowledged, no processes were left behind. |
 
 ## Notes for the build
@@ -32,4 +32,3 @@
 - Terminal mode: whether `claude --resume <id>` in a terminal can take over (handoff) while Robin holds no lease
 - Sandbox options that exclude the artifact store (review independence, TR-064)
 - Hook mechanism and config location for WP-2.6 (`~/.claude/settings.json` `hooks`)
-- Finding publication through an in-process MCP tool, with MCP disabled as the fallback check

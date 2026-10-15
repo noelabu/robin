@@ -15,10 +15,10 @@
 | Follow-up message | **Pass (new run)** | `prompt` after `agent_settled` returns `disposition: "started"`. During a run, `prompt` with `streamingBehavior: "steer"` (or `steer` / `follow_up`) queues input; not exercised yet. |
 | Interruption | **Pass** | `abort` → `agent_settled` with `aborted: true` |
 | Approval response | **Pass, through a Robin extension** | Pi has no built-in approvals: its security doc says it "does not ask for approval before every tool call". Robin loads `supervisor/pi_robin_approval.ts` (`pi -e`). Its `tool_call` handler calls `ctx.ui.confirm`, which RPC turns into an `extension_ui_request`. The runtime host answers with `extension_ui_response {confirmed}`. A `bash` call was approved this way after the service was SIGKILLed and reconnected. |
-| Finding publication path | Not started | Candidates: a Robin extension tool (`pi.registerTool`) or MCP (`.pi/mcp.json`), or a parsed final-message block |
+| Finding publication path | **Pass, both paths** | **Tool:** `robin_finding_publish`, registered by Robin's extension when `ROBIN_PUBLISH_PATH=tool`. Robin takes the finding from `tool_execution_start` in the session's own stream. **Message:** a fenced `robin-finding` block in the final assistant `message_end`, with no Robin tool registered. Both produced one valid finding attributed to the Pi session (`finding-tool-20261015-104851.json`, `finding-message-20261015-104822.json`). |
 | Hosting under the supervisor | **Pass** | The host and its `pi` child survived a service SIGKILL while waiting on an approval. Events stayed contiguous, the host was spawned once, and nothing was left running. |
 
-**Classification: meets the floor except finding publication, still to test. Approvals depend on Robin's extension (owner decision below).**
+**Classification: meets the floor. Live control, with approvals coming from Robin's extension (owner decision below).**
 
 ## Owner decision needed
 
@@ -32,7 +32,7 @@ Pi's native behaviour is to run tools without asking. Loading the extension make
 ## Notes for the build
 
 - **Framing.** Split stdout on LF only and strip an optional CR. Python's `readline()` does this. Node's `readline` would wrongly split on U+2028/U+2029.
-- **Gated tools.** The extension uses the rule from Pi's extension docs: ask unless the tool is read-only, or is neither destructive nor networked. `read` runs without asking; `bash`, `write` and `edit` ask.
+- **Gated tools.** Pi's built-in tools carry no annotations, so the docs' rule alone asked for every built-in call, including `read`; the first publication run showed that. The extension now lets the read-only built-ins (`read`, `grep`, `find`, `ls`) run, and asks for everything else that isn't annotated read-only: `bash`, `write`, `edit`, and unannotated extension tools.
 - **Dialogs.** `select`, `input`, `editor` and other `confirm` dialogs from the user's own extensions are answered `cancelled` by the spike and recorded as `pi_unhandled_dialog`. Robin should show them as attention items. Dialogs with a `timeout` auto-resolve on Pi's side; Robin's extension sets none.
 - **User extensions load too.** `~/.pi/agent/extensions` holds three `orca-*.ts` extensions from the same third-party tool whose hooks run in Claude Code. They load in Robin-launched sessions as well.
 - **Project trust.** RPC can't show Pi's trust prompt. The host passes `--no-approve`, so project-local `.pi/` resources are skipped unless a saved trust decision exists. That's the safe default. A Robin task that needs project extensions would pass `--approve` explicitly.
@@ -44,5 +44,4 @@ Pi's native behaviour is to run tools without asking. Loading the extension make
 - Native resume: `pi --session <id>` / `--continue` after the runtime host exits
 - Steering and follow-up during a run
 - Terminal mode: `pi --session <id>` in a terminal as handoff
-- Finding publication through an extension tool, and with MCP disabled
 - Hook equivalent for observed sessions (WP-2.6): Pi's mechanism is extensions in `~/.pi/agent/extensions`, not a hooks config file

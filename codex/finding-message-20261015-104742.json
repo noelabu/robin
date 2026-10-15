@@ -1,0 +1,62 @@
+{
+  "finding": {
+    "schema_version": 1,
+    "finding_id": "find_00d3783f",
+    "version": 1,
+    "submission_id": "sub_d03a4d2b41",
+    "task_id": "task_prd_review",
+    "created_at": 1792032458.889282,
+    "author": {
+      "kind": "agent",
+      "runtime": "codex",
+      "native_session_id": "01a13d74-c4ce-7ba1-8041-578cd3e1fdd5",
+      "run_id": "86a3a85d2f0e"
+    },
+    "summary": "Security requirements are incomplete: tenant selection lacks an explicit authorization check, sessions never expire, and password protections are unspecified.",
+    "claims": [
+      {
+        "text": "High: X-Tenant is caller-controlled. The PRD does not require checking that the authenticated user is authorized for the selected tenant, creating a potential cross-tenant access risk.",
+        "evidence": [
+          {
+            "path": "PRD.md",
+            "range": "3-3"
+          }
+        ]
+      },
+      {
+        "text": "High: Sessions explicitly never expire, allowing stolen sessions to remain usable indefinitely unless separately revoked; revocation is unspecified.",
+        "evidence": [
+          {
+            "path": "PRD.md",
+            "range": "4-4"
+          }
+        ]
+      },
+      {
+        "text": "Medium: Email/password authentication is required without requirements for password hashing, login throttling, or secure credential transport.",
+        "evidence": [
+          {
+            "path": "PRD.md",
+            "range": "2-2"
+          }
+        ]
+      }
+    ],
+    "recommendations": [
+      "Treat X-Tenant as a selector only; verify tenant membership and resource authorization server-side on every request, denying unauthorized selections.",
+      "Require idle and absolute session expiration, server-side revocation, and invalidation after logout, password reset, or account disablement.",
+      "Specify adaptive salted password hashing, HTTPS, login throttling, and authentication errors that do not reveal whether an account exists.",
+      "Add acceptance tests for tenant-header tampering, cross-tenant resource access, expired sessions, and revoked sessions."
+    ],
+    "questions": [
+      "Can users belong to multiple tenants, and which authority manages their memberships?",
+      "What idle and absolute session lifetimes are acceptable?",
+      "How are sessions stored, transported, and revoked?"
+    ],
+    "parents": [],
+    "publication_path": "message",
+    "ignored_fields": []
+  },
+  "rejected": [],
+  "evidence_dir": "/var/folders/rt/2xh6q3653wn_chp30qpk7qx00000gn/T/robin-pub-codex-5igyn2e9"
+}

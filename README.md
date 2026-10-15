@@ -39,6 +39,11 @@ uv run python supervisor/test_live.py codex
 
 # Supervisor with a real Pi RPC session: uses Pi's configured provider
 uv run python supervisor/test_live.py pi
+
+# Finding publication: tool path (MCP / extension tool) or message path (no MCP)
+uv run python supervisor/test_publish.py codex tool
+uv run python supervisor/test_publish.py pi message
+uv run python supervisor/test_findings_unit.py     # offline
 ```
 
 Each run prints PASS/FAIL lines and the temp directory holding the full event spool. `test_live.py` also writes a summary to `<runtime>/evidence-<timestamp>.json`.

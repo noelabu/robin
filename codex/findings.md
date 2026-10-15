@@ -15,10 +15,10 @@
 | Follow-up message | **Pass (new turn)** | `turn/start` on the existing thread. `turn/steer` with `expectedTurnId` exists for input during an active turn but isn't exercised yet. |
 | Interruption | **Pass** | `turn/interrupt {threadId, turnId}` → `turn/completed` with `turn.status: "interrupted"` |
 | Approval response | **Pass** | `item/commandExecution/requestApproval` arrives as a server request carrying `threadId`, `turnId`, `itemId` and the command. Answered with `{"decision": "accept"}` after the service was SIGKILLed and reconnected. `serverRequest/resolved` confirms it. Decisions: `accept`, `acceptForSession`, `decline`, `cancel` (decline and interrupt the turn), plus policy amendments, which Robin must not offer by default. File changes use `item/fileChange/requestApproval` with the same decisions. |
-| Finding publication path | Not started | Candidates: dynamic tools (`item/tool/call` server request), an MCP server, or a parsed final-message block |
+| Finding publication path | **Pass, both paths** | **Tool:** Robin's MCP server (`supervisor/robin_mcp.py`), added for one thread through `thread/start` `config.mcp_servers.robin`. Robin takes the finding from the completed `mcpToolCall` item in the session's own stream. **Message:** with no MCP server, a fenced `robin-finding` block in the `final_answer` agent message. Both runs produced one valid finding with PRD.md line evidence, attributed to the Codex thread (`finding-tool-20261015-104655.json`, `finding-message-20261015-104742.json`). |
 | Hosting under the supervisor | **Pass** | The host and its `codex app-server` child survived a service SIGKILL while waiting on an approval. Events stayed contiguous across the restart, the host was spawned once, and nothing was left running after shutdown. |
 
-**Classification: meets the floor except finding publication, which is still to test.**
+**Classification: meets the floor. Live control.**
 
 ## Notes for the build
 
@@ -28,6 +28,15 @@
 - **Codex already has its own daemon.** A `codex app-server --listen unix:// --managed-daemon` process (and `codex app-server daemon` / `proxy` subcommands) runs on this machine independently of Robin, likely from the Codex desktop app. Robin could attach to it instead of spawning its own server. That would matter for terminal handoff and for observing sessions started elsewhere. Investigate before deciding the terminal mode.
 - **Protocol surface is large and changes often.** It has 100+ client methods, many marked experimental. Pin the tested `codex-cli` version and generate typed bindings from `generate-json-schema` per version (TRD integration candidates).
 - **Unhandled server requests** are refused with a JSON-RPC error, never left hanging. None occurred in these runs.
+
+## Finding publication notes
+
+- **The tool schema has to be typed.** The first run declared `claims` as a list of plain objects, and the model invented its own keys (`claim`, `file_path`, `line_start`), which Robin rightly rejected. Typed `Claim` / `Evidence` models fixed it.
+- **Codex asks approval for MCP tool calls through `mcpServer/elicitation/request`.** The first run refused that request type, and Codex reported "user rejected MCP tool call". Two changes:
+  - Robin's tool now declares the MCP annotation `readOnlyHint: true`, so Codex runs it without asking.
+  - The runtime host routes any elicitation to Robin's approval queue instead of refusing it, because the user's other MCP servers can elicit too.
+- **Only a completed tool call counts.** A failed or rejected `mcpToolCall` is not a submission.
+- **Your own MCP servers start in Robin-launched threads too:** `node_repl`, `cua_repl`, `codex_apps`, `postman` and `chatcut`. The last two failed to start because they need `codex mcp login`. That's harmless, but it slows startup and shows up as noise.
 
 ## Spike bug fixed along the way
 
@@ -39,5 +48,4 @@ The supervisor hung on shutdown under Python 3.12.0: `Server.wait_closed()` wait
 - `turn/steer` during an active turn
 - Inherited default policy and sandbox with no override
 - Terminal mode: `codex resume <id>` vs attaching through the existing daemon
-- Finding publication (dynamic tool or MCP), with MCP disabled as the fallback check
 - Sandbox exclusion of the artifact store (review independence, TR-064)

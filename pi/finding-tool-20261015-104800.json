@@ -1,0 +1,38 @@
+{
+  "finding": {
+    "schema_version": 1,
+    "finding_id": "find_33501289",
+    "version": 1,
+    "submission_id": "prd-nonexpiring-sessions",
+    "task_id": "task_prd_review",
+    "created_at": 1792032475.172745,
+    "author": {
+      "kind": "agent",
+      "runtime": "pi",
+      "native_session_id": "01a13d75-56de-72ee-a0fa-b31309c6034a",
+      "run_id": "0a38b84e3f2a"
+    },
+    "summary": "Login sessions never expire, allowing indefinite reuse of a stolen or leaked session.",
+    "claims": [
+      {
+        "text": "The requirement that sessions never expire removes an essential security control: after a session token is stolen, leaked, or left active on an unattended device, an attacker could retain access indefinitely and users/operators would have no automatic time-bound invalidation.",
+        "unsupported": false,
+        "evidence": [
+          {
+            "path": "PRD.md",
+            "range": "3"
+          }
+        ]
+      }
+    ],
+    "recommendations": [
+      "Define a bounded session lifetime based on risk (for example, short-lived access tokens with refresh tokens, and an absolute maximum session age), plus revocation on logout, password change, suspicious activity, and refresh-token rollover/reuse detection."
+    ],
+    "questions": [],
+    "parents": [],
+    "publication_path": "tool",
+    "ignored_fields": []
+  },
+  "rejected": [],
+  "evidence_dir": "/var/folders/rt/2xh6q3653wn_chp30qpk7qx00000gn/T/robin-pub-pi-5zgyb8fu"
+}

@@ -1,0 +1,37 @@
+{
+  "finding": {
+    "schema_version": 1,
+    "finding_id": "find_a5d64b2d",
+    "version": 1,
+    "submission_id": "sub_4be8914769",
+    "task_id": "task_prd_review",
+    "created_at": 1792032410.2772942,
+    "author": {
+      "kind": "agent",
+      "runtime": "codex",
+      "native_session_id": "01a13d74-4f56-71f1-a94b-1400bb3a0400",
+      "run_id": "0887af916116"
+    },
+    "summary": "Non-expiring sessions leave no time-based limit on stolen-session access",
+    "claims": [
+      {
+        "text": "PRD.md explicitly requires sessions to never expire. This removes time-based termination of a stolen session, allowing continued access unless another mechanism invalidates it; the PRD specifies no such mechanism.",
+        "evidence": [
+          {
+            "path": "PRD.md",
+            "range": "4"
+          }
+        ]
+      }
+    ],
+    "recommendations": [
+      "Require server-enforced idle and absolute session expiration, and define session revocation on logout, password reset, and suspected compromise."
+    ],
+    "questions": [],
+    "parents": [],
+    "publication_path": "tool",
+    "ignored_fields": []
+  },
+  "rejected": [],
+  "evidence_dir": "/var/folders/rt/2xh6q3653wn_chp30qpk7qx00000gn/T/robin-pub-codex-zd0yyeoc"
+}

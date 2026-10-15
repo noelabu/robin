@@ -4,7 +4,7 @@ Dated evidence for each runtime against the PRD §16 minimum capability floor (T
 
 - **Last updated:** 2026-10-15
 - **Machine:** MacBook Pro M4 Pro, macOS 26.5 (development). The release record must come from the Mac mini M4.
-- **Test:** `supervisor/test_live.py <runtime>`: launch, approval held while the service is SIGKILLed, reconnect, approve, follow-up, interrupt, stop.
+- **Tests:** `supervisor/test_live.py <runtime>`: launch, approval held while the service is SIGKILLed, reconnect, approve, follow-up, interrupt, stop. `supervisor/test_publish.py <runtime> tool|message`: the agent reviews a PRD and publishes one finding; Robin checks schema, evidence and attribution. `supervisor/test_findings_unit.py`: offline validation, parsing, attribution and duplicate checks.
 
 ## Floor
 
@@ -17,9 +17,9 @@ Dated evidence for each runtime against the PRD §16 minimum capability floor (T
 | Follow-up | Pending | Pass (new turn) | Pass (new run) |
 | Interrupt | Pending | Pass | Pass |
 | Approval response | Pending | Pass (native) | Pass (Robin extension; Pi has no native approvals) |
-| Finding publication | Not started | Not started | Not started |
+| Finding publication | Code ready; pending API key | Pass: MCP tool, and message block without MCP | Pass: extension tool, and message block |
 | Hosting under supervisor | Pass with scripted runtime; live pending | Pass | Pass |
-| **Level so far** | **Undetermined** | **Live, pending finding publication** | **Live, pending finding publication** |
+| **Level so far** | **Undetermined (needs API key)** | **Live** | **Live** (approvals via Robin's extension) |
 
 ## Other capabilities (not floor items)
 

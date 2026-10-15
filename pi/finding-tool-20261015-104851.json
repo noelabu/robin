@@ -1,0 +1,56 @@
+{
+  "finding": {
+    "schema_version": 1,
+    "finding_id": "find_6e81595c",
+    "version": 1,
+    "submission_id": "security-review-prd-1",
+    "task_id": "task_prd_review",
+    "created_at": 1792032526.919016,
+    "author": {
+      "kind": "agent",
+      "runtime": "pi",
+      "native_session_id": "01a13d76-3563-7168-8f5b-96f17878b40b",
+      "run_id": "3be498ccbe97"
+    },
+    "summary": "Login PRD contains three serious security design flaws: credentials over an unspecified channel, tenant trust from a client-controlled header, and non-expiring sessions.",
+    "claims": [
+      {
+        "text": "Sessions are specified to never expire, which means a stolen or leaked session token grants indefinite access with no forced re-authentication; sessions should have bounded lifetimes, idle timeouts, and revocation support.",
+        "evidence": [
+          {
+            "path": "PRD.md:3"
+          }
+        ]
+      },
+      {
+        "text": "The API trusts the tenant from the client-controlled X-Tenant header on every request, enabling trivial cross-tenant access by simply changing the header value; tenant context must be derived from authenticated server-side state (e.g., a verified token claim), not request headers.",
+        "evidence": [
+          {
+            "path": "PRD.md:2"
+          }
+        ]
+      },
+      {
+        "text": "Authentication is specified only as email and password with no mention of TLS enforcement, rate limiting, brute-force protection, MFA, or password storage requirements, leaving the login flow exposed to credential theft and stuffing attacks.",
+        "evidence": [
+          {
+            "path": "PRD.md:1"
+          }
+        ]
+      }
+    ],
+    "recommendations": [
+      "Derive tenant identity from a cryptographically verified, server-issued session/token claim rather than the X-Tenant header.",
+      "Give sessions a maximum lifetime and idle timeout, and support server-side revocation.",
+      "Require TLS, login rate limiting / lockout, MFA support, and secure password hashing (e.g., Argon2/bcrypt)."
+    ],
+    "questions": [
+      "Is the X-Tenant header intended only as a routing hint, or is it the sole source of tenant authorization?"
+    ],
+    "parents": [],
+    "publication_path": "tool",
+    "ignored_fields": []
+  },
+  "rejected": [],
+  "evidence_dir": "/var/folders/rt/2xh6q3653wn_chp30qpk7qx00000gn/T/robin-pub-pi-1ejcq0ts"
+}
