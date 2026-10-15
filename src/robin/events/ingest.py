@@ -244,6 +244,7 @@ def ingest_batch(
                     payload_blob=blob[0] if blob else None,
                     payload_size=len(ev.payload),
                     content_hash=ev.content_hash,
+                    task_id=ev.task_id,
                 )
                 .on_conflict_do_nothing(index_elements=["source_id", "dedup_key"])
                 .returning(Event.global_cursor)
@@ -347,6 +348,7 @@ def _envelope(r: Any) -> EventEnvelope:
         evidence_kind=EvidenceKind(r["evidence_kind"]),
         payload_ref=f"blob:sha256:{r['payload_blob']}" if r["payload_blob"] else None,
         payload_size=r["payload_size"],
+        task_id=r["task_id"],
         content_hash=r["content_hash"],
     )
 

@@ -53,6 +53,8 @@ QUARANTINE_REASONS = (
 )
 ACTION_STATES = ("requested", "submitted", "acknowledged", "failed", "cancelled", "outcome_unknown")
 ACTORS = ("user", "system")
+TASK_STATUSES = ("open", "completed", "abandoned")
+ATTACHMENT_KINDS = ("file", "instruction", "expected_output")
 
 
 class Meta(Base):
@@ -88,6 +90,11 @@ class Session(Base):
     state_evidence_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     state_cursor: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     active_run_id: Mapped[str | None] = mapped_column(String)
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("project.project_id"))
+    # The task the next run is bound to; a confirmed re-attach takes effect at the next turn (TR-020).
+    current_task_id: Mapped[str | None] = mapped_column(ForeignKey("task.task_id"))
+    pending_task_id: Mapped[str | None] = mapped_column(ForeignKey("task.task_id"))
+    archived: Mapped[int] = mapped_column(Integer, server_default=text("0"))
 
 
 class Run(Base):
@@ -102,6 +109,7 @@ class Run(Base):
     started_at: Mapped[datetime] = mapped_column(UTCDateTime)
     ended_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     outcome: Mapped[str | None] = mapped_column(String)
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("task.task_id"))  # fixed when the run starts
 
 
 class Connection(Base):
@@ -186,6 +194,7 @@ class Event(Base):
             sqlite_where=text("native_event_id IS NOT NULL"),
         ),
         Index("ix_event_run", "run_id", sqlite_where=text("run_id IS NOT NULL")),
+        Index("ix_event_task", "task_id", "global_cursor", sqlite_where=text("task_id IS NOT NULL")),
         {"sqlite_autoincrement": True},
     )
     global_cursor: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -213,6 +222,7 @@ class Event(Base):
     payload_blob: Mapped[str | None] = mapped_column(ForeignKey("blob.sha256"))
     payload_size: Mapped[int] = mapped_column(Integer)
     content_hash: Mapped[str] = mapped_column(String)
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("task.task_id"))
 
 
 class Quarantine(Base):
@@ -282,3 +292,69 @@ class AuditEntry(Base):
     outcome: Mapped[str] = mapped_column(String)
     correlation_id: Mapped[str | None] = mapped_column(String)
     action_id: Mapped[str | None] = mapped_column(ForeignKey("control_action.action_id"))
+
+
+class Project(Base):
+    """A registered repository or directory (FR-001)."""
+
+    __tablename__ = "project"
+    project_id: Mapped[str] = mapped_column(String, primary_key=True)
+    path: Mapped[str] = mapped_column(Text, unique=True)  # canonical
+    name: Mapped[str] = mapped_column(String)
+    git_remote: Mapped[str | None] = mapped_column(Text)
+    git_branch: Mapped[str | None] = mapped_column(String)
+    git_checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    archived: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class Task(Base):
+    """The shared coordination boundary across agents (FR-002, FR-014)."""
+
+    __tablename__ = "task"
+    __table_args__ = (
+        CheckConstraint(_in("status", TASK_STATUSES), name="status"),
+        # Completed only with recorded evidence of an explicit user decision.
+        CheckConstraint(
+            "status <> 'completed' OR completion_evidence IS NOT NULL", name="completion_evidence"
+        ),
+        Index("ix_task_project", "project_id", "archived"),
+    )
+    task_id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("project.project_id"))
+    title: Mapped[str] = mapped_column(String)
+    objective: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String, server_default=text("'open'"))
+    completion_evidence: Mapped[str | None] = mapped_column(Text)
+    archived: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    revision: Mapped[int] = mapped_column(Integer, server_default=text("1"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class TaskSession(Base):
+    """A session's association with a task; a session can appear in several task histories (TR-020)."""
+
+    __tablename__ = "task_session"
+    task_id: Mapped[str] = mapped_column(ForeignKey("task.task_id"), primary_key=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("session.session_id"), primary_key=True)
+    role: Mapped[str | None] = mapped_column(String)
+    retained_context_disclosed: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    attached_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class TaskAttachment(Base):
+    """Task input: an approved snapshot of a file, an instruction, or an expected output (FR-002)."""
+
+    __tablename__ = "task_attachment"
+    __table_args__ = (CheckConstraint(_in("kind", ATTACHMENT_KINDS), name="kind"),)
+    attachment_id: Mapped[str] = mapped_column(String, primary_key=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("task.task_id"))
+    kind: Mapped[str] = mapped_column(String)
+    source_path: Mapped[str | None] = mapped_column(Text)  # the original, never modified
+    text_value: Mapped[str | None] = mapped_column(Text)
+    snapshot_blob: Mapped[str | None] = mapped_column(ForeignKey("blob.sha256"))
+    content_hash: Mapped[str | None] = mapped_column(String)
+    size: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)

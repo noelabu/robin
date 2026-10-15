@@ -47,9 +47,8 @@ def test_needs_native_id_or_byte_range():
     assert NewEvent(**BASE).dedup_key == "r:0:0-10"
 
 
-def test_task_id_reserved_until_phase_2():
-    with pytest.raises(ValidationError):
-        NewEvent(**{**BASE, "task_id": "t"})
+def test_task_id_carried():
+    assert NewEvent(**{**BASE, "task_id": "t"}).task_id == "t"
 
 
 def test_payload_not_in_repr():

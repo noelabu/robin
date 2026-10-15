@@ -58,9 +58,13 @@ def apply(conn: Connection, session_id: str, cursor: int, at: datetime, event: d
     """Apply one committed event. Ignores events at or before the session's projected cursor."""
     change = reduce(event)
     row = conn.execute(
-        select(SessionRow.state_cursor, SessionRow.runtime_state, SessionRow.active_run_id).where(
-            SessionRow.session_id == session_id
-        )
+        select(
+            SessionRow.state_cursor,
+            SessionRow.runtime_state,
+            SessionRow.active_run_id,
+            SessionRow.current_task_id,
+            SessionRow.pending_task_id,
+        ).where(SessionRow.session_id == session_id)
     ).first()
     if change is None or row is None or cursor <= row.state_cursor:
         return
@@ -78,12 +82,17 @@ def apply(conn: Connection, session_id: str, cursor: int, at: datetime, event: d
         values["connection_state"] = change.connection_state
     if change.run == "start":
         run_id = new_id()
+        task_id = row.current_task_id
+        if row.pending_task_id:  # a confirmed re-attach takes effect at the next run (TR-020)
+            task_id = row.pending_task_id
+            values["current_task_id"], values["pending_task_id"] = task_id, None
         conn.execute(
             insert(Run).values(
                 run_id=run_id,
                 session_id=session_id,
                 started_at=at,
                 native_turn_id=event.get("native_turn_id"),
+                task_id=task_id,
             )
         )
         values["active_run_id"] = run_id

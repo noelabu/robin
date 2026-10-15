@@ -11,7 +11,7 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Connection, select
+from sqlalchemy import Connection, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from robin.events.supervisor_source import SupervisorRecord
@@ -292,6 +292,12 @@ def _project_batch(conn: Connection, store: Store, batch: int) -> int:
                 r.source_event_id or "",
                 ev,
             )
+            # Attribute the event to the session's task as of this point in commit order.
+            task = conn.execute(
+                select(SessionRow.current_task_id).where(SessionRow.session_id == r.session_id)
+            ).scalar()
+            if task:
+                conn.execute(update(Event).where(Event.global_cursor == r.global_cursor).values(task_id=task))
     if rows:
         conn.execute(
             sqlite_insert(Meta)

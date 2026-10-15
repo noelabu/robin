@@ -30,6 +30,7 @@ from robin.service.auth import COOKIE, CSRF_HEADER, Auth
 from robin.service.runtime import ServiceRuntime
 from robin.store.models import Event
 from robin.store.models import Session as SessionRow
+from robin.workspace import tasks as ws
 
 API = "/api/v1"
 HEARTBEAT_S = 15.0
@@ -43,18 +44,18 @@ class ApiError(Exception):
         self.status, self.code, self.message, self.retry = status, code, message, retry
 
 
-def _error(status: int, code: str, message: str, retry: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=status,
-        content={
-            "error": {
-                "code": code,
-                "message": message,
-                "correlation_id": uuid.uuid4().hex[:12],
-                "retry": retry,
-            }
-        },
-    )
+def _error(
+    status: int, code: str, message: str, retry: str, detail: dict[str, Any] | None = None
+) -> JSONResponse:
+    error: dict[str, Any] = {
+        "code": code,
+        "message": message,
+        "correlation_id": uuid.uuid4().hex[:12],
+        "retry": retry,
+    }
+    if detail:
+        error["detail"] = detail
+    return JSONResponse(status_code=status, content={"error": error})
 
 
 # -- request bodies -----------------------------------------------------------
@@ -62,7 +63,9 @@ def _error(status: int, code: str, message: str, retry: str) -> JSONResponse:
 
 class LaunchBody(BaseModel):
     runtime: str
-    cwd: str
+    cwd: str | None = None  # defaults to the task's project folder
+    task_id: str | None = None
+    role: str | None = None
     prompt: str | None = None
     action_id: str = Field(min_length=8, max_length=128)
 
@@ -106,6 +109,10 @@ def session_view(r: Any) -> dict[str, Any]:
         "active_run_id": r["active_run_id"],
         "execution_cwd": r["execution_cwd"],
         "lease_generation": r["lease_generation"],
+        "project_id": r["project_id"],
+        "current_task_id": r["current_task_id"],
+        "pending_task_id": r["pending_task_id"],
+        "archived": bool(r["archived"]),
         "created_at": r["created_at"].isoformat(),
         "updated_at": r["updated_at"].isoformat(),
         "controls": controls,
@@ -149,6 +156,11 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
     @app.exception_handler(ApiError)
     async def _api_error(_: Request, exc: ApiError) -> JSONResponse:
         return _error(exc.status, exc.code, exc.message, exc.retry)
+
+    @app.exception_handler(ws.WorkspaceError)
+    async def _workspace_error(_: Request, exc: ws.WorkspaceError) -> JSONResponse:
+        retry = "reload_state" if exc.status == 409 else "fix_request"
+        return _error(exc.status, exc.code, str(exc), retry, exc.detail)
 
     @app.exception_handler(RequestValidationError)
     async def _validation(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -248,10 +260,21 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
 
     @app.get(f"{API}/sessions")
     async def sessions(
-        _: str = Authed, runtime_name: str | None = Query(None, alias="runtime"), state: str | None = None
+        _: str = Authed,
+        runtime_name: str | None = Query(None, alias="runtime"),
+        state: str | None = None,
+        project_id: str | None = None,
+        task_id: str | None = None,
+        include_archived: bool = False,
     ) -> dict[str, Any]:
         with store.reader.connect() as conn:
             rows = _sessions(conn)
+        if not include_archived:
+            rows = [r for r in rows if not r["archived"]]
+        if project_id:
+            rows = [r for r in rows if r["project_id"] == project_id]
+        if task_id:
+            rows = [r for r in rows if task_id in (r["current_task_id"], r["pending_task_id"])]
         if runtime_name:
             rows = [r for r in rows if r["runtime"] == runtime_name]
         if state:
@@ -273,7 +296,19 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         existing = await runtime.manager.get_action(body.action_id)
         if existing is not None:  # a retried request: report, don't launch again
             return {"action": action_view(existing), "session_id": existing.session_id}
-        cwd = Path(body.cwd).expanduser()
+        task = project = None
+        if body.task_id:
+            try:
+                task = await asyncio.to_thread(ws.get_task, store, body.task_id)
+                project = await asyncio.to_thread(ws.get_project, store, task["project_id"])
+            except ws.WorkspaceError as exc:
+                raise ApiError(exc.status, exc.code, str(exc)) from exc
+        raw_cwd = body.cwd or (project["path"] if project else None)
+        if raw_cwd is None:
+            raise ApiError(
+                422, "invalid_cwd", "give cwd, or a task_id whose project folder to use", "fix_request"
+            )
+        cwd = Path(raw_cwd).expanduser()
         if not cwd.is_absolute() or not cwd.is_dir():
             raise ApiError(422, "invalid_cwd", "cwd must be an existing absolute directory", "fix_request")
         try:
@@ -286,6 +321,15 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
             raise ApiError(409, "unsupported", reason or "unsupported")
         sid = await asyncio.to_thread(
             ensure_session, store, runtime=body.runtime, mode="managed", execution_cwd=str(checked.path)
+        )
+        # Work for a task always starts a new native session bound to it (FR-013).
+        await asyncio.to_thread(
+            ws.bind_new_session,
+            store,
+            sid,
+            task_id=body.task_id,
+            project_id=project["project_id"] if project else None,
+            role=body.role,
         )
         action = await _run(
             runtime.manager.launch(
@@ -429,6 +473,10 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
     @app.get(f"{API}/health")
     async def health(_: str = Authed) -> dict[str, Any]:
         return {"service": "ready", "supervisor_connected": runtime.supervisor_connected, "pid": os.getpid()}
+
+    from robin.service import routes_workspace
+
+    routes_workspace.register(app, store, Authed, API)
 
     # -- web client (mounted last: it matches every path) ----------------------
 

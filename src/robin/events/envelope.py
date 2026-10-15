@@ -129,8 +129,6 @@ class NewEvent(BaseModel):
             raise ValueError(
                 "an event needs a source_event_id or a byte range (source_seq..source_offset_end)"
             )
-        if self.task_id is not None:
-            raise ValueError("task association arrives in Phase 2; task_id must be None")
         return self
 
     @property

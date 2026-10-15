@@ -96,3 +96,24 @@ async def test_doctor_probe_does_not_evict_the_service_connection(supervised):
     assert not service.closed.is_set()  # the service's connection is still the supervisor's writer
     assert (await service.request({"type": "status"}))["ok"]
     await service.close()
+
+
+def test_projects_and_tasks_from_the_cli(served, capsys):
+    store, project = served
+    d = str(store.data_dir)
+    (project / "PRD.md").write_text("# PRD\n")
+    assert "project " in run(capsys, "project", "add", str(project), "--data", d)
+    out = run(
+        capsys, "task", "create", "PRD review", "--project", str(project), "--attach", "PRD.md", "--data", d
+    )
+    task_id = out.split()[1]
+    assert "1 attachment(s)" in out and task_id in run(capsys, "tasks", "--data", d)
+    sid = session_id(
+        run(capsys, "run", "fake", "--cwd", str(project), "--task", task_id, "--wait", "10", "--data", d)
+    )
+    other = run(capsys, "task", "create", "Other", "--project", str(project), "--data", d).split()[1]
+    with pytest.raises(SystemExit):
+        main(["task", "attach", other, sid, "--data", d])
+    assert "--confirm" in capsys.readouterr().err
+    assert "attached" in run(capsys, "task", "attach", other, sid, "--confirm", "--data", d)
+    run(capsys, "stop", sid, "--data", d)

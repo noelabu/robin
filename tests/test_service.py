@@ -347,3 +347,46 @@ def test_phase1_exit_session_survives_a_full_service_restart(supervised):
     finally:
         server2.should_exit = True
         thread2.join(10)
+
+
+def test_projects_tasks_and_launch_for_a_task(service):
+    store, port, auth = service
+    c = browser(port, auth)
+    proj = store.data_dir.parent / "taskproj"
+    proj.mkdir()
+    (proj / "PRD.md").write_text("# PRD\n")
+    p = c.post("/api/v1/projects", json={"path": str(proj)})
+    assert p.status_code == 201
+    pid = p.json()["project_id"]
+    t = c.post(
+        "/api/v1/tasks",
+        json={"project_id": pid, "title": "PRD review", "objective": "Review it", "files": ["PRD.md"]},
+    )
+    assert t.status_code == 201
+    tid = t.json()["task_id"]
+    r = c.post(
+        "/api/v1/sessions/launch",
+        json={"runtime": "fake", "task_id": tid, "role": "reviewer", "prompt": "go", "action_id": aid()},
+    )
+    assert r.status_code == 202
+    sid = r.json()["session_id"]
+    s = wait_session(c, sid, lambda s: s["runtime_state"] in ("running", "waiting_for_input"))
+    assert s["current_task_id"] == tid and s["execution_cwd"] == str(
+        proj.resolve()
+    )  # project folder by default
+    task = c.get(f"/api/v1/tasks/{tid}").json()
+    assert [x["session_id"] for x in task["sessions"]] == [sid] and task["sessions"][0]["role"] == "reviewer"
+    assert [x["session_id"] for x in c.get(f"/api/v1/sessions?task_id={tid}").json()["sessions"]] == [sid]
+    evs = c.get("/api/v1/events?limit=500").json()["events"]
+    assert any(e["task_id"] == tid for e in evs if e["session_id"] == sid)  # events attributed to the task
+
+    done = c.patch(f"/api/v1/tasks/{tid}", json={"expected_revision": 1, "status": "completed"})
+    assert done.status_code == 422 and done.json()["error"]["code"] == "evidence_required"
+    stale = c.patch(f"/api/v1/tasks/{tid}", json={"expected_revision": 9, "title": "x"})
+    assert stale.status_code == 409 and stale.json()["error"]["detail"] == {"revision": 1}
+    c.patch(f"/api/v1/sessions/{sid}", json={"archived": True})
+    assert sid not in [x["session_id"] for x in c.get("/api/v1/sessions").json()["sessions"]]
+    assert sid in [
+        x["session_id"] for x in c.get("/api/v1/sessions?include_archived=true").json()["sessions"]
+    ]
+    c.post(f"/api/v1/sessions/{sid}/actions", json={"type": "stop", "action_id": aid()})

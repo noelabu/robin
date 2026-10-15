@@ -125,7 +125,13 @@ def cmd_run(args: argparse.Namespace) -> None:
             c,
             "POST",
             "/sessions/launch",
-            {"runtime": args.agent, "cwd": str(Path(args.cwd).resolve()), "prompt": prompt, "action_id": aid},
+            {
+                "runtime": args.agent,
+                "cwd": str(Path(args.cwd).resolve()),
+                "prompt": prompt,
+                "action_id": aid,
+                "task_id": args.task,
+            },
         )
         print(f"session {r['session_id']}")
         print_action(wait_action(c, aid, args.wait) if args.wait else r["action"])
@@ -138,6 +144,59 @@ def cmd_control(args: argparse.Namespace) -> None:
     with client(args.data) as c:
         r = call(c, "POST", f"/sessions/{args.session}/actions", body)
         print_action(wait_action(c, body["action_id"], args.wait) if args.wait else r["action"])
+
+
+def cmd_project_add(args: argparse.Namespace) -> None:
+    with client(args.data) as c:
+        p = call(c, "POST", "/projects", {"path": str(Path(args.path).resolve()), "name": args.name})
+    git = f" ({p['git']['branch']})" if p.get("git") else ""
+    print(f"project {p['project_id']}  {p['name']}{git}  {p['path']}")
+
+
+def _project_for(c: httpx.Client, path: str) -> str:
+    return str(call(c, "POST", "/projects", {"path": str(Path(path).resolve())})["project_id"])
+
+
+def cmd_task_create(args: argparse.Namespace) -> None:
+    with client(args.data) as c:
+        pid = _project_for(c, args.project)
+        t = call(
+            c,
+            "POST",
+            "/tasks",
+            {
+                "project_id": pid,
+                "title": args.title,
+                "objective": args.objective or args.title,
+                "files": args.attach or [],
+            },
+        )
+    print(f"task {t['task_id']}  {t['title']}  ({len(t['attachments'])} attachment(s))")
+
+
+def cmd_task_attach(args: argparse.Namespace) -> None:
+    with client(args.data) as c:
+        try:
+            call(
+                c,
+                "POST",
+                f"/tasks/{args.task}/sessions",
+                {"session_id": args.session, "confirm_retained_context": args.confirm},
+            )
+        except CliError as exc:
+            if "confirmation_required" in str(exc):
+                raise CliError(f"{exc}\nUse --confirm to continue this session here anyway.") from exc
+            raise
+    print(f"attached {args.session} to {args.task}")
+
+
+def cmd_tasks(args: argparse.Namespace) -> None:
+    with client(args.data) as c:
+        tasks = call(c, "GET", "/tasks")["tasks"]
+    if not tasks:
+        print("no tasks")
+    for t in tasks:
+        print(f"{t['task_id']}  {t['status']:<9} {t['title']}")
 
 
 def cmd_sessions(args: argparse.Namespace) -> None:
@@ -312,6 +371,7 @@ def parser() -> argparse.ArgumentParser:
     g = p.add_mutually_exclusive_group()
     g.add_argument("--prompt")
     g.add_argument("--prompt-file")
+    p.add_argument("--task", help="task to bind the new session to")
     p.add_argument("--wait", type=float, default=0, help="seconds to wait for the runtime to accept")
     p.set_defaults(func=cmd_run)
 
@@ -328,6 +388,31 @@ def parser() -> argparse.ArgumentParser:
             g.add_argument("--file")
         p.add_argument("--wait", type=float, default=0)
         p.set_defaults(func=cmd_control, control=control)
+
+    p = sub.add_parser("project", parents=[common], help="manage projects")
+    psub = p.add_subparsers(dest="project_command", required=True)
+    s = psub.add_parser("add", parents=[common], help="register a repository or folder")
+    s.add_argument("path")
+    s.add_argument("--name")
+    s.set_defaults(func=cmd_project_add)
+
+    p = sub.add_parser("task", parents=[common], help="manage shared tasks")
+    tsub = p.add_subparsers(dest="task_command", required=True)
+    s = tsub.add_parser("create", parents=[common], help="create a task")
+    s.add_argument("title")
+    s.add_argument("--project", default=".", help="project folder (registered if needed)")
+    s.add_argument("--objective")
+    s.add_argument("--attach", action="append", help="file to attach (repeatable)")
+    s.set_defaults(func=cmd_task_create)
+    s = tsub.add_parser("attach", parents=[common], help="attach a session to a task")
+    s.add_argument("task")
+    s.add_argument("session")
+    s.add_argument(
+        "--confirm", action="store_true", help="continue a session that holds another task's context"
+    )
+    s.set_defaults(func=cmd_task_attach)
+
+    sub.add_parser("tasks", parents=[common], help="list tasks").set_defaults(func=cmd_tasks)
 
     p = sub.add_parser("sessions", parents=[common], help="list sessions")
     p.add_argument("--json", action="store_true")
