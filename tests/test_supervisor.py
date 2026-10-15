@@ -3,42 +3,10 @@
 import asyncio
 import os
 import signal
-import time
 
-import pytest
-
+from conftest import _alive, _supervisor_pid
 from robin.events.ingest import ensure_session, read_events
 from robin.supervisor.client import SupervisorBridge, SupervisorClient, committed_cursor, ensure_supervisor
-from robin.supervisor.server import supervisor_dir
-
-
-def _alive(pid):
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-
-
-def _supervisor_pid(data_dir):
-    return int((supervisor_dir(data_dir) / "supervisor.lock").read_text())
-
-
-@pytest.fixture
-def supervised(store, monkeypatch):
-    monkeypatch.setenv("ROBIN_FAKE_TICK", "0.05")
-    asyncio.run(ensure_supervisor(store.data_dir))
-    yield store
-    pid = _supervisor_pid(store.data_dir)  # whichever supervisor holds the lock now
-    if _alive(pid):
-        os.kill(pid, signal.SIGTERM)
-        for _ in range(50):
-            if not _alive(pid):
-                break
-            time.sleep(0.05)
-        else:
-            os.kill(pid, signal.SIGKILL)
-    os.system("pkill -f 'robin.runtime.host --runtime fake' >/dev/null 2>&1")
 
 
 async def _events_until(client, pred, timeout=10.0):

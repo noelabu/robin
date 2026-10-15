@@ -1,7 +1,9 @@
 """The service's connection to the supervisor, and the bridge that ingests its stream (TR-006, TR-004)."""
 
 import asyncio
+import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +14,9 @@ from robin.store import Store
 from robin.store.models import SourceCheckpoint
 from robin.supervisor.protocol import MAX_LINE, PROTOCOL_VERSION, decode, encode
 from robin.supervisor.server import socket_path, start_detached
+
+
+log = logging.getLogger(__name__)
 
 
 class SupervisorUnavailable(RuntimeError):
@@ -109,10 +114,14 @@ class SupervisorBridge:
     """Ingests the supervisor stream and acknowledges only what is committed."""
 
     def __init__(self, store: Store, client: SupervisorClient, ingestor: SupervisorIngestor | None = None,
-                 batch: int = 200):
+                 batch: int = 200,
+                 on_committed: Callable[[list[SupervisorRecord]], Awaitable[None]] | None = None):
+        from robin.runtime.events import host_mapper
+
         self.store = store
         self.client = client
-        self.ingestor = ingestor or SupervisorIngestor(store)
+        self.ingestor = ingestor or SupervisorIngestor(store, mapper=host_mapper)
+        self.on_committed = on_committed
         self.batch = batch
         self.cursor = committed_cursor(store)
 
@@ -137,5 +146,10 @@ class SupervisorBridge:
         if fresh:
             await asyncio.to_thread(self.ingestor.ingest, fresh)
             self.cursor = max(self.cursor, max(r.seq for r in fresh))
+            if self.on_committed is not None:
+                try:
+                    await self.on_committed(fresh)
+                except Exception:  # projection catches up later from the event table; keep ingesting
+                    log.exception("post-commit callback failed; events are committed and will be re-projected")
         if not self.client.closed.is_set():
             await self.client.ack(self.cursor)  # after commit: the supervisor may now drop these

@@ -36,6 +36,7 @@ def _in(column: str, values: tuple[str, ...]) -> str:
 
 
 SESSION_MODES = ("managed", "observed")
+RUNTIME_STATES = ("running", "waiting_for_input", "idle", "failed", "stopped", "unknown")
 RUN_OUTCOMES = ("completed", "interrupted", "failed", "stopped", "unknown")
 CONNECTION_STATES = ("connected", "reconnecting", "stale", "disconnected")
 SOURCE_KINDS = ("supervisor", "jsonl_file")
@@ -67,6 +68,8 @@ class Session(Base):
         UniqueConstraint("host_id", "runtime", "native_session_id"),
         CheckConstraint("runtime <> ''", name="runtime_nonempty"),
         CheckConstraint(_in("mode", SESSION_MODES), name="mode"),
+        CheckConstraint(_in("runtime_state", RUNTIME_STATES), name="runtime_state"),
+        CheckConstraint(_in("connection_state", CONNECTION_STATES), name="connection_state"),
     )
     session_id: Mapped[str] = mapped_column(String, primary_key=True)
     host_id: Mapped[str] = mapped_column(String)
@@ -79,6 +82,12 @@ class Session(Base):
     lease_generation: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    # Projected state (TR-040): runtime and connection are separate, each with its evidence time.
+    runtime_state: Mapped[str] = mapped_column(String, server_default=text("'unknown'"))
+    connection_state: Mapped[str] = mapped_column(String, server_default=text("'disconnected'"))
+    state_evidence_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    state_cursor: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    active_run_id: Mapped[str | None] = mapped_column(String)
 
 
 class Run(Base):
