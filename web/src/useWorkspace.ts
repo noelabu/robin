@@ -9,6 +9,7 @@ type State = {
   projects: Project[];
   tasks: Task[];
   observedTotal: number;
+  olderDone: boolean; // the server has no observed sessions older than the oldest loaded one
   feed: FeedItem[];
   seen: Set<string>;
   cursor: number;
@@ -20,7 +21,7 @@ type State = {
 
 type Msg =
   | { kind: "snapshot"; ws: Workspace }
-  | { kind: "older"; sessions: Session[] }
+  | { kind: "older"; sessions: Session[]; done: boolean }
   | { kind: "event"; event: RobinEvent; session: Session; preview: string | null }
   | { kind: "stream"; state: State["streamState"] };
 
@@ -64,6 +65,7 @@ function reducer(s: State, m: Msg): State {
       return {
         ...s,
         sessions: { ...Object.fromEntries(m.sessions.map((x) => [x.session_id, x])), ...s.sessions },
+        olderDone: m.done,
       };
   }
 }
@@ -74,6 +76,7 @@ const initial: State = {
   projects: [],
   tasks: [],
   observedTotal: 0,
+  olderDone: false,
   feed: [],
   seen: new Set(),
   cursor: 0,
@@ -124,10 +127,22 @@ export function useWorkspace(enabled: boolean) {
     dispatch({ kind: "snapshot", ws: await api.workspace() });
   }, []);
 
-  const loadOlder = useCallback(async (offset: number) => {
-    const page = await api.sessions(offset);
-    dispatch({ kind: "older", sessions: page.sessions });
-    return page.next_offset;
+  // Page from the oldest observed session loaded so far, not by offset: archiving or new activity
+  // meanwhile would shift offsets and skip a session. One updated since it loaded moves to the top
+  // and is already here, so the next-oldest is a safe cursor.
+  const sessions = useRef(state.sessions);
+  sessions.current = state.sessions;
+  const loadOlder = useCallback(async () => {
+    const oldest = Object.values(sessions.current)
+      .filter((x) => x.mode === "observed")
+      .reduce<Session | null>(
+        (o, x) =>
+          !o || x.updated_at < o.updated_at || (x.updated_at === o.updated_at && x.session_id < o.session_id) ? x : o,
+        null,
+      );
+    if (!oldest) return;
+    const page = await api.olderSessions(oldest);
+    dispatch({ kind: "older", sessions: page.sessions, done: page.next_before === null });
   }, []);
 
   return { ...state, reload, loadOlder };

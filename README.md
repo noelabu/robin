@@ -25,6 +25,15 @@ The code here is Phase 0 spike code. Its runs are the evidence behind the capabi
 uv sync                      # installs claude-agent-sdk into .venv
 ```
 
+## Tests
+
+```bash
+uv run pytest                                  # Python suite
+cd web && npm test                             # web components
+uv run playwright install chromium             # once, if Google Chrome isn't installed
+ROBIN_E2E=1 uv run pytest tests/e2e            # the dashboard in a real browser
+```
+
 ## Runs
 
 ```bash

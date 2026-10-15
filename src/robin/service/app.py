@@ -12,6 +12,7 @@ import os
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -360,9 +361,26 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         mode: str | None = None,
         limit: int = Query(200, ge=1, le=1000),
         offset: int = Query(0, ge=0),
+        before_updated_at: datetime | None = None,
+        before_id: str | None = None,
     ) -> dict[str, Any]:
-        """Most recently updated first, a page at a time (NFR-01: history lists stay bounded)."""
+        """Most recently updated first, a page at a time (NFR-01: history lists stay bounded).
+
+        `before_updated_at` + `before_id` (a session as the client last saw it) page from there on, so
+        sessions archived or updated meanwhile can't shift the pages the way an offset does.
+        """
         where: list[Any] = []
+        if (before_updated_at is None) != (before_id is None):
+            raise ApiError(
+                422, "invalid_request", "give before_updated_at and before_id together", "fix_request"
+            )
+        if before_updated_at is not None:
+            if before_updated_at.tzinfo is None:
+                raise ApiError(422, "invalid_request", "before_updated_at needs a UTC offset", "fix_request")
+            where.append(
+                (SessionRow.updated_at < before_updated_at)
+                | ((SessionRow.updated_at == before_updated_at) & (SessionRow.session_id < before_id))
+            )
         if not include_archived:
             where.append(SessionRow.archived == 0)
         if project_id:
@@ -378,10 +396,14 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         with store.reader.connect() as conn:
             total = conn.execute(select(func.count()).select_from(SessionRow).where(*where)).scalar_one()
             rows = _sessions(conn, where=tuple(where), limit=limit, offset=offset)
+        more = offset + limit < total
         return {
             "sessions": rows,
-            "total": total,
-            "next_offset": offset + limit if offset + limit < total else None,
+            "total": total,  # matching sessions from this point on
+            "next_offset": offset + limit if more else None,
+            "next_before": {"updated_at": rows[-1]["updated_at"], "session_id": rows[-1]["session_id"]}
+            if more
+            else None,
         }
 
     @app.get(f"{API}/sessions/{{session_id}}")

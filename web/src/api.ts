@@ -211,10 +211,20 @@ export const newActionId = () => `ui-${crypto.randomUUID()}`;
 
 export const api = {
   workspace: () => request<Workspace>("GET", "/workspace"),
-  sessions: (offset: number, limit = 200) =>
-    request<{ sessions: Session[]; total: number; next_offset: number | null }>(
+  /** Observed sessions older than `before` (as the client last saw it), newest first. */
+  olderSessions: (before: { updated_at: string; session_id: string }, limit = 200) =>
+    request<{
+      sessions: Session[];
+      total: number;
+      next_before: { updated_at: string; session_id: string } | null;
+    }>(
       "GET",
-      `/sessions?mode=observed&offset=${offset}&limit=${limit}`,
+      `/sessions?${new URLSearchParams({
+        mode: "observed",
+        limit: String(limit),
+        before_updated_at: before.updated_at,
+        before_id: before.session_id,
+      })}`,
     ),
   launch: (
     runtime: string,

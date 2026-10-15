@@ -532,3 +532,28 @@ def test_session_list_pages_and_snapshot_is_bounded(service, monkeypatch):
 
     assert c.get("/api/v1/sessions?limit=0").status_code == 422
     assert c.get("/api/v1/sessions?limit=1001").status_code == 422
+
+
+def test_paging_from_a_cursor_skips_nothing_when_sessions_are_archived_meanwhile(service):
+    from robin.events.ingest import ensure_session
+
+    store, port, auth = service
+    observed = [ensure_session(store, runtime="claude", mode="observed") for _ in range(7)]
+    c = cli(port, auth)
+    page = c.get("/api/v1/sessions?mode=observed&limit=3").json()
+    seen = [s["session_id"] for s in page["sessions"]]
+    # Archive one of the first page: an offset of 3 would now start one row late and skip a session.
+    c.patch(f"/api/v1/sessions/{seen[0]}", json={"archived": True})
+    cursor = page["next_before"]
+    while cursor:
+        q = httpx.QueryParams(
+            mode="observed", limit=3, before_updated_at=cursor["updated_at"], before_id=cursor["session_id"]
+        )
+        page = c.get(f"/api/v1/sessions?{q}").json()
+        seen += [s["session_id"] for s in page["sessions"]]
+        cursor = page["next_before"]
+    assert sorted(seen) == sorted(observed) and len(seen) == 7
+
+    assert c.get("/api/v1/sessions?before_id=x").status_code == 422  # both halves of the cursor, or neither
+    naive = c.get("/api/v1/sessions?before_id=x&before_updated_at=2026-10-15T00:00:00")
+    assert naive.status_code == 422

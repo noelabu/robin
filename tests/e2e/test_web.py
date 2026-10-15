@@ -277,3 +277,30 @@ def test_keyboard_only_reaches_every_session_and_keeps_focus(running):
         )
         assert violations == []
         browser.close()
+
+
+def test_load_older_pages_in_every_observed_session(running, monkeypatch):
+    from playwright.sync_api import expect, sync_playwright
+
+    from robin.events.ingest import ensure_session
+    from robin.service import app as service_app
+
+    store, port, auth = running
+    monkeypatch.setattr(service_app, "SNAPSHOT_SESSIONS", 20)
+    for i in range(450):
+        ensure_session(store, runtime="claude", mode="observed", execution_cwd=f"/w/app{i}")
+    with sync_playwright() as p:
+        browser = launch_browser(p)
+        page = browser.new_page()
+        page.goto(f"http://127.0.0.1:{port}/#bootstrap={auth.new_bootstrap()}")
+        expect(page.get_by_label("Sessions, 20")).to_be_visible(timeout=10_000)
+        more = page.get_by_role("button", name="load older")
+        expect(more).to_contain_text("20 of 450")
+        more.click()
+        expect(page.get_by_label("Sessions, 220")).to_be_visible()
+        more.click()
+        expect(page.get_by_label("Sessions, 420")).to_be_visible()
+        more.click()
+        expect(page.get_by_label("Sessions, 450")).to_be_visible()
+        expect(more).to_have_count(0)  # nothing older left
+        browser.close()

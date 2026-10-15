@@ -159,8 +159,8 @@ export function App() {
           </label>
         </div>
         <SessionList sessions={sessions} selected={current?.session_id ?? null} onSelect={setSelected} />
-        {observedLoaded < ws.observedTotal && (
-          <button className="link" onClick={() => void ws.loadOlder(observedLoaded)}>
+        {!ws.olderDone && observedLoaded < ws.observedTotal && (
+          <button className="link" onClick={() => void ws.loadOlder()}>
             {observedLoaded.toLocaleString()} of {ws.observedTotal.toLocaleString()} observed sessions loaded · load
             older
           </button>
