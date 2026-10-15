@@ -128,7 +128,14 @@ def test_supervisor_restart_refuses_running_turns_then_resumes_idle_sessions(api
 
     main(["supervisor", "restart", "--yes", *d])
     assert "resumed 1 session(s)" in capsys.readouterr().out
-    s = wait(lambda: (x := c.get(f"/sessions/{busy}").json())["connection_state"] == "connected" and x)
+    # host_spawned marks it connected before session_started replaces the old host's "stopped"
+    s = wait(
+        lambda: (
+            (x := c.get(f"/sessions/{busy}").json())["connection_state"] == "connected"
+            and x["runtime_state"] != "stopped"
+            and x
+        )
+    )
     assert s["native_session_id"] == native  # the same native session, no new turn started
     assert s["runtime_state"] == "idle"
 
