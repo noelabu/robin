@@ -1,0 +1,9 @@
+[project]
+name = "robin-spikes"
+version = "0.0.0"
+description = "Phase 0 integration spikes (throwaway code, kept as evidence)"
+requires-python = ">=3.12"
+dependencies = ["claude-agent-sdk"]
+
+[tool.uv]
+package = false
