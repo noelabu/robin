@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 from findings import MESSAGE_INSTRUCTIONS, ingest
-from test_live import ROOT, RUNTIMES, load_key
+from test_live import ROOT, RUNTIMES
 from test_restart import HERE, PY, check, events, run
 
 PRD = """# Login PRD
@@ -33,14 +33,28 @@ PRD = """# Login PRD
 TOOL_NAME = {"claude": "finding_publish", "codex": "finding_publish", "pi": "robin_finding_publish"}
 
 
+def robin_tool_present(runtime, evs):
+    """Did the session have Robin's publication tool? Read from the runtime's own reports."""
+    for e in evs:
+        ev = e["event"]
+        if runtime == "claude" and ev.get("kind") == "SystemMessage" and ev["data"].get("subtype") == "init":
+            init = ev["data"]["data"]
+            if any(m.get("name") == "robin" for m in init.get("mcp_servers", [])) or \
+                    any("robin" in t for t in init.get("tools", [])):
+                return True
+        if runtime == "codex" and ev.get("method") == "mcpServer/startupStatus/updated" and ev["params"].get("name") == "robin":
+            return True
+        if runtime == "pi" and ev.get("type") == "pi_event" and ev["data"].get("toolName") == "robin_finding_publish":
+            return True
+    return False
+
+
 def main(runtime, path):
     rt = RUNTIMES[runtime]
     data = Path(tempfile.mkdtemp(prefix=f"robin-pub-{runtime}-"))
     work = Path(tempfile.mkdtemp(prefix=f"robin-pub-{runtime}-cwd-"))
     (work / "PRD.md").write_text(PRD)
     env = {**os.environ, "ROBIN_PUBLISH_PATH": path}
-    if runtime == "claude":
-        env["ANTHROPIC_API_KEY"] = load_key()
     if runtime == "pi":
         env.update(rt["env"]())  # temp session dir
     subprocess.run([PY, "supervisor.py", "start", "--data", str(data)], cwd=HERE, check=True, env=env)
@@ -83,9 +97,7 @@ def main(runtime, path):
           f"attributed to {runtime} session {native} from the event stream")
     check(all(c.get("evidence") or c.get("unsupported") for c in f["claims"]), "every claim has evidence")
     if path == "message":
-        mcp_calls = [e for e in evs if "mcp" in json.dumps(e["event"]).lower() and "robin" in json.dumps(e["event"]).lower()
-                     and e["event"].get("type") in ("codex_notification", "sdk_message")]
-        check(not mcp_calls, "no Robin MCP server involved (MCP-disabled path)")
+        check(not robin_tool_present(runtime, evs), "no Robin MCP server or tool in the session (MCP-disabled path)")
     out_dir = ROOT / runtime
     out_dir.mkdir(exist_ok=True)
     out = out_dir / f"finding-{path}-{datetime.now():%Y%m%d-%H%M%S}.json"

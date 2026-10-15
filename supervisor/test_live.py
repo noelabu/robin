@@ -1,6 +1,6 @@
 """Phase 0 spike: the restart test against a real runtime session.
 
-    uv run python supervisor/test_live.py claude   # needs ANTHROPIC_API_KEY (env or .env); costs a few cents
+    uv run python supervisor/test_live.py claude   # uses your `claude` login (subscription)
     uv run python supervisor/test_live.py codex    # uses the existing Codex login
     uv run python supervisor/test_live.py pi       # uses Pi's configured provider (OpenRouter here)
 
@@ -25,17 +25,6 @@ from test_restart import HERE, PY, alive, check, events, run
 ROOT = HERE.parent
 
 
-def load_key():
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return os.environ["ANTHROPIC_API_KEY"]
-    env = ROOT / ".env"
-    if env.exists():
-        for line in env.read_text().splitlines():
-            if line.startswith("ANTHROPIC_API_KEY="):
-                return line.split("=", 1)[1].strip().strip('"')
-    sys.exit("Set ANTHROPIC_API_KEY or put ANTHROPIC_API_KEY=... in .env at the repo root")
-
-
 def ev(type_):
     return lambda e: e["event"].get("type") == type_
 
@@ -57,7 +46,8 @@ RUNTIMES = {
         "result": sdk("ResultMessage"),
         "streaming": sdk("AssistantMessage"),
         "prompt": "Create a file named robin_probe.txt containing the single word hello. Then reply DONE.",
-        "env": lambda: {"ANTHROPIC_API_KEY": load_key()},
+        # Uses the owner's own `claude` login through Anthropic's flow; Robin never reads the token.
+        "env": lambda: {},
     },
     "codex": {
         "native_event": ev("session_started"),

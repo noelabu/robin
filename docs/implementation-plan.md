@@ -11,8 +11,7 @@ The plan follows the PRD §16 phases (0–4). Each phase ends on demonstrated be
 
 | Decision | Effect on the plan |
 |---|---|
-| ~~Claude Agent SDK is the first adapter~~ Superseded below | Claude Agent SDK needs an API key (Anthropic doesn't allow claude.ai login in third-party tools). |
-| **No Anthropic API key for now; Codex is the first adapter** | Claude ships **observed-only** until a key is used: discovery, history, search, native terminal launch, and live observation through opt-in hooks (WP-2.6). The Claude runtime host and tests stay in place for when a key is added. Codex app-server is the Phase 1 adapter: it passes the whole floor in Phase 0. |
+| **Claude Agent SDK is the first adapter, on the owner's Claude subscription** | Robin is a personal tool: it runs the unmodified bundled Claude Code binary signed in through the owner's own `claude` login, which Anthropic's Claude Code terms allow for an end user's own subscription. No API key. Robin never reads the token. If Robin is ever shared, each person signs in themselves. Codex app-server stays the fallback. |
 | Claude, Codex and Pi all have accounts | All three are spiked in Phase 0 and classified live or observed-only against the floor. |
 | macOS only for the first release | Linux validation is dropped from Phase 0 and the release gate. **This differs from PRD v0.4 ("macOS and Linux") and needs a PRD/TRD revision.** |
 | Reference and development machine is a Mac mini M4 | It replaces the TRD's proposed 8-core/16 GB reference (TR-080). Exact core count and RAM to be recorded in WP-0.3. |
@@ -119,7 +118,7 @@ A minimal detached process holding one runtime child over a Unix socket. Kill an
 - `docs/capability-matrix.md` with each runtime marked live or observed-only, and the reason for each gap.
 - Supervisor transport plan, including which runtimes need tmux.
 - Publication path chosen per runtime.
-- **Phase 1 adapter: Codex app-server.** Claude was the first choice, but the Agent SDK needs an Anthropic API key, which the owner won't use for now (2026-10-15). Codex passed every floor item in Phase 0, so it moves first, as the owner's earlier fallback rule said. Claude stays observed-only until a key is added.
+- **Phase 1 adapter: Claude Agent SDK** on the owner's subscription (2026-10-15). It passed every floor item in Phase 0, plus resume, handoff and isolation with Robin's deny rules. Codex app-server, which also passed everything, is the fallback.
 - Resolve the open TRD decisions that Phase 0 can answer: terminal mode per adapter, sidecar packaging, supported versions.
 
 ---
@@ -165,7 +164,7 @@ A minimal detached process holding one runtime child over a Unix socket. Kill an
 
 - `AgentAdapter` protocol and capability model with per-operation support, unsupported reasons, terminal mode, publication path and independence flag.
 - Fake adapter (see layout).
-- First real adapter, Codex app-server: probe, launch (`thread/start`), events, send (`turn/start`, `turn/steer`), interrupt (`turn/interrupt`), approvals (server requests, including MCP elicitations), reconcile. Generate typed bindings from `codex app-server generate-json-schema` for the pinned version. Send no approval policy or sandbox, so the user's `~/.codex/config.toml` applies; only ever request something stricter. Record the resolved policy, sandbox and model from the `thread/start` response.
+- First real adapter, Claude Agent SDK, using the owner's existing `claude` login: probe, launch, events, send (`query()` on the open client; input during a turn is queued), interrupt, approval callback (`can_use_tool`), resume (`resume=`), reconcile. Set `setting_sources` explicitly so the user's Claude Code settings load; don't rely on the SDK default. Record permission mode, sandbox, settings sources and `apiKeySource` at launch. Never choose a mode more permissive than the harness default.
 - Process launch through an executable allowlist and argument arrays only (TR-070).
 
 ### WP-1.6 HTTP API, auth and SSE (TR-050–052, 034–035)
@@ -383,7 +382,7 @@ Each test layer starts in the phase that introduces the behaviour and keeps runn
 ## Critical path and risks to the plan
 
 - **Phase 0 is the main schedule risk.** If the supervisor can't host a runtime, that runtime ships observed-only (PRD §16). If it can host none, the restart-continuity decision has to be reopened before Phase 1.
-- **Claude is observed-only for now.** The owner's main runtime can't be launched or controlled from Robin until an Anthropic API key is used. Robin still shows Claude history, search and live activity through hooks, and opens Claude in a native terminal.
+- **Claude plan limits.** Robin-launched Claude sessions count against the owner's Pro/Max usage limits, which assume ordinary individual use. Many parallel sessions can hit them. Surface the SDK's `RateLimitEvent` in the dashboard.
 - **The supervisor protocol and action ledger are the hardest code.** They take most of Phase 1. Getting them right with the fake adapter first keeps later adapters cheap.
 - **The publication path decides Phase 3.** If no runtime supports reliable MCP, the final-message parser becomes the main path and its format needs a schema version.
 - **Adapter drift.** Pin the tested versions. `robin doctor` and the capability report must degrade one adapter, not the app (NFR-06).

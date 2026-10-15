@@ -1,0 +1,79 @@
+{
+  "finding": {
+    "schema_version": 1,
+    "finding_id": "find_d1c5461d",
+    "version": 1,
+    "submission_id": "sub_16ca79b43e",
+    "task_id": "task_prd_review",
+    "created_at": 1792038595.431962,
+    "author": {
+      "kind": "agent",
+      "runtime": "claude",
+      "native_session_id": "62740e6f-b097-4a8d-94d8-07693c23b137",
+      "run_id": "55e21b31ebb5"
+    },
+    "summary": "Three serious problems in the login PRD. (1) Critical: the tenant comes from the client-controlled X-Tenant header with no check against the logged-in user, so any user can reach another tenant's data. (2) High: sessions never expire, so a stolen token works forever and cannot be cut off. (3) Medium/high: password login has no requirements for password storage, brute-force protection, MFA, account recovery or transport/cookie security.",
+    "claims": [
+      {
+        "text": "The tenant is taken from the X-Tenant header, which the client controls, and the PRD never requires checking it against the logged-in user's tenant memberships. Any logged-in user can change the header to another tenant's ID and read or change that tenant's data.",
+        "evidence": [
+          {
+            "path": "PRD.md",
+            "range": "3"
+          }
+        ]
+      },
+      {
+        "text": "Sessions never expire. A stolen session token (via XSS, logs, a shared device or malware) works forever. Nothing requires sessions to be revoked on logout, password change or user removal.",
+        "evidence": [
+          {
+            "path": "PRD.md",
+            "range": "4"
+          }
+        ]
+      },
+      {
+        "text": "Email/password login is specified with no security requirements: no password hashing algorithm, no rate limiting or lockout, no MFA, no protection against account enumeration, no secure reset flow, and no TLS or cookie settings.",
+        "evidence": [
+          {
+            "path": "PRD.md",
+            "range": "2"
+          }
+        ]
+      },
+      {
+        "text": "The PRD does not mention authorization, audit logging, or how authentication and tenant selection relate to each other.",
+        "evidence": [
+          {
+            "path": "PRD.md",
+            "range": "1-4"
+          }
+        ]
+      }
+    ],
+    "recommendations": [
+      "Work out the tenant on the server from the logged-in session or token claims. If X-Tenant is kept to choose between tenants, check on every request that the user belongs to that tenant, and return 403 or 404 if not. Enforce tenant scoping at the data layer (for example row-level security or a required tenant filter).",
+      "Add tenant isolation tests that confirm a user from tenant A cannot read or write tenant B's resources by changing X-Tenant.",
+      "Replace 'Sessions never expire' with an idle timeout (for example 30 minutes to a few hours) and a hard maximum lifetime (for example 7 to 30 days), and rotate the session ID after login.",
+      "Require server-side session revocation on logout, password change, MFA change, and user deactivation or removal from a tenant. Give users and admins a way to sign out all sessions.",
+      "Store passwords with argon2id (or bcrypt or scrypt) using per-user salts. Follow NIST SP 800-63B: a minimum length and a check against known breached passwords.",
+      "Add rate limiting and progressive lockout on login, per account and per IP, plus generic error messages and equal response times so accounts cannot be enumerated.",
+      "Specify MFA (at least optional, and required for admins), and a secure password reset flow with single-use, short-lived tokens.",
+      "Require TLS only and HSTS. Set session cookies to Secure, HttpOnly and SameSite=Lax or Strict, and add CSRF protection if cookies are used.",
+      "Log security events (logins, failures, lockouts, tenant switches, session revocations) per tenant."
+    ],
+    "questions": [
+      "Can one user belong to more than one tenant? If so, how is permission to use a given X-Tenant value checked?",
+      "Is X-Tenant set by a trusted gateway or proxy that removes any client-supplied value, or does it come straight from the client?",
+      "Why must sessions never expire? Is this a product requirement (such as kiosk or long-running clients) that refresh-token rotation could meet instead?",
+      "Are sessions server-side and revocable, or stateless tokens such as JWTs? This decides how logout and revocation can work.",
+      "Are SSO, SAML or OIDC, or MFA planned for some tenants, and can tenant admins set their own session and password rules?",
+      "What compliance rules apply (SOC 2, HIPAA, PCI) that would set limits on session lifetime and password handling?"
+    ],
+    "parents": [],
+    "publication_path": "message",
+    "ignored_fields": []
+  },
+  "rejected": [],
+  "evidence_dir": "/var/folders/rt/2xh6q3653wn_chp30qpk7qx00000gn/T/robin-pub-claude-xr666e_i"
+}

@@ -17,7 +17,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from test_live import RUNTIMES, load_key
+from test_live import RUNTIMES
 from test_restart import HERE, PY, check, events, run
 
 CODEWORD = "PELICAN"
@@ -75,8 +75,6 @@ def main(runtime):
     data = Path(tempfile.mkdtemp(prefix=f"robin-cont-{runtime}-"))
     work = Path(tempfile.mkdtemp(prefix=f"robin-cont-{runtime}-cwd-"))
     env = {**os.environ}
-    if runtime == "claude":
-        env["ANTHROPIC_API_KEY"] = load_key()
     if runtime == "pi":
         env.update(rt["env"]())
     subprocess.run([PY, "supervisor.py", "start", "--data", str(data)], cwd=HERE, check=True, env=env)
@@ -97,9 +95,14 @@ def main(runtime):
     sub = poll_until(data, lambda e: e["event"]["type"] == "input_submitted", 30, "steer submitted", after=mark)
     check(sub["event"].get("mode") == "steer" and not sub["event"].get("error"),
           f"input delivered as steer during the turn: {sub['event']}")
-    done = poll_until(data, rt["result"], 180, "steered turn result", after=mark)
+    # A queued steer runs after the current turn, so wait for the codeword, not the first result.
+    deadline = time.time() + 300
+    while CODEWORD not in final_text(runtime, events(data), mark) and time.time() < deadline:
+        run(data, "watch", seconds=2)
     text = final_text(runtime, events(data), mark)
-    check(CODEWORD in text, f"agent followed the steer ({len(text)} chars of output, codeword present)")
+    before = text.split(CODEWORD)[0] if CODEWORD in text else text
+    when = "mid-turn (essay cut short)" if len(before) < 3000 else "at the next turn boundary (essay finished first)"
+    check(CODEWORD in text, f"agent followed the steer, applied {when}: {len(before)} chars before the codeword")
 
     # 2. Resume after the runtime host exits.
     run(data, "stop", session, seconds=3)

@@ -1,0 +1,100 @@
+{
+  "at": "2026-10-15T04:26:11.021211+00:00",
+  "runtime": "claude",
+  "native_session_id": "0e34bc78-2ce3-46b7-a7ac-5bffc8debcd9",
+  "approval": "Write",
+  "interrupt_result": {
+    "type": "sdk_message",
+    "kind": "ResultMessage",
+    "data": {
+      "subtype": "error_during_execution",
+      "duration_ms": 11178,
+      "duration_api_ms": 6039,
+      "is_error": true,
+      "num_turns": 2,
+      "session_id": "0e34bc78-2ce3-46b7-a7ac-5bffc8debcd9",
+      "stop_reason": null,
+      "total_cost_usd": 0.2696666,
+      "usage": {
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        },
+        "input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "output_tokens": 0,
+        "server_tool_use": {
+          "web_search_requests": 0,
+          "web_fetch_requests": 0
+        },
+        "service_tier": "standard",
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 0,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "inference_geo": "",
+        "iterations": [],
+        "speed": "standard",
+        "fallback_credit": null
+      },
+      "result": null,
+      "structured_output": null,
+      "model_usage": {
+        "claude-haiku-5-5": {
+          "inputTokens": 1193,
+          "outputTokens": 21,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 0.0001298,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 0,
+          "canonicalModel": "claude-haiku-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        },
+        "claude-opus-5-5[1m]": {
+          "inputTokens": 4,
+          "outputTokens": 236,
+          "cacheReadInputTokens": 26684,
+          "cacheCreationInputTokens": 32433,
+          "webSearchRequests": 0,
+          "costUSD": 0.26953679999999997,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "thinkingTokens": 100,
+          "canonicalModel": "claude-opus-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      },
+      "permission_denials": [],
+      "deferred_tool_use": null,
+      "errors": [
+        "[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"
+      ],
+      "api_error_status": null,
+      "uuid": "ebabdca6-56ca-4fbb-a7d6-355d9f228a67",
+      "terminal_reason": "aborted_streaming",
+      "origin": null
+    }
+  },
+  "event_counts": {
+    "host_spawned": 1,
+    "host_ready": 1,
+    "HookEventMessage": 6,
+    "input_submitted": 2,
+    "SystemMessage": 10,
+    "RateLimitEvent": 1,
+    "AssistantMessage": 4,
+    "approval_request": 1,
+    "approval_answered": 1,
+    "UserMessage": 2,
+    "ResultMessage": 2,
+    "interrupt_submitted": 1,
+    "session_stopping": 1,
+    "host_exited": 1
+  },
+  "evidence_dir": "/var/folders/rt/2xh6q3653wn_chp30qpk7qx00000gn/T/robin-claude-bj754zfv"
+}

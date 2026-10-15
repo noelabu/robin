@@ -30,8 +30,7 @@ uv sync                      # installs claude-agent-sdk into .venv
 # Supervisor with the scripted runtime: no network, no credentials
 python3 supervisor/test_restart.py
 
-# Supervisor with a real Claude Agent SDK session: costs a few cents
-echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env     # gitignored
+# Supervisor with a real Claude Agent SDK session: uses your `claude` login (subscription)
 uv run python supervisor/test_live.py claude
 
 # Supervisor with a real Codex app-server session: uses your Codex login
@@ -46,7 +45,10 @@ uv run python supervisor/test_publish.py pi message
 uv run python supervisor/test_findings_unit.py     # offline
 
 # Steering, native resume and terminal handoff
-uv run python supervisor/test_continuity.py codex
+uv run python supervisor/test_continuity.py claude
+
+# Review independence: can a reviewer read Robin's artifact store (defaults vs Robin's deny rules)
+uv run python supervisor/test_isolation.py claude deny
 
 # Codex: can a second client attach to a live thread
 uv run --with websockets python supervisor/probe_codex_attach.py

@@ -5,7 +5,7 @@ leave as JSON lines on stdout. The supervisor stays runtime-agnostic.
 
 Runtimes:
   fake    scripted events, no network; used to test the supervisor
-  claude  Claude Agent SDK (needs ANTHROPIC_API_KEY)
+  claude  Claude Agent SDK (uses the owner's own `claude` login)
   codex   `codex app-server` over stdio JSON-RPC (uses the existing Codex login)
   pi      `pi --mode rpc` with Robin's approval extension (uses Pi's configured provider)
 
@@ -144,6 +144,16 @@ async def run_claude(args):
         text = ("REJECTED: " + "; ".join(errors)) if errors else "ACCEPTED: Robin recorded this finding."
         return {"content": [{"type": "text", "text": text}]}
 
+    settings = None
+    if os.environ.get("ROBIN_DENY_READ"):  # review independence: hide Robin's artifact store (TR-064)
+        store = os.environ["ROBIN_DENY_READ"]
+        settings = json.dumps({
+            # Shell commands: the OS sandbox blocks reads; no unsandboxed retry.
+            "sandbox": {"enabled": True, "allowUnsandboxedCommands": False,
+                        "filesystem": {"denyRead": [store]}},
+            # Claude's own file tools follow permission rules ("//" = absolute path).
+            "permissions": {"deny": [f"Read(/{store}/**)"]},
+        })
     mcp = {}
     if PUBLISH_PATH == "tool":  # in-process MCP server, so attribution is this runtime host's session
         mcp = {"robin": create_sdk_mcp_server(name="robin", version="0", tools=[finding_publish])}
@@ -151,6 +161,7 @@ async def run_claude(args):
         mcp_servers=mcp,
         allowed_tools=["mcp__robin__finding_publish"] if mcp else [],
         resume=RESUME_ID,
+        settings=settings,
         cwd=args.cwd,
         setting_sources=["user", "project", "local"],  # load the user's harness settings (FR-012)
         permission_mode="default",                       # never more permissive than the harness default
@@ -160,9 +171,13 @@ async def run_claude(args):
     emit({"type": "host_ready", "runtime": "claude",
           "launch_token": os.environ.get("ROBIN_LAUNCH_TOKEN")})
     async with ClaudeSDKClient(options=options) as client:
+        busy = {"turn": False}
+
         async def pump():
             async for message in client.receive_messages():
                 emit(describe(message))
+                if isinstance(message, ResultMessage):
+                    busy["turn"] = False
                 if PUBLISH_PATH == "message" and isinstance(message, ResultMessage):
                     for block in parse_message_blocks(message.result or ""):
                         emit(submission_event("message", block, native_ref=message.uuid or uuid.uuid4().hex))
@@ -171,8 +186,12 @@ async def run_claude(args):
         async for c in stdin_commands():
             try:
                 if c["cmd"] == "send":
+                    # Input during a running turn is sent as streaming input; whether Claude
+                    # applies it mid-turn or after the turn is measured by test_continuity.
+                    mode = "steer" if busy["turn"] else "new_turn"
+                    busy["turn"] = True
                     await client.query(c["text"])
-                    emit({"type": "input_submitted"})
+                    emit({"type": "input_submitted", "mode": mode})
                 elif c["cmd"] == "interrupt":
                     approvals.expire_all("interrupted")
                     await client.interrupt()

@@ -1,0 +1,50 @@
+{
+  "finding": {
+    "schema_version": 1,
+    "finding_id": "find_4ee9fba9",
+    "version": 1,
+    "submission_id": "prd-login-tenant-header-1",
+    "task_id": "task_prd_review",
+    "created_at": 1792038396.855526,
+    "author": {
+      "kind": "agent",
+      "runtime": "claude",
+      "native_session_id": "d252e2a2-86c8-49b2-a77f-e7854b50667f",
+      "run_id": "84145f1c2b22"
+    },
+    "summary": "Tenant identity comes from a header the client controls (X-Tenant), so an authenticated user can read or change another tenant's data.",
+    "claims": [
+      {
+        "text": "The PRD says the API reads the tenant from the X-Tenant request header on every request. Nothing ties that value to the authenticated user's session. Any logged-in user can set X-Tenant to another tenant's ID and get that tenant's data (cross-tenant IDOR / broken access control).",
+        "evidence": [
+          {
+            "path": "PRD.md",
+            "range": "3"
+          }
+        ]
+      },
+      {
+        "text": "Authentication is only email and password (line 2), and sessions never expire (line 4). Nothing in the PRD binds a session to a tenant, so one stolen or long-lived session could be pointed at any tenant indefinitely, which makes the impact worse.",
+        "evidence": [
+          {
+            "path": "PRD.md",
+            "range": "2-4"
+          }
+        ]
+      }
+    ],
+    "recommendations": [
+      "Work out the tenant on the server from the authenticated session or token claims. Do not trust X-Tenant. If the header stays (for example, for users who belong to several tenants), check it against the user's tenant memberships on every request and reject any mismatch.",
+      "Add an authorization check at the data-access layer that scopes every query to the tenant bound to the session.",
+      "Separately, set an expiry and idle timeout for sessions (line 4)."
+    ],
+    "questions": [
+      "Can a user belong to more than one tenant? If so, how is the active tenant chosen and checked?"
+    ],
+    "parents": [],
+    "publication_path": "tool",
+    "ignored_fields": []
+  },
+  "rejected": [],
+  "evidence_dir": "/var/folders/rt/2xh6q3653wn_chp30qpk7qx00000gn/T/robin-pub-claude-swx7lycz"
+}
