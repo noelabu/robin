@@ -9,7 +9,7 @@
 | Floor item | Status | Evidence |
 |---|---|---|
 | Account / credentials | **Decided: API key.** | The SDK overview says: "Unless previously approved, Anthropic does not allow third party developers to offer claude.ai login or rate limits for their products, including agents built on the Claude Agent SDK. Use the API key authentication methods…" Robin uses `ANTHROPIC_API_KEY`, as the owner accepted. Subscription login was not tested. |
-| Launch with native ID capture | Pending live run | `test_claude.py` reads `session_id` from the SDK `init` system message |
+| Launch with native ID capture | Pending live run | `supervisor/test_live.py claude` reads `session_id` from the SDK `init` system message |
 | Structured event streaming | Pending live run | `ClaudeSDKClient.receive_messages()` yields typed messages (`SystemMessage`, `AssistantMessage`, `UserMessage`, `ResultMessage`) |
 | Follow-up message | Pending live run | `client.query()` on an open client continues the session |
 | Interruption | Pending live run | `client.interrupt()`; the docs say to drain to the `ResultMessage` afterwards (`terminal_reason`) |

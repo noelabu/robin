@@ -6,6 +6,7 @@ leave as JSON lines on stdout. The supervisor stays runtime-agnostic.
 Runtimes:
   fake    scripted events, no network; used to test the supervisor
   claude  Claude Agent SDK (needs ANTHROPIC_API_KEY)
+  codex   `codex app-server` over stdio JSON-RPC (uses the existing Codex login)
 
 Commands: {"cmd": "send", "text": ...}, {"cmd": "interrupt"},
           {"cmd": "approval", "request_id": ..., "allow": bool, "message": ...},
@@ -164,9 +165,126 @@ async def run_claude(args):
     emit({"type": "session_stopping"})
 
 
+# -- Codex app-server runtime -------------------------------------------------
+
+APPROVAL_METHODS = {"item/commandExecution/requestApproval", "item/fileChange/requestApproval",
+                    "execCommandApproval", "applyPatchApproval"}
+
+
+class CodexRpc:
+    """Minimal JSON-RPC client for `codex app-server` over stdio."""
+
+    def __init__(self, proc):
+        self.proc = proc
+        self.next_id = 0
+        self.waiting: dict[int, asyncio.Future] = {}
+
+    async def call(self, method: str, params: dict) -> dict:
+        self.next_id += 1
+        fut = asyncio.get_running_loop().create_future()
+        self.waiting[self.next_id] = fut
+        await self._write({"id": self.next_id, "method": method, "params": params})
+        return await asyncio.wait_for(fut, 60)
+
+    async def notify(self, method: str, params: dict | None = None):
+        await self._write({"method": method, **({"params": params} if params else {})})
+
+    async def respond(self, rid, result=None, error=None):
+        await self._write({"id": rid, **({"error": error} if error else {"result": result})})
+
+    async def _write(self, msg: dict):
+        self.proc.stdin.write((json.dumps(msg) + "\n").encode())
+        await self.proc.stdin.drain()
+
+
+async def run_codex(args):
+    approvals = Approvals()
+    proc = await asyncio.create_subprocess_exec(
+        "codex", "app-server", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+        stderr=sys.stderr, limit=MAX_LINE)
+    rpc = CodexRpc(proc)
+    state = {"thread": None, "turn": None}
+
+    async def on_server_request(msg):
+        method, params = msg["method"], msg.get("params", {})
+        if method in APPROVAL_METHODS:
+            decision = await approvals.request(method, params)
+            await rpc.respond(msg["id"], {"decision": "accept" if decision.get("allow") else "decline"})
+        else:  # not handled by the spike; refuse explicitly rather than hang the turn
+            emit({"type": "codex_unhandled_request", "method": method})
+            await rpc.respond(msg["id"], error={"code": -32601, "message": "not supported by robin-spike"})
+
+    async def pump():
+        while line := await proc.stdout.readline():
+            msg = json.loads(line)
+            if "id" in msg and "method" not in msg:  # response to our call
+                fut = rpc.waiting.pop(msg["id"], None)
+                if fut and not fut.done():
+                    fut.set_result(msg)
+            elif "id" in msg:  # server -> client request
+                asyncio.create_task(on_server_request(msg))
+            else:  # notification
+                params = msg.get("params", {})
+                if msg["method"] == "turn/started":
+                    state["turn"] = params.get("turn", {}).get("id") or params.get("turnId")
+                elif msg["method"] == "turn/completed":
+                    approvals.expire_all("turn ended")
+                    state["turn"] = None
+                emit({"type": "codex_notification", "method": msg["method"], "params": params})
+        emit({"type": "codex_exited", "returncode": await proc.wait()})
+
+    pump_task = asyncio.create_task(pump())
+    init = await rpc.call("initialize", {"clientInfo": {"name": "robin-spike", "version": "0"}})
+    await rpc.notify("initialized")
+    emit({"type": "codex_initialized", "result": init.get("result"), "error": init.get("error"),
+          "launch_token": os.environ.get("ROBIN_LAUNCH_TOKEN")})
+    # Inherit the user's ~/.codex/config.toml; only ever request a stricter policy.
+    start = {"cwd": args.cwd}
+    if os.environ.get("ROBIN_CODEX_APPROVAL_POLICY"):
+        start["approvalPolicy"] = os.environ["ROBIN_CODEX_APPROVAL_POLICY"]
+    started = await rpc.call("thread/start", start)
+    result = started.get("result") or {}
+    state["thread"] = result.get("thread", {}).get("id")
+    emit({"type": "session_started", "native_session_id": state["thread"],
+          "approval_policy": result.get("approvalPolicy"), "sandbox": result.get("sandbox"),
+          "model": result.get("model"), "error": started.get("error")})
+
+    async for c in stdin_commands():
+        if c["cmd"] == "send":
+            text = [{"type": "text", "text": c["text"]}]
+            if state["turn"]:
+                r = await rpc.call("turn/steer", {"threadId": state["thread"], "expectedTurnId": state["turn"],
+                                                  "input": text})
+                emit({"type": "input_submitted", "mode": "steer", "error": r.get("error")})
+            else:
+                r = await rpc.call("turn/start", {"threadId": state["thread"], "input": text})
+                emit({"type": "input_submitted", "mode": "new_turn", "error": r.get("error")})
+        elif c["cmd"] == "interrupt":
+            approvals.expire_all("interrupted")
+            if state["turn"]:
+                r = await rpc.call("turn/interrupt", {"threadId": state["thread"], "turnId": state["turn"]})
+                emit({"type": "interrupt_submitted", "error": r.get("error")})
+            else:
+                emit({"type": "interrupt_submitted", "error": "no active turn"})
+        elif c["cmd"] == "approval":
+            approvals.answer(c["request_id"], c)
+        elif c["cmd"] == "stop":
+            break
+    approvals.expire_all("session stopped")
+    proc.stdin.close()
+    try:
+        await asyncio.wait_for(proc.wait(), 10)
+    except asyncio.TimeoutError:
+        proc.terminate()
+    pump_task.cancel()
+    emit({"type": "session_stopping"})
+
+
+RUNTIMES = {"fake": run_fake, "claude": run_claude, "codex": run_codex}
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--runtime", choices=["fake", "claude"], required=True)
+    ap.add_argument("--runtime", choices=sorted(RUNTIMES), required=True)
     ap.add_argument("--cwd", default=os.getcwd())
     args = ap.parse_args()
-    asyncio.run(run_fake(args) if args.runtime == "fake" else run_claude(args))
+    asyncio.run(RUNTIMES[args.runtime](args))

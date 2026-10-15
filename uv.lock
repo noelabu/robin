@@ -534,7 +534,7 @@ wheels = [
 ]
 
 [[package]]
-name = "robin-spikes"
+name = "robin"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [

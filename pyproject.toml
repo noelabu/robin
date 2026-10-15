@@ -1,7 +1,7 @@
 [project]
-name = "robin-spikes"
+name = "robin"
 version = "0.0.0"
-description = "Phase 0 integration spikes (throwaway code, kept as evidence)"
+description = "Local workspace for running, observing, and coordinating coding agents"
 requires-python = ">=3.12"
 dependencies = ["claude-agent-sdk"]
 

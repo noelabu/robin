@@ -1,0 +1,51 @@
+{
+  "at": "2026-10-15T02:20:56.442640+00:00",
+  "runtime": "codex",
+  "native_session_id": "01a13d5c-7c6f-7b72-af78-3a2b2351a8a0",
+  "approval": "item/commandExecution/requestApproval",
+  "interrupt_result": {
+    "type": "codex_notification",
+    "method": "turn/completed",
+    "params": {
+      "threadId": "01a13d5c-7c6f-7b72-af78-3a2b2351a8a0",
+      "turn": {
+        "id": "01a13d5c-ae76-7212-9f43-4dd320e845f7",
+        "rootTurnId": "01a13d5c-ae76-7212-9f43-4dd320e845f7",
+        "items": [],
+        "itemsView": "notLoaded",
+        "status": "interrupted",
+        "error": null,
+        "startedAt": 1792030846,
+        "completedAt": 1792030852,
+        "durationMs": 5661
+      }
+    }
+  },
+  "event_counts": {
+    "host_spawned": 1,
+    "codex_initialized": 1,
+    "remoteControl/status/changed": 1,
+    "thread/started": 1,
+    "session_started": 1,
+    "mcpServer/startupStatus/updated": 14,
+    "input_submitted": 2,
+    "thread/status/changed": 6,
+    "turn/started": 2,
+    "account/updated": 1,
+    "hook/started": 15,
+    "hook/completed": 15,
+    "item/started": 7,
+    "item/completed": 6,
+    "item/agentMessage/delta": 16,
+    "approval_request": 1,
+    "approval_answered": 1,
+    "serverRequest/resolved": 1,
+    "thread/tokenUsage/updated": 3,
+    "account/rateLimits/updated": 3,
+    "turn/completed": 2,
+    "interrupt_submitted": 1,
+    "session_stopping": 1,
+    "host_exited": 1
+  },
+  "evidence_dir": "/var/folders/rt/2xh6q3653wn_chp30qpk7qx00000gn/T/robin-codex-1pr7zm4y"
+}

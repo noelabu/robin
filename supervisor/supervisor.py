@@ -11,10 +11,12 @@ without the runtime hosts noticing.
 
 import argparse
 import asyncio
+import faulthandler
 import fcntl
 import json
 import os
 import secrets
+import signal
 import subprocess
 import sys
 import time
@@ -36,6 +38,7 @@ class Supervisor:
         self.acked = 0
         self.sessions: dict[str, dict] = {}
         self.writer: asyncio.StreamWriter | None = None
+        self.connections: set[asyncio.StreamWriter] = set()
         self.stopping = asyncio.Event()
         self._load_spool()
         self.spool_file = open(self.spool_path, "a")
@@ -115,6 +118,14 @@ class Supervisor:
     # -- service connection ---------------------------------------------
 
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        self.connections.add(writer)
+        try:
+            await self._serve_client(reader, writer)
+        finally:
+            self.connections.discard(writer)
+            writer.close()
+
+    async def _serve_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         try:
             hello = decode(await reader.readline())
         except ValueError:
@@ -173,8 +184,16 @@ class Supervisor:
             sock.unlink()
         server = await asyncio.start_unix_server(self.handle, path=str(sock), limit=MAX_LINE)
         os.chmod(sock, 0o600)
-        async with server:
-            await self.stopping.wait()
+        await self.stopping.wait()
+        # Close client connections explicitly; Server.wait_closed() waits for them and
+        # can otherwise hang shutdown when a client never sends EOF.
+        server.close()
+        for w in list(self.connections):
+            w.close()
+        try:
+            await asyncio.wait_for(server.wait_closed(), 5)
+        except asyncio.TimeoutError:
+            pass
         for s in self.sessions.values():
             if s["alive"]:
                 s["proc"].terminate()
@@ -190,6 +209,7 @@ def serve(data: Path):
         sys.exit("another supervisor owns this data directory")
     lock.write(str(os.getpid()))
     lock.flush()
+    faulthandler.register(signal.SIGUSR1, all_threads=True)  # `kill -USR1 <pid>` dumps stacks to the log
     asyncio.run(Supervisor(data).serve(data / "supervisor.sock"))
 
 
