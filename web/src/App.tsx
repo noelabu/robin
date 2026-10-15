@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { signIn, type Session } from "./api";
+import { api, signIn, type Session } from "./api";
 import { ActivityFeed, type FeedScope } from "./components/ActivityFeed";
 import { AttentionPanel } from "./components/AttentionPanel";
 import { LaunchForm } from "./components/LaunchForm";
@@ -7,6 +7,7 @@ import { Navigator } from "./components/Navigator";
 import { NewTaskForm } from "./components/NewTaskForm";
 import { SearchBox } from "./components/SearchBox";
 import { SessionDetail } from "./components/SessionDetail";
+import { SettingsPanel } from "./components/SettingsPanel";
 import { SessionList } from "./components/SessionList";
 import { TaskDetail } from "./components/TaskDetail";
 import { inScope, type Scope } from "./scope";
@@ -18,7 +19,8 @@ export function App() {
   const [auth, setAuth] = useState<"checking" | "ok" | "signed_out">("checking");
   const [scope, setScope] = useState<Scope>({ kind: "all" });
   const [selected, setSelected] = useState<string | null>(null);
-  const [panel, setPanel] = useState<"none" | "launch" | "task">("none");
+  const [panel, setPanel] = useState<"none" | "launch" | "task" | "settings">("none");
+  const [storage, setStorage] = useState<{ state: string; ratio: number } | null>(null);
   const [runtimeFilter, setRuntimeFilter] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -27,6 +29,14 @@ export function App() {
   useEffect(() => {
     void signIn().then((ok) => setAuth(ok ? "ok" : "signed_out"));
   }, []);
+
+  useEffect(() => {
+    if (auth !== "ok") return;
+    const check = () => void api.storage().then(setStorage).catch(() => undefined);
+    check();
+    const t = window.setInterval(check, 60_000);
+    return () => window.clearInterval(t);
+  }, [auth]);
 
   const task = scope.kind === "task" ? ws.tasks.find((t) => t.task_id === scope.id) ?? null : null;
   const project =
@@ -98,6 +108,12 @@ export function App() {
         {scope.kind === "project" && project && (
           <button onClick={() => setPanel("task")}>New task</button>
         )}
+        {storage && storage.state !== "ok" && (
+          <button className={`pill ${storage.state === "over" ? "bad" : "warn"}`} onClick={() => setPanel("settings")}>
+            Storage {Math.round(storage.ratio * 100)}%
+          </button>
+        )}
+        <button onClick={() => setPanel("settings")}>Settings</button>
         <button className="primary" onClick={() => setPanel("launch")}>
           Launch session
         </button>
@@ -146,6 +162,12 @@ export function App() {
               setNotice(warnings.length ? warnings.join(" ") : null);
               setSelected(sid);
             }}
+          />
+        )}
+        {panel === "settings" && (
+          <SettingsPanel
+            onClose={() => setPanel("none")}
+            onChanged={() => void api.storage().then(setStorage).catch(() => undefined)}
           />
         )}
         {panel === "task" && project && (

@@ -22,6 +22,7 @@ from robin.supervisor.client import (
 )
 
 log = logging.getLogger(__name__)
+CAP_CHECK_S = 600.0
 
 
 class ServiceRuntime:
@@ -70,14 +71,25 @@ class ServiceRuntime:
 
     async def _index(self) -> None:
         """Keep the search index caught up, off the request path (TR-081)."""
-        from robin import search
+        from robin import retention, search
 
         seen = -1
+        last_cap_check = 0.0
         while True:
             try:
                 await asyncio.to_thread(search.catch_up, self.store)
             except Exception:
                 log.exception("search indexing failed; retrying")
+            now = asyncio.get_running_loop().time()
+            if now - last_cap_check > CAP_CHECK_S:  # oldest-first pruning above the cap (TR-081)
+                last_cap_check = now
+                try:
+                    done = await asyncio.to_thread(retention.enforce, self.store)
+                    if done:
+                        log.warning("storage cap reached: pruned %d oldest events", done["pruned_events"])
+                        await self.notify()
+                except Exception:
+                    log.exception("storage cap check failed")
             seen = await self.wait_change(seen, 5.0)
 
     async def _watch(self) -> None:

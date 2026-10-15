@@ -539,6 +539,42 @@ def cmd_watch(args: argparse.Namespace) -> None:
         print("not watching history (run `robin scan` to index it once, or `robin watch on`)")
 
 
+def _gb(n: int) -> str:
+    return f"{n / 1024**3:.2f} GB"
+
+
+def cmd_storage(args: argparse.Namespace) -> None:
+    """Copied activity against the cap (TR-081), and an explicit cleanup with a preview first."""
+    with client(args.data) as c:
+        u = call(c, "GET", "/storage")
+        print(f"copied activity {_gb(u['counted'])} of {_gb(u['cap'])} ({u['ratio']:.0%}, {u['state']})")
+        print(
+            f"  event payloads {_gb(u['events_inline'] + u['events_blobs'])}, "
+            f"search text {_gb(u['search_text'])}"
+        )
+        print(f"  findings, packets and manifests {_gb(u['protected'])} (kept; never counted or pruned)")
+        if args.action != "prune":
+            return
+        body: dict[str, Any] = {"dry_run": True}
+        if args.target_gb is not None:
+            body["target_gb"] = args.target_gb
+        p = call(c, "POST", "/storage/prune", body)
+        if not p["events"]:
+            print("nothing to prune: already under the target")
+            return
+        print(
+            f"would prune {p['events']:,} oldest events (~{_gb(p['approx_bytes'])}) "
+            f"from {p['sessions']} sessions, "
+            f"{p['oldest']} to {p['newest']}; they stay listed but their content becomes unavailable"
+        )
+        if not args.yes:
+            if not sys.stdin.isatty() or input("Prune them? [y/N] ").strip().lower() not in ("y", "yes"):
+                print("nothing pruned")
+                return
+        r = call(c, "POST", "/storage/prune", {**body, "dry_run": False})
+        print(f"pruned {r['pruned_events']:,} events; now {_gb(r['after']['counted'])}")
+
+
 def cmd_hooks(args: argparse.Namespace) -> None:
     """Opt-in, observe-only hooks (TR-076). Shows exactly what changes and writes only on confirmation."""
     from robin.hooks import install as hooks
@@ -818,6 +854,14 @@ def parser() -> argparse.ArgumentParser:
     p = sub.add_parser("watch", parents=[common], help="follow native session history as it grows (opt-in)")
     p.add_argument("state", choices=["on", "off", "status"])
     p.set_defaults(func=cmd_watch)
+
+    p = sub.add_parser(
+        "storage", parents=[common], help="storage use, and pruning the oldest copied activity"
+    )
+    p.add_argument("action", nargs="?", choices=["prune"])
+    p.add_argument("--target-gb", type=float, help="prune down to this (default: below the cap)")
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(func=cmd_storage)
 
     p = sub.add_parser("hooks", parents=[common], help="opt-in hooks for sessions started outside Robin")
     p.add_argument("action", choices=["status", "install", "uninstall"])

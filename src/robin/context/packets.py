@@ -323,7 +323,12 @@ def _excerpt(
     }, "\n".join(lines)
 
 
+PRUNED_TEXT = "[pruned to stay under Robin's storage cap; no longer available]"
+
+
 def _event_text(ev: dict[str, Any]) -> str:
+    if ev.get("_robin_pruned"):  # TR-081: the event keeps its identity, its content is gone
+        return PRUNED_TEXT
     for key in ("text", "output", "message", "reason"):
         if isinstance(ev.get(key), str) and ev[key]:
             return str(ev[key])

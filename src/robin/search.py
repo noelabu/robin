@@ -129,9 +129,12 @@ def index_events(store: Store, batch: int = BATCH) -> int:
         ):
             continue
         try:
-            body = _event_text(read_payload_json(store, r.global_cursor))
+            ev = read_payload_json(store, r.global_cursor)
         except (ValueError, OSError):
             continue
+        if ev.get("_robin_pruned"):
+            continue  # pruned before it was indexed: nothing to search
+        body = _event_text(ev)
         docs.append((r, _mask(store, body)))
     last = rows[-1].global_cursor
 

@@ -586,3 +586,13 @@ class SearchDoc(Base):
     doc_key: Mapped[str] = mapped_column(String, primary_key=True)  # "<kind>:<id>"
     fts_rowid: Mapped[int] = mapped_column(Integer, unique=True)
     indexed_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class PrunedEvent(Base):
+    """An event whose payload was removed to stay under the storage cap (TR-081). The event row keeps its
+    identity (source, sequence, content hash); its payload is a tombstone and it reads as unavailable."""
+
+    __tablename__ = "pruned_event"
+    global_cursor: Mapped[int] = mapped_column(ForeignKey("event.global_cursor"), primary_key=True)
+    original_size: Mapped[int] = mapped_column(Integer)
+    pruned_at: Mapped[datetime] = mapped_column(UTCDateTime)

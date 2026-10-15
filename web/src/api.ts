@@ -137,6 +137,22 @@ export type SearchResult = {
   at: string;
 };
 
+export type StorageUsage = {
+  counted: number;
+  cap: number;
+  ratio: number;
+  state: "ok" | "warning" | "over";
+  protected: number;
+};
+
+export type PrunePlan = {
+  events: number;
+  approx_bytes: number;
+  sessions: number;
+  oldest: string | null;
+  newest: string | null;
+};
+
 export type Workspace = {
   watermark: number;
   sessions: Session[];
@@ -240,6 +256,11 @@ export const api = {
     ),
   openTerminal: (sessionId: string) => request<{ opened: boolean }>("POST", `/sessions/${sessionId}/terminal/open`),
   adapters: () => request<{ adapters: { runtime: string; level: string }[] }>("GET", "/adapters"),
+  storage: () => request<StorageUsage>("GET", "/storage"),
+  prunePreview: () => request<PrunePlan>("POST", "/storage/prune", { dry_run: true }),
+  prune: () => request<PrunePlan & { pruned_events: number }>("POST", "/storage/prune", { dry_run: false }),
+  watch: () => request<{ enabled: boolean }>("GET", "/settings/watch"),
+  setWatch: (enabled: boolean) => request<{ enabled: boolean }>("PUT", "/settings/watch", { enabled }),
   search: (q: string) =>
     request<{ results: SearchResult[]; more: boolean; pending_events: number }>(
       "GET",

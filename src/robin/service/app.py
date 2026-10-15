@@ -88,6 +88,11 @@ class ActionBody(BaseModel):
     interrupt_running: bool = False  # handoff: end a running turn
 
 
+class PruneBody(BaseModel):
+    dry_run: bool = True
+    target_gb: float | None = Field(default=None, ge=0)  # default: below the cap
+
+
 class WatchBody(BaseModel):
     enabled: bool
 
@@ -543,6 +548,27 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         await runtime.notify()
         return {"enabled": body.enabled}
 
+    @app.get(f"{API}/storage")
+    async def storage(_: str = Authed) -> dict[str, Any]:
+        """What copied activity uses against the cap; protected records are shown but never counted."""
+        from robin import retention
+
+        return (await asyncio.to_thread(retention.usage, store)).view()
+
+    @app.post(f"{API}/storage/prune")
+    async def storage_prune(body: PruneBody, _: str = Authed) -> dict[str, Any]:
+        """Preview (dry run) or prune the oldest copied activity down below the cap."""
+        from robin import retention
+
+        target = int(body.target_gb * 1024**3) if body.target_gb is not None else None
+        if body.dry_run:
+            p = await asyncio.to_thread(retention.plan, store, target)
+            p.pop("_cursors", None)
+            return dict(p)
+        result = await asyncio.to_thread(retention.prune, store, target)
+        await runtime.notify()
+        return dict(result)
+
     @app.get(f"{API}/search")
     async def search_route(
         q: str,
@@ -665,6 +691,8 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
             return None
         if not isinstance(payload, dict):
             return None
+        if payload.get("_robin_pruned"):
+            return "Pruned to stay under the storage cap; no longer available."
         for key in ("text", "reason", "result", "output"):
             value = payload.get(key)
             if isinstance(value, str) and value.strip():
