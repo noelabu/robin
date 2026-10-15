@@ -22,7 +22,7 @@ The plan follows the PRD §16 phases (0–4). Each phase ends on demonstrated be
 | Copied activity capped at 20 GB | Above the cap, the oldest copied activity and transcript text is pruned, with a warning at 80%. Findings, manifests and audit records are never pruned. Native transcripts are untouched. Other TRD limits unchanged. |
 | Secret scanner uses gitleaks' rule set plus custom patterns | The rules are vendored as data and run in Python; there is no gitleaks binary dependency (WP-3.3). |
 | Keep the name "Robin" | Command and package `robin`. Re-check `which robin` on the Mac mini in Phase 0. |
-| Docs merge first, then one branch per work package | Commit the plan and merge `docs/consolidated-review` into `main`. Phase 0 runs on `spike/phase-0`. After that, each work package gets its own branch (e.g. `feat/wp-1.3-supervisor`) and merges into `main` through a PR. |
+| Trunk-based: commit directly to `main` | No phase or work-package branches and no PRs. Phase 0 spike code lives under `spikes/` on `main`. Run `/review-lite` before committing a work package, since there is no PR review step. |
 | Revise PRD and TRD now | Done: PRD v0.5 and TRD v0.4 record these decisions. Hook installers are TR-076. |
 
 Durations are rough single-developer estimates. They are for sequencing, not commitments.
