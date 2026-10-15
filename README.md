@@ -47,6 +47,9 @@ uv run python supervisor/test_findings_unit.py     # offline
 
 # Steering, native resume and terminal handoff
 uv run python supervisor/test_continuity.py codex
+
+# Codex: can a second client attach to a live thread
+uv run --with websockets python supervisor/probe_codex_attach.py
 ```
 
 Each run prints PASS/FAIL lines and the temp directory holding the full event spool. `test_live.py` also writes a summary to `<runtime>/evidence-<timestamp>.json`.

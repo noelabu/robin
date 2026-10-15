@@ -34,6 +34,21 @@
 - **Native resume: pass.** After the runtime host exited, a new host called `thread/resume {threadId}`. It got the same thread ID back, and the agent remembered the codeword from before.
 - **Terminal mode: handoff works.** With no Robin host attached, `codex exec resume <id> "<prompt>"` continued the same thread and recalled the codeword. Interactive `codex resume <id>` is the terminal equivalent. Outside a git repo or trusted folder, `codex exec` refuses to run without `--skip-git-repo-check`; real project folders are git repos.
 
+## Terminal attach (2026-10-15, `probe_codex_attach.py`)
+
+The probe starts a private `codex app-server --listen ws://127.0.0.1:<port>` and connects two clients. The user's Codex daemon isn't touched.
+
+- **One thread can have several subscribers.** Client B found client A's thread in `thread/loaded/list`, subscribed with `thread/resume`, and received A's next turn live: `turn/started`, `item/agentMessage/delta` and `turn/completed`.
+- **Every subscriber can drive the thread.** B started a turn on the same thread, and A observed it. Codex does no ownership arbitration between clients.
+- **Ephemeral threads can't be shared.** `thread/resume` fails with "no rollout found", and a new thread has nothing to resume until its first turn is saved.
+- **Transport.** The `--listen` socket and Codex's own Unix control socket speak WebSocket (HTTP Upgrade, one JSON-RPC message per text frame), not JSONL. `codex app-server proxy` just relays bytes to that socket, which is why plain JSON lines got no reply.
+
+**What this means for Robin:**
+- **Attach mode is possible**, but only if the runtime host runs Codex behind a listener (`--listen unix://<robin socket>`) rather than plain stdio, so a terminal client can join. The docs say the TUI's `--remote` accepts `unix://` endpoints; that interactive join is untested.
+- **Under attach, Robin cannot stop the terminal from sending input,** so TR-046's one-owner rule can't be enforced by the runtime. Robin can only detect turns it didn't start: a `turn/started` with no matching Robin action.
+- **Recommendation:** handoff is the default terminal mode for Codex. Attach is an option that's labelled "shared control", with foreign-turn detection.
+- **Watching Codex sessions started outside Robin** would need Robin to connect to the app-server that hosts them, such as the user's daemon socket. Not tested; it would mean connecting to a process Robin doesn't own.
+
 ## Review independence (2026-10-15, `test_isolation.py codex [deny]`)
 
 - **The default sandbox does not isolate reviewers.** Under `:read-only` with approvals off, the agent ran `cat` on a fake unshared finding outside its working folder and read the secret. Codex's read-only sandbox limits writes, not reads.
@@ -59,4 +74,4 @@ The supervisor hung on shutdown under Python 3.12.0: `Server.wait_closed()` wait
 ## Still to test
 
 - Inherited default policy and sandbox with no override
-- Terminal **attach** (joining a live session) through Codex's own daemon; handoff already works
+- Interactive `codex --remote <endpoint>` joining a Robin-hosted thread (the protocol-level attach is proven)
