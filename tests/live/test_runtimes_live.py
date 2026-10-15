@@ -1,7 +1,7 @@
-"""Live: a real Claude Code session through the full product stack. Runs only with ROBIN_LIVE=1.
+"""Live: real Claude Code, Codex and Pi sessions through the full product stack. Runs only with ROBIN_LIVE=1.
 
-Uses the owner's own `claude` login (subscription). Launch, approval, follow-up, interrupt, service loss and
-reconnect, stop; checks state projection and the action ledger along the way.
+Uses the owner's own logins. Launch, approval, follow-up, interrupt, service loss and reconnect, stop;
+checks state projection and the action ledger along the way. Pick runtimes with ROBIN_LIVE_RUNTIMES.
 """
 
 import asyncio
@@ -53,19 +53,29 @@ def pending_approval(store, sid):
     return None
 
 
-async def test_claude_end_to_end(supervised, tmp_path):
+RUNTIMES = {
+    "claude": ("Create a file named probe.txt containing the word hello. Then reply DONE.", {}),
+    # stricter than the owner's default, so the write needs approval
+    "codex": (
+        "Run the shell command `touch probe.txt`. Then reply DONE.",
+        {"ROBIN_CODEX_APPROVAL_POLICY": "untrusted"},
+    ),
+    "pi": ("Run the shell command `touch probe.txt`. Then reply DONE.", {}),
+}
+SELECTED = [r for r in os.environ.get("ROBIN_LIVE_RUNTIMES", "claude,codex,pi").split(",") if r in RUNTIMES]
+
+
+@pytest.mark.parametrize("runtime", SELECTED)
+async def test_end_to_end(supervised, tmp_path, runtime):
     store = supervised
     work = tmp_path / "work"
     work.mkdir()
-    sid = ensure_session(store, runtime="claude", mode="managed", execution_cwd=str(work))
+    prompt, env = RUNTIMES[runtime]
+    if runtime == "pi":  # keep test sessions out of the owner's Pi history
+        env = {**env, "ROBIN_PI_SESSION_DIR": str(tmp_path / "pi-sessions")}
+    sid = ensure_session(store, runtime=runtime, mode="managed", execution_cwd=str(work))
     manager, client, task = await connect(store)
-    await manager.launch(
-        sid,
-        runtime="claude",
-        cwd=str(work),
-        action_id="l1",
-        prompt="Create a file named probe.txt containing the word hello. Then reply DONE.",
-    )
+    await manager.launch(sid, runtime=runtime, cwd=str(work), action_id="l1", prompt=prompt, env=env)
     request_id = await until(lambda: pending_approval(store, sid))
     assert row(store, sid)["runtime_state"] == "waiting_for_input"
     assert row(store, sid)["native_session_id"]  # captured from the SDK init message
