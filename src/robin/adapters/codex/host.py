@@ -113,6 +113,12 @@ async def run_codex(args: argparse.Namespace) -> None:
         start["approvalPolicy"] = stricter
     if os.environ.get("ROBIN_DENY_READ"):
         start["config"] = deny_read_config(os.environ["ROBIN_DENY_READ"])
+    if "tool" in os.environ.get("ROBIN_FINDINGS", ""):  # finding publication for task-bound sessions
+        config = start.setdefault("config", {})
+        config.setdefault("mcp_servers", {})["robin"] = {
+            "command": sys.executable,
+            "args": ["-m", "robin.findings.mcp_server"],
+        }
     resume = os.environ.get("ROBIN_RESUME_NATIVE_ID")
     reply = await (
         rpc.call("thread/resume", {**start, "threadId": resume})

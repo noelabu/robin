@@ -313,6 +313,61 @@ def cmd_supervisor_stop(args: argparse.Namespace) -> None:
     print(f"supervisor stopping; ended {len(r['ending'])} session(s)")
 
 
+def cmd_findings(args: argparse.Namespace) -> None:
+    with client(args.data) as c:
+        q = f"?task_id={args.task}" if args.task else ""
+        items = call(c, "GET", f"/findings{q}")["findings"]
+        rejected = call(c, "GET", f"/findings/rejections{q}")["rejections"]
+    if args.json:
+        print(json.dumps({"findings": items, "rejections": rejected}, indent=2))
+        return
+    if not items:
+        print("no findings")
+    for f in items:
+        a = f["author"]
+        who = "user" if a["kind"] == "user" else f"{a['runtime']} {str(a.get('native_session_id') or '')[:8]}"
+        flag = f", {f['unsupported_claims']} unsupported" if f["unsupported_claims"] else ""
+        print(
+            f"{f['finding_id']}  v{f['version']}  {who:<16} {f['claims']} claims{flag}  {f['summary'][:70]}"
+        )
+    for r in rejected:
+        print(f"rejected {r['submission_id']} ({r['path']}): {'; '.join(r['errors'])[:100]}")
+
+
+def cmd_finding(args: argparse.Namespace) -> None:
+    with client(args.data) as c:
+        if args.finding_id == "publish":
+            if not args.task or not args.file:
+                raise CliError("robin finding publish --task TASK --file finding.json")
+            payload = json.loads(Path(args.file).read_text())
+            f = call(c, "POST", "/findings", {**payload, "task_id": args.task})
+            print(f"published {f['finding_id']} v{f['version']}")
+            return
+        q = f"?version={args.version}" if args.version else ""
+        f = call(c, "GET", f"/findings/{args.finding_id}{q}")
+    if args.json:
+        print(json.dumps(f, indent=2))
+        return
+    a = f["author"]
+    print(f"{f['finding_id']} v{f['version']} of {f['latest_version']}  task {f['task_id']}")
+    print(
+        f"author: {'user' if a['kind'] == 'user' else a['runtime'] + ' ' + str(a.get('native_session_id'))}"
+        f"  via {f['publication_path']}  {f['created_at']}"
+    )
+    print(f"\n{f['summary']}\n")
+    for i, cl in enumerate(f["claims"], 1):
+        ev = ", ".join(
+            f"{e.get('path') or e.get('artifact_id')}{':' + e['range'] if e.get('range') else ''}"
+            for e in cl["evidence"]
+        )
+        print(f"{i}. {cl['text']}\n   evidence: {ev or 'unsupported'}")
+    for title, key in (("Recommendations", "recommendations"), ("Open questions", "questions")):
+        if f[key]:
+            print(f"\n{title}:")
+            for x in f[key]:
+                print(f"- {x}")
+
+
 def cmd_hooks(args: argparse.Namespace) -> None:
     """Opt-in, observe-only hooks (TR-076). Shows exactly what changes and writes only on confirmation."""
     from robin.hooks import install as hooks
@@ -508,6 +563,19 @@ def parser() -> argparse.ArgumentParser:
         "--print-only", action="store_true", help="hand off and print the command instead of running it"
     )
     p.set_defaults(func=cmd_open)
+
+    p = sub.add_parser("findings", parents=[common], help="list findings (and rejected submissions)")
+    p.add_argument("--task")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_findings)
+
+    p = sub.add_parser("finding", parents=[common], help="show a finding, or `finding publish` your own")
+    p.add_argument("finding_id", help="a finding ID, or `publish`")
+    p.add_argument("--version", type=int)
+    p.add_argument("--task", help="publish: the task")
+    p.add_argument("--file", help="publish: JSON with summary, claims, recommendations, questions")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_finding)
 
     p = sub.add_parser("hooks", parents=[common], help="opt-in hooks for sessions started outside Robin")
     p.add_argument("action", choices=["status", "install", "uninstall"])

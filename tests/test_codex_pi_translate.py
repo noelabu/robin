@@ -1,3 +1,5 @@
+import json
+
 from robin.adapters.codex.translate import translate as codex
 from robin.adapters.pi.translate import translate as pi
 from robin.runtime.events import HOST_EVENTS
@@ -97,3 +99,68 @@ def test_all_translated_types_are_in_the_host_vocabulary():
         "file_changed",
     }
     assert produced <= set(HOST_EVENTS)
+
+
+FINDING = {"summary": "s", "claims": [{"text": "t", "evidence": [{"path": "a.py", "range": "1-2"}]}]}
+BLOCK = "Done.\n```robin-finding\n" + json.dumps(FINDING) + "\n```"
+
+
+def test_codex_publication_paths():
+    final = codex(
+        "item/completed",
+        {
+            "threadId": "t",
+            "item": {"type": "agentMessage", "id": "m1", "text": BLOCK, "phase": "final_answer"},
+        },
+    )
+    assert final[1] == {
+        "type": "finding_submission",
+        "path": "message",
+        "payload": FINDING,
+        "native_ref": "m1:0",
+    }
+    interim = codex(
+        "item/completed",
+        {"threadId": "t", "item": {"type": "agentMessage", "id": "m2", "text": BLOCK, "phase": "commentary"}},
+    )
+    assert [e["type"] for e in interim] == ["message_completed"]  # only the final answer publishes
+    call = {
+        "type": "mcpToolCall",
+        "id": "c1",
+        "server": "robin",
+        "tool": "finding_publish",
+        "arguments": FINDING,
+        "status": "completed",
+    }
+    out = codex("item/completed", {"threadId": "t", "item": call})
+    assert out[-1] == {"type": "finding_submission", "path": "tool", "payload": FINDING, "native_ref": "c1"}
+    other = codex("item/completed", {"threadId": "t", "item": {**call, "server": "elsewhere"}})
+    assert all(e["type"] != "finding_submission" for e in other)
+    failed = codex("item/completed", {"threadId": "t", "item": {**call, "status": "failed"}})
+    assert all(e["type"] != "finding_submission" for e in failed)
+
+
+def test_pi_publication_paths():
+    msg = {
+        "type": "message_end",
+        "message": {"role": "assistant", "timestamp": 7, "content": [{"type": "text", "text": BLOCK}]},
+    }
+    assert pi(msg)[1] == {
+        "type": "finding_submission",
+        "path": "message",
+        "payload": FINDING,
+        "native_ref": "7:0",
+    }
+    start = {
+        "type": "tool_execution_start",
+        "toolCallId": "k1",
+        "toolName": "robin_finding_publish",
+        "args": FINDING,
+    }
+    assert pi(start)[1] == {
+        "type": "finding_submission",
+        "path": "tool",
+        "payload": FINDING,
+        "native_ref": "k1",
+    }
+    assert len(pi({**start, "toolName": "bash"})) == 1

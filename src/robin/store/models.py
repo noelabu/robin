@@ -57,6 +57,11 @@ TASK_STATUSES = ("open", "completed", "abandoned")
 ATTENTION_KINDS = ("question", "approval", "failure", "finding_review")
 ATTENTION_STATES = ("open", "acknowledged", "resolved", "dismissed", "expired", "handed_off")
 ATTACHMENT_KINDS = ("file", "instruction", "expected_output")
+ARTIFACT_KINDS = ("finding", "synthesis", "packet")
+AUTHOR_KINDS = ("user", "agent")
+PUBLICATION_PATHS = ("tool", "message", "user")
+SUBMISSION_STATES = ("accepted", "rejected")
+LINEAGE_RELATIONS = ("parent", "input")
 
 
 class Meta(Base):
@@ -392,3 +397,86 @@ class AttentionItem(Base):
     resolution: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class Artifact(Base):
+    """Something Robin keeps for a task: a finding, a synthesis, an approved packet (FR-020, TR-060).
+
+    Content lives in immutable versions in the artifact store, never in a project or execution folder.
+    Authorship is fixed when the artifact is created, from the publishing session's launch identity.
+    """
+
+    __tablename__ = "artifact"
+    __table_args__ = (
+        CheckConstraint(_in("kind", ARTIFACT_KINDS), name="kind"),
+        CheckConstraint(_in("author_kind", AUTHOR_KINDS), name="author_kind"),
+        Index("ix_artifact_task", "task_id", "kind", "created_at"),
+    )
+    artifact_id: Mapped[str] = mapped_column(String, primary_key=True)
+    kind: Mapped[str] = mapped_column(String)
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("task.task_id"))
+    author_kind: Mapped[str] = mapped_column(String)
+    author_session_id: Mapped[str | None] = mapped_column(ForeignKey("session.session_id"))
+    author_runtime: Mapped[str | None] = mapped_column(String)
+    author_native_session_id: Mapped[str | None] = mapped_column(String)
+    author_run_id: Mapped[str | None] = mapped_column(ForeignKey("run.run_id"))
+    latest_version: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class ArtifactVersion(Base):
+    """One immutable version. The content is canonical JSON in a blob; its hash is the version's identity."""
+
+    __tablename__ = "artifact_version"
+    artifact_id: Mapped[str] = mapped_column(ForeignKey("artifact.artifact_id"), primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    schema_version: Mapped[int] = mapped_column(Integer)
+    content_blob: Mapped[str] = mapped_column(ForeignKey("blob.sha256"))
+    size: Mapped[int] = mapped_column(Integer)
+    submission_id: Mapped[str | None] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class FindingSubmission(Base):
+    """Every finding submission, accepted or rejected (TR-067). A repeated submission ID from the same
+    author returns the stored result instead of publishing again."""
+
+    __tablename__ = "finding_submission"
+    __table_args__ = (
+        CheckConstraint(_in("path", PUBLICATION_PATHS), name="path"),
+        CheckConstraint(_in("state", SUBMISSION_STATES), name="state"),
+        UniqueConstraint("author_key", "submission_id"),
+    )
+    submission_row_id: Mapped[str] = mapped_column(String, primary_key=True)
+    author_key: Mapped[str] = mapped_column(String)  # "session:<id>" or "user"
+    submission_id: Mapped[str] = mapped_column(String)
+    session_id: Mapped[str | None] = mapped_column(ForeignKey("session.session_id"))
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("task.task_id"))
+    path: Mapped[str] = mapped_column(String)
+    state: Mapped[str] = mapped_column(String)
+    errors: Mapped[str] = mapped_column(Text)  # JSON list
+    artifact_id: Mapped[str | None] = mapped_column(ForeignKey("artifact.artifact_id"))
+    version: Mapped[int | None] = mapped_column(Integer)
+    event_cursor: Mapped[int | None] = mapped_column(ForeignKey("event.global_cursor"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class LineageEdge(Base):
+    """Where an artifact version came from: its parent findings or the inputs of a synthesis (TR-064)."""
+
+    __tablename__ = "lineage_edge"
+    __table_args__ = (
+        CheckConstraint(_in("relation", LINEAGE_RELATIONS), name="relation"),
+        ForeignKeyConstraint(
+            ["child_artifact_id", "child_version"],
+            ["artifact_version.artifact_id", "artifact_version.version"],
+            name="fk_lineage_edge_child",
+        ),
+        Index("ix_lineage_edge_parent", "parent_artifact_id"),
+    )
+    child_artifact_id: Mapped[str] = mapped_column(String, primary_key=True)
+    child_version: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    parent_artifact_id: Mapped[str] = mapped_column(ForeignKey("artifact.artifact_id"), primary_key=True)
+    parent_version: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    relation: Mapped[str] = mapped_column(String)

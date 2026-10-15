@@ -6,6 +6,8 @@ method name kept, so a protocol change affects only what Robin can show, never t
 
 from typing import Any
 
+from robin.findings import schema
+
 PREVIEW = 64 * 1024
 
 
@@ -65,19 +67,21 @@ def _item(completed: bool, item: dict[str, Any], native: dict[str, Any]) -> list
     kind, item_id = item.get("type"), item.get("id")
     base = {"native_event_id": item_id, "native_item_type": kind, **native}
     if kind == "agentMessage":
-        return (
-            [
-                {
-                    "type": "message_completed",
-                    "role": "assistant",
-                    "text": item.get("text"),
-                    "phase": item.get("phase"),
-                    **base,
-                }
-            ]
-            if completed
-            else []
-        )
+        if not completed:
+            return []
+        out = [
+            {
+                "type": "message_completed",
+                "role": "assistant",
+                "text": item.get("text"),
+                "phase": item.get("phase"),
+                **base,
+            }
+        ]
+        if item.get("phase") in (None, "final_answer"):  # message path: blocks in the final answer
+            for i, payload in enumerate(schema.parse_message_blocks(str(item.get("text") or ""))):
+                out.append(schema.submission_event("message", payload, f"{item_id}:{i}"))
+        return out
     if kind == "userMessage":
         if not completed:
             return []
@@ -123,7 +127,7 @@ def _item(completed: bool, item: dict[str, Any], native: dict[str, Any]) -> list
                 }
             ]
         failed = item.get("status") != "completed"
-        return [
+        out = [
             {
                 "type": "tool_error" if failed else "tool_result",
                 "tool_call_id": item_id,
@@ -133,6 +137,9 @@ def _item(completed: bool, item: dict[str, Any], native: dict[str, Any]) -> list
                 **base,
             }
         ]
+        if not failed and item.get("server") == "robin" and item.get("tool") == schema.TOOL_NAME:
+            out.append(schema.submission_event("tool", item.get("arguments"), str(item_id)))  # tool path
+        return out
     if kind == "reasoning":
         return [{"type": "codex_reasoning", **base}] if completed else []  # content not kept
     return [{"type": "codex_item", **base}] if completed else []

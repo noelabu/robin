@@ -11,11 +11,13 @@ import argparse
 import asyncio
 import json
 import os
+import uuid
 from typing import Any
 
 from robin import __version__
 from robin.adapters.claude.translate import translate
-from robin.runtime.host import Approvals, emit, runtime, stdin_commands
+from robin.findings import schema
+from robin.runtime.host import Approvals, emit, emit_message_findings, runtime, stdin_commands
 
 
 def deny_read_settings(store: str) -> str:
@@ -39,6 +41,8 @@ async def run_claude(args: argparse.Namespace) -> None:
         ClaudeSDKClient,
         PermissionResultAllow,
         PermissionResultDeny,
+        create_sdk_mcp_server,
+        tool,
     )
 
     approvals = Approvals()
@@ -50,8 +54,23 @@ async def run_claude(args: argparse.Namespace) -> None:
             return PermissionResultAllow(updated_input=input_data)
         return PermissionResultDeny(message=decision.get("message") or "Denied in Robin")
 
+    # Finding publication (TR-067): an in-process tool for task-bound sessions; Robin takes the finding from
+    # the call itself, and the session's identity comes from this host, not from the arguments.
+    @tool(schema.TOOL_NAME, schema.TOOL_DESCRIPTION, schema.TOOL_SCHEMA)
+    async def finding_publish(payload: dict[str, Any]) -> dict[str, Any]:
+        emit(schema.submission_event("tool", payload, uuid.uuid4().hex))
+        errors = schema.validate(payload)
+        text = ("REJECTED: " + "; ".join(errors)) if errors else "ACCEPTED: Robin recorded this finding."
+        return {"content": [{"type": "text", "text": text}]}
+
+    publish_tool = "tool" in os.environ.get("ROBIN_FINDINGS", "")
+    mcp: dict[str, Any] = {}
+    if publish_tool:
+        mcp["robin"] = create_sdk_mcp_server(name="robin", version=__version__, tools=[finding_publish])
     deny = os.environ.get("ROBIN_DENY_READ")
     options = ClaudeAgentOptions(
+        mcp_servers=mcp,
+        allowed_tools=[f"mcp__robin__{schema.TOOL_NAME}"] if publish_tool else [],
         cwd=args.cwd,
         setting_sources=["user", "project", "local"],
         permission_mode="default",
@@ -70,6 +89,8 @@ async def run_claude(args: argparse.Namespace) -> None:
                 for event in translate(message, interrupted=is_result and state["interrupted"]):
                     emit(event)
                 if is_result:
+                    # Message path: robin-finding blocks in the final result text.
+                    emit_message_findings(str(getattr(message, "result", "") or ""), uuid.uuid4().hex)
                     state["busy"] = state["interrupted"] = False
                     approvals.expire_all("turn ended")
 

@@ -128,7 +128,11 @@ def test_hook_source_rebuild_keeps_checkpoints_and_event_references(data_dir, tm
     from robin.events.ingest import CheckpointAdvance, ensure_session, ingest_batch, open_generation
 
     scripts = tmp_path / "to-0004"
-    shutil.copytree(MIGRATIONS, scripts, ignore=shutil.ignore_patterns("__pycache__", "0005_*"))
+
+    def after_0004(_: str, names: list[str]) -> list[str]:
+        return [n for n in names if n == "__pycache__" or (n[:4].isdigit() and int(n[:4]) >= 5)]
+
+    shutil.copytree(MIGRATIONS, scripts, ignore=after_0004)
     s = open_store(data_dir, migrations=scripts)
     sid = ensure_session(s, runtime="fake", mode="managed")
     s.writer.call(

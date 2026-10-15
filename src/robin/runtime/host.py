@@ -19,6 +19,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable, Coroutine
 from typing import Any
 
+from robin.findings.schema import parse_message_blocks, submission_event
 from robin.supervisor.protocol import MAX_LINE
 
 
@@ -96,6 +97,14 @@ def runtime(name: str) -> Callable[[RuntimeMain], RuntimeMain]:
     return register
 
 
+def emit_message_findings(text: str, native_ref: str) -> int:
+    """Publish the robin-finding blocks of an agent's final message (TR-067, message path)."""
+    blocks = parse_message_blocks(text)
+    for i, payload in enumerate(blocks):
+        emit(submission_event("message", payload, f"{native_ref}:{i}"))
+    return len(blocks)
+
+
 @runtime("fake")
 async def run_fake(args: argparse.Namespace) -> None:
     """Scripted runtime: ticks, one approval at tick 5, interrupt and stop. No network."""
@@ -115,6 +124,20 @@ async def run_fake(args: argparse.Namespace) -> None:
 
     async def work(text: str) -> None:
         emit({"type": "turn_started", "input": text})
+        if "```robin-finding" in text or text.startswith("tool-finding:"):
+            # Scripted publication: a final message with finding blocks, or a finding tool call.
+            ref = uuid.uuid4().hex
+            if text.startswith("tool-finding:"):
+                try:
+                    payload = json.loads(text[len("tool-finding:") :])
+                except ValueError as exc:
+                    payload = {"_unparsable": str(exc)}
+                emit(submission_event("tool", payload, ref))
+            else:
+                emit({"type": "message_completed", "text": text})
+                emit_message_findings(text, ref)
+            emit({"type": "turn_completed"})
+            return
         try:
             for n in range(1, 1_000_000):
                 await asyncio.sleep(tick_s)

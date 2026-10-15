@@ -73,6 +73,7 @@ class LaunchBody(BaseModel):
     role: str | None = None
     prompt: str | None = None
     action_id: str = Field(min_length=8, max_length=128)
+    finding_tool: bool = True  # False: publish by final-message block only (MCP stays optional, TR-066)
 
 
 class ActionBody(BaseModel):
@@ -382,7 +383,15 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         )
         action = await _run(
             runtime.manager.launch(
-                sid, runtime=body.runtime, cwd=str(checked.path), action_id=body.action_id, prompt=body.prompt
+                sid,
+                runtime=body.runtime,
+                cwd=str(checked.path),
+                action_id=body.action_id,
+                prompt=body.prompt,
+                # Sessions working on a task get the finding tool; any session can publish by message.
+                env={"ROBIN_FINDINGS": "tool,message" if body.finding_tool else "message"}
+                if body.task_id
+                else None,
             )
         )
         warnings = (
@@ -612,10 +621,11 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
     async def health(_: str = Authed) -> dict[str, Any]:
         return {"service": "ready", "supervisor_connected": runtime.supervisor_connected, "pid": os.getpid()}
 
-    from robin.service import routes_attention, routes_workspace
+    from robin.service import routes_attention, routes_findings, routes_workspace
 
     routes_workspace.register(app, store, Authed, API)
     routes_attention.register(app, runtime, Authed, API, _error)
+    routes_findings.register(app, runtime, Authed, API, _error)
 
     # -- web client (mounted last: it matches every path) ----------------------
 

@@ -6,7 +6,12 @@ Pure functions over Pi's JSONL records (docs/json.md in the Pi package). Unknown
 
 from typing import Any
 
+from robin.findings import schema
+
 PREVIEW = 64 * 1024
+
+
+PI_TOOL = "robin_finding_publish"
 
 
 def _text(message: dict[str, Any]) -> str:
@@ -34,20 +39,24 @@ def translate(record: dict[str, Any]) -> list[dict[str, Any]]:
         message = record.get("message") or {}
         role = message.get("role")
         if role == "assistant":
-            return [
+            text, stamp = _text(message), str(message.get("timestamp") or "")
+            out = [
                 {
                     "type": "message_completed",
                     "role": "assistant",
-                    "text": _text(message),
-                    "native_event_id": str(message.get("timestamp")) if message.get("timestamp") else None,
+                    "text": text,
+                    "native_event_id": stamp or None,
                     **native,
                 }
             ]
+            for i, payload in enumerate(schema.parse_message_blocks(text)):  # message path
+                out.append(schema.submission_event("message", payload, f"{stamp or 'msg'}:{i}"))
+            return out
         if role == "user":
             return [{"type": "user_message", "text": _text(message), **native}]
         return []
     if kind == "tool_execution_start":
-        return [
+        out = [
             {
                 "type": "tool_started",
                 "tool_call_id": record.get("toolCallId"),
@@ -57,6 +66,9 @@ def translate(record: dict[str, Any]) -> list[dict[str, Any]]:
                 **native,
             }
         ]
+        if record.get("toolName") == PI_TOOL:  # tool path: the call itself, from this session's stream
+            out.append(schema.submission_event("tool", record.get("args"), str(record.get("toolCallId"))))
+        return out
     if kind == "tool_execution_end":
         result = record.get("result") or {}
         text = _text(result) if isinstance(result, dict) else str(result)

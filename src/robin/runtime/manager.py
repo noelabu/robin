@@ -16,6 +16,7 @@ from sqlalchemy import Connection, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from robin.events.supervisor_source import SupervisorRecord
+from robin.findings import store as findings
 from robin.ids import utc_now
 from robin.runtime import attention, ledger, state
 from robin.runtime.capabilities import capabilities_for
@@ -398,6 +399,10 @@ def _project_batch(conn: Connection, store: Store, batch: int) -> int:
             ).scalar()
             if task:
                 conn.execute(update(Event).where(Event.global_cursor == r.global_cursor).values(task_id=task))
+            if ev.get("type") == "finding_submission":  # attributed from this session's launch identity
+                findings.project(
+                    conn, store.blobs, r.session_id, r.global_cursor, r.source_time or r.ingested_at, ev
+                )
     if rows:
         conn.execute(
             sqlite_insert(Meta)

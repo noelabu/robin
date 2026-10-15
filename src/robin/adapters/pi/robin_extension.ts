@@ -9,7 +9,7 @@ import { Type } from "typebox";
 // may be destructive or reach the network. Pi's built-in tools carry no
 // annotations, so the read-only built-ins are listed explicitly.
 //
-// Finding publication: when ROBIN_PUBLISH_PATH is "tool", registers
+// Finding publication: when ROBIN_FINDINGS includes "tool" (task-bound sessions), registers
 // robin_finding_publish. The tool only validates and replies; Robin takes the
 // finding from the tool_execution_start event in the session's own stream.
 
@@ -45,7 +45,7 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  if (process.env.ROBIN_PUBLISH_PATH !== "tool") return;
+  if (!(process.env.ROBIN_FINDINGS ?? process.env.ROBIN_PUBLISH_PATH ?? "").includes("tool")) return;
   pi.registerTool({
     name: "robin_finding_publish",
     label: "Publish finding",
