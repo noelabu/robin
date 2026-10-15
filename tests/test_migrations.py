@@ -118,3 +118,47 @@ def test_upgrade_from_baseline_keeps_rows_and_backs_up(data_dir, tmp_path):
             assert c.execute("SELECT value FROM meta WHERE key='probe'").fetchone() == ("kept",)
     finally:
         s.close()
+
+
+def test_hook_source_rebuild_keeps_checkpoints_and_event_references(data_dir, tmp_path):
+    """0005 rebuilds source_checkpoint; events that reference it survive and still satisfy their keys."""
+    import shutil
+
+    from robin.events.envelope import EvidenceKind, NewEvent
+    from robin.events.ingest import CheckpointAdvance, ensure_session, ingest_batch, open_generation
+
+    scripts = tmp_path / "to-0004"
+    shutil.copytree(MIGRATIONS, scripts, ignore=shutil.ignore_patterns("__pycache__", "0005_*"))
+    s = open_store(data_dir, migrations=scripts)
+    sid = ensure_session(s, runtime="fake", mode="managed")
+    s.writer.call(
+        lambda c: open_generation(c, source_id="src", kind="supervisor", runtime="fake", reason="initial")
+    )
+    event = NewEvent(
+        runtime="fake",
+        session_id=sid,
+        source_id="src",
+        source_generation=0,
+        source_event_id="e1",
+        source_seq=1,
+        event_type="unknown.raw",
+        evidence_kind=EvidenceKind.UNKNOWN,
+        payload=b"{}",
+    )
+    ingest_batch(s, [event], [], CheckpointAdvance("src", 0, 1, None))
+    s.close()
+
+    s = open_store(data_dir)
+    try:
+        assert current_revision(s.db_path) == HEAD
+        with sqlite3.connect(s.db_path) as c:
+            assert c.execute("SELECT count(*) FROM event").fetchone() == (1,)
+            assert c.execute("SELECT kind FROM source_checkpoint WHERE source_id='src'").fetchone() == (
+                "supervisor",
+            )
+            assert c.execute("PRAGMA foreign_key_check").fetchall() == []
+        s.writer.call(
+            lambda c: open_generation(c, source_id="h", kind="hook", runtime="claude", reason="initial")
+        )
+    finally:
+        s.close()

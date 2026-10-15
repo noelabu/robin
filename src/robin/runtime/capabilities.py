@@ -22,6 +22,8 @@ class Capabilities:
     terminal_mode: str = "handoff"  # attach | handoff | unavailable
     finding_paths: tuple[str, ...] = ("tool", "message")
     review_independence: str = "enforced_with_deny_rules"  # enforced_with_deny_rules | not_isolated
+    # How sessions started outside Robin are seen: opt-in hooks (`robin hooks install`) or transcripts only.
+    observation: str = "hooks_or_transcripts"  # hooks_or_transcripts | transcripts_only
     level: str = "live"  # live | observed_only
     unsupported: dict[str, str] = field(default_factory=dict)
 
@@ -75,6 +77,7 @@ def capabilities_for(runtime: str) -> Capabilities:
         terminal_mode="unavailable",
         finding_paths=(),
         review_independence="not_isolated",
+        observation="transcripts_only",
         level="observed_only",
         unsupported={"live": f"no Robin adapter for {runtime}"},
     )

@@ -313,6 +313,56 @@ def cmd_supervisor_stop(args: argparse.Namespace) -> None:
     print(f"supervisor stopping; ended {len(r['ending'])} session(s)")
 
 
+def cmd_hooks(args: argparse.Namespace) -> None:
+    """Opt-in, observe-only hooks (TR-076). Shows exactly what changes and writes only on confirmation."""
+    from robin.hooks import install as hooks
+
+    runtimes = [args.runtime] if args.runtime else ["claude", "codex", "pi"]
+    if args.action == "status":
+        for r in runtimes:
+            st = hooks.status(r, args.data)
+            state = "installed" if st["installed"] else "not installed"
+            print(f"{r:<7} {state:<14} {st['config']}")
+            for d in st["drift"]:
+                print(f"        drift: {d}")
+        return
+    if not args.runtime:
+        raise CliError(f"name a runtime: robin hooks {args.action} claude|codex|pi")
+    try:
+        plan = (hooks.plan_install if args.action == "install" else hooks.plan_uninstall)(
+            args.runtime, args.data
+        )
+    except hooks.InstallError as exc:
+        raise CliError(str(exc)) from exc
+    if plan.action == "nothing":
+        print(f"{args.runtime}: nothing to do ({'; '.join(plan.notes)})")
+        return
+    print(plan.diff() or f"{plan.target} will be removed")
+    for note in plan.notes:
+        print(f"note: {note}")
+    if args.action == "install":
+        print("Robin's hooks only report events to Robin. They never approve, block or change anything.")
+    if not args.yes:
+        if not sys.stdin.isatty():
+            raise CliError("not confirmed; run again with --yes to apply this change")
+        if input(f"{args.action.capitalize()} these hooks? [y/N] ").strip().lower() not in ("y", "yes"):
+            print("nothing changed")
+            return
+    try:
+        backup = hooks.apply(plan, args.data)
+    except hooks.InstallError as exc:
+        raise CliError(str(exc)) from exc
+    print(
+        f"{args.action}ed {args.runtime} hooks in {plan.target}" + (f" (backup: {backup})" if backup else "")
+    )
+
+
+def cmd_hook_relay(args: argparse.Namespace) -> None:
+    from robin.hooks.relay import main as relay_main
+
+    relay_main(["--runtime", args.runtime, "--data", str(args.data)])
+
+
 def cmd_doctor(args: argparse.Namespace) -> None:
     checks = doctor(args.data)
     width = max(len(name) for name, _, _ in checks)
@@ -374,6 +424,16 @@ def doctor(data_dir: Path) -> list[tuple[str, str, str]]:
             else "optional; without it terminal handoff opens the runtime's own command in your terminal",
         )
     )
+    from robin.hooks import install as hooks
+
+    for runtime in ("claude", "codex", "pi"):
+        st = hooks.status(runtime, data_dir)
+        if st["drift"]:
+            out.append((f"hooks {runtime}", "warn", "; ".join(st["drift"])))
+        else:
+            out.append(
+                (f"hooks {runtime}", "ok", "installed" if st["installed"] else "not installed (optional)")
+            )
     out.append(_supervisor_check(data_dir))
     url = endpoint(data_dir)
     if url is None:
@@ -448,6 +508,16 @@ def parser() -> argparse.ArgumentParser:
         "--print-only", action="store_true", help="hand off and print the command instead of running it"
     )
     p.set_defaults(func=cmd_open)
+
+    p = sub.add_parser("hooks", parents=[common], help="opt-in hooks for sessions started outside Robin")
+    p.add_argument("action", choices=["status", "install", "uninstall"])
+    p.add_argument("runtime", nargs="?", choices=["claude", "codex", "pi"])
+    p.add_argument("--yes", action="store_true", help="apply without asking (after reviewing the diff)")
+    p.set_defaults(func=cmd_hooks)
+
+    p = sub.add_parser("hook-relay", parents=[common], help=argparse.SUPPRESS)
+    p.add_argument("--runtime", required=True)
+    p.set_defaults(func=cmd_hook_relay)
 
     p = sub.add_parser("reclaim", parents=[common], help="take a handed-off session back into Robin")
     p.add_argument("session")

@@ -7,6 +7,7 @@ sending the request again with a new ID.
 
 import asyncio
 import json
+import logging
 import os
 import uuid
 from collections.abc import AsyncIterator
@@ -23,7 +24,7 @@ from sqlalchemy import Connection, func, select
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from robin.events.ingest import ensure_session, read_events, read_payload_json
-from robin.paths import ExecutionCwd
+from robin.paths import ExecutionCwd, secure_mkdir
 from robin.runtime.capabilities import RUNTIME_CAPABILITIES, capabilities_for
 from robin.runtime.ledger import Action, ActionConflict, ActionRejected
 from robin.service.auth import COOKIE, CSRF_HEADER, Auth
@@ -36,6 +37,9 @@ from robin.workspace import tasks as ws
 API = "/api/v1"
 HEARTBEAT_S = 15.0
 STREAM_BATCH = 200
+HOOK_BODY_MAX = 1024 * 1024
+
+log = logging.getLogger(__name__)
 PREVIEW_CHARS = 500
 WEB_DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
 
@@ -179,6 +183,10 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        from robin.hooks import ingest as hook_ingest
+
+        secure_mkdir(store.data_dir / "hooks")  # the relay notes dropped events here
+        await asyncio.to_thread(hook_ingest.drain_drops, store)
         await runtime.start()
         try:
             yield
@@ -471,6 +479,31 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         except Exception as exc:
             raise ApiError(500, "terminal_failed", f"couldn't open Terminal: {exc}", "retry_later") from exc
         return {"opened": True, "command": info["command"]}
+
+    @app.post(f"{API}/hooks/{{harness}}", status_code=202)
+    async def hook(harness: str, request: Request, _: str = Authed) -> dict[str, Any]:
+        """Events from the opt-in hook relay (TR-076). Robin only records them; it never answers a hook."""
+        from robin.hooks import ingest as hook_ingest
+
+        if harness not in ("claude", "codex", "pi"):
+            raise ApiError(404, "not_found", f"no hook source for {harness}")
+        raw = await request.body()
+        if len(raw) > HOOK_BODY_MAX:
+            raise ApiError(413, "too_large", "hook event too large", "fix_request")
+        try:
+            body = json.loads(raw)
+        except ValueError as exc:
+            raise ApiError(422, "invalid_request", "hook event isn't JSON", "fix_request") from exc
+        try:
+            result = await asyncio.to_thread(hook_ingest.record, store, harness, body)
+        except hook_ingest.HookRejected as exc:
+            raise ApiError(422, "invalid_request", str(exc), "fix_request") from exc
+        try:  # the event is recorded; turning earlier drops into gaps must not fail this request
+            await asyncio.to_thread(hook_ingest.drain_drops, store)
+        except Exception:
+            log.exception("couldn't turn dropped hook events into coverage gaps")
+        await runtime.notify()
+        return result
 
     @app.get(f"{API}/actions/{{action_id}}")
     async def get_action(action_id: str, _: str = Authed) -> dict[str, Any]:
