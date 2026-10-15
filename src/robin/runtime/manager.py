@@ -8,6 +8,7 @@ move the action forward; nothing is resent automatically. State is projected fro
 import asyncio
 import json
 from collections import defaultdict
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
@@ -20,7 +21,7 @@ from robin.runtime import attention, ledger, state
 from robin.runtime.capabilities import capabilities_for
 from robin.runtime.ledger import Action, ActionRejected
 from robin.store import Store
-from robin.store.models import ControlAction, Event, Meta
+from robin.store.models import AttentionItem, ControlAction, Event, Meta
 from robin.store.models import Session as SessionRow
 from robin.supervisor.client import SupervisorClient, SupervisorUnavailable
 
@@ -149,6 +150,70 @@ class RuntimeManager:
             {"type": "command", "session": session_id, "command": {"cmd": "stop"}},
         )
 
+    async def handoff(self, session_id: str, *, action_id: str, interrupt_running: bool = False) -> Action:
+        """Release the session to its native terminal (FR-037, TR-046): Robin's host stops, the lease moves to
+        the terminal, pending requests are handed off, and every Robin control is disabled until reclaimed."""
+
+        def check(row: Any) -> None:
+            if not row["native_session_id"]:
+                raise ActionRejected("no_native_id", "the runtime hasn't reported its session id yet")
+            if row["runtime_state"] in ("running", "waiting_for_input") and not interrupt_running:
+                raise ActionRejected(
+                    "turn_in_progress",
+                    "a turn is running; handing off now ends it. Interrupt "
+                    "first, or confirm handing off anyway",
+                )
+
+        async def taken() -> None:
+            await self.store.writer.acall(lambda c: _move_lease(c, session_id, "terminal"))
+
+        return await self._control(
+            session_id,
+            "handoff",
+            {"interrupt_running": interrupt_running},
+            action_id,
+            {"type": "command", "session": session_id, "command": {"cmd": "stop"}},
+            check=check,
+            on_submitted=taken,
+        )
+
+    async def reclaim(self, session_id: str, *, action_id: str) -> Action:
+        """Take control back from the terminal: only when nothing else holds the native session, by resuming
+        it through a new runtime host (TR-046)."""
+        from robin.runtime.terminal import holders
+
+        row = self._row(session_id)
+
+        def check(r: Any) -> None:
+            if r["control_owner"] != "terminal":
+                raise ActionRejected("not_handed_off", "Robin already controls this session")
+            busy = holders(r["native_session_id"] or "")
+            if busy:
+                raise ActionRejected(
+                    "terminal_still_open", f"close the terminal session first (process {busy})"
+                )
+
+        async def taken() -> None:
+            await self.store.writer.acall(lambda c: _move_lease(c, session_id, "robin"))
+
+        msg = {
+            "type": "launch",
+            "session": session_id,
+            "runtime": row["runtime"] if row else "",
+            "cwd": (row["execution_cwd"] if row else None),
+            "action_id": action_id,
+            "env": {"ROBIN_RESUME_NATIVE_ID": (row["native_session_id"] or "") if row else ""},
+        }
+        return await self._control(
+            session_id, "reclaim", {}, action_id, msg, needs_connection=False, check=check, on_submitted=taken
+        )
+
+    def _row(self, session_id: str) -> Any:
+        with self.store.reader.connect() as conn:
+            return (
+                conn.execute(select(SessionRow).where(SessionRow.session_id == session_id)).mappings().first()
+            )
+
     async def get_action(self, action_id: str) -> Action | None:
         with self.store.reader.connect() as conn:
             return ledger.get(conn, action_id)
@@ -163,6 +228,8 @@ class RuntimeManager:
         *,
         needs_connection: bool = True,
         expected_generation: int | None = None,
+        check: Callable[[Any], None] | None = None,
+        on_submitted: Callable[[], Awaitable[None]] | None = None,
     ) -> Action:
         with self.store.reader.connect() as conn:
             known = conn.execute(
@@ -184,7 +251,7 @@ class RuntimeManager:
             if not created:
                 return action  # identical repeat: report the stored outcome, never resend
             try:
-                self._preconditions(session_id, action_type, needs_connection, expected_generation)
+                self._preconditions(session_id, action_type, needs_connection, expected_generation, check)
             except ActionRejected as exc:
                 await self._move(action_id, "failed", error_code=exc.code, error_message=str(exc))
                 raise
@@ -206,13 +273,20 @@ class RuntimeManager:
                     error_message=str(exc) or type(exc).__name__,
                 )
             if reply.get("ok"):
+                if on_submitted is not None:
+                    await on_submitted()  # still under the session lock: queued controls see the new owner
                 return await self._move(action_id, "submitted")
             return await self._move(
                 action_id, "failed", error_code=str(reply.get("error", "rejected")), error_message=str(reply)
             )
 
     def _preconditions(
-        self, session_id: str, action_type: str, needs_connection: bool, expected_generation: int | None
+        self,
+        session_id: str,
+        action_type: str,
+        needs_connection: bool,
+        expected_generation: int | None,
+        check: Callable[[Any], None] | None = None,
     ) -> None:
         with self.store.reader.connect() as conn:
             row = (
@@ -225,6 +299,10 @@ class RuntimeManager:
         ok, reason = capabilities_for(row["runtime"]).allows(action_type)
         if not ok:
             raise ActionRejected("unsupported", reason or "unsupported")
+        if row["control_owner"] == "terminal" and action_type != "reclaim":
+            raise ActionRejected(
+                "handed_off", "this session is handed off to a terminal; take control back first"
+            )
         if needs_connection and row["connection_state"] != "connected":
             raise ActionRejected("not_connected", f"session is {row['connection_state']}")
         if expected_generation is not None and expected_generation != row["lease_generation"]:
@@ -232,6 +310,8 @@ class RuntimeManager:
                 "stale_generation",
                 f"expected lease generation {expected_generation}, session is at {row['lease_generation']}",
             )
+        if check is not None:
+            check(row)
 
     async def _move(self, action_id: str, to: str, **kw: Any) -> Action:
         action = await self.store.writer.acall(lambda c: ledger.transition(c, action_id, to, **kw))
@@ -259,6 +339,26 @@ class RuntimeManager:
 
 
 PROJECTION_KEY = "projection_cursor"
+
+
+def _move_lease(conn: Connection, session_id: str, owner: str) -> None:
+    """One owner at a time: a new lease generation invalidates controls prepared under the old one."""
+    now = utc_now()
+    gen = (
+        conn.execute(select(SessionRow.lease_generation).where(SessionRow.session_id == session_id)).scalar()
+        or 0
+    )
+    conn.execute(
+        update(SessionRow)
+        .where(SessionRow.session_id == session_id)
+        .values(control_owner=owner, lease_generation=gen + 1, updated_at=now)
+    )
+    if owner == "terminal":
+        conn.execute(
+            update(AttentionItem)
+            .where(AttentionItem.session_id == session_id, AttentionItem.state.in_(("open", "acknowledged")))
+            .values(state="handed_off", updated_at=now)
+        )
 
 
 def _project_batch(conn: Connection, store: Store, batch: int) -> int:
@@ -325,13 +425,17 @@ def _project_one(
             error_message=str(ev.get("reason", "")),
             native_correlation=correlation,
         )
+    elif kind == "host_exited" and _pending(conn, session_id, "handoff"):
+        # The exit is the handoff's acknowledgement, whether or not the lease has moved yet.
+        for handoff_id in _pending(conn, session_id, "handoff"):
+            ledger.transition(conn, handoff_id, "acknowledged", native_correlation=correlation)
     elif kind == "host_exited":
         # A host that exits before its session starts means the launch failed.
         never_started = (
             conn.execute(
                 select(ControlAction.action_id).where(
                     ControlAction.session_id == session_id,
-                    ControlAction.action_type == "launch",
+                    ControlAction.action_type.in_(("launch", "reclaim")),
                     ControlAction.state.in_(("requested", "submitted", "outcome_unknown")),
                 )
             )
@@ -352,7 +456,7 @@ def _project_one(
             conn.execute(
                 select(ControlAction.action_id).where(
                     ControlAction.session_id == session_id,
-                    ControlAction.action_type == "launch",
+                    ControlAction.action_type.in_(("launch", "reclaim")),
                     ControlAction.state.in_(("requested", "submitted", "outcome_unknown")),
                 )
             )
@@ -361,3 +465,15 @@ def _project_one(
         )
         for launch_id in launches:
             ledger.transition(conn, launch_id, "acknowledged", native_correlation=correlation)
+
+
+def _pending(conn: Connection, session_id: str, action_type: str) -> list[str]:
+    return list(
+        conn.execute(
+            select(ControlAction.action_id).where(
+                ControlAction.session_id == session_id,
+                ControlAction.action_type == action_type,
+                ControlAction.state.in_(("requested", "submitted", "outcome_unknown")),
+            )
+        ).scalars()
+    )

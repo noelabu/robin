@@ -32,6 +32,8 @@ class Capabilities:
             "interrupt": self.interrupt,
             "approval": self.approvals != "none",
             "stop": True,
+            "handoff": self.terminal_mode != "unavailable",
+            "reclaim": self.terminal_mode != "unavailable",
         }.get(action_type, False)
         if self.level != "live":
             return (

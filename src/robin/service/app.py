@@ -71,12 +71,13 @@ class LaunchBody(BaseModel):
 
 
 class ActionBody(BaseModel):
-    type: Literal["message", "interrupt", "stop", "approval"]
+    type: Literal["message", "interrupt", "stop", "approval", "handoff", "reclaim"]
     action_id: str = Field(min_length=8, max_length=128)
     text: str | None = None
     request_id: str | None = None
     allow: bool | None = None
     expected_generation: int | None = None
+    interrupt_running: bool = False  # handoff: end a running turn
 
 
 class ExchangeBody(BaseModel):
@@ -85,7 +86,7 @@ class ExchangeBody(BaseModel):
 
 # -- views --------------------------------------------------------------------
 
-CONTROL_TYPES = ("message", "interrupt", "stop", "approval")
+CONTROL_TYPES = ("message", "interrupt", "stop", "approval", "handoff", "reclaim")
 
 
 def session_view(r: Any) -> dict[str, Any]:
@@ -95,7 +96,12 @@ def session_view(r: Any) -> dict[str, Any]:
         ok, reason = caps.allows(action)
         if ok and r["mode"] != "managed":
             ok, reason = False, "observed sessions are read-only in Robin"
-        if ok and r["connection_state"] != "connected":
+        handed_off = r["control_owner"] == "terminal"
+        if ok and action == "reclaim":
+            ok, reason = (True, None) if handed_off else (False, "Robin already controls this session")
+        elif ok and handed_off:
+            ok, reason = False, "handed off to a terminal; take control back first"
+        elif ok and r["connection_state"] != "connected":
             ok, reason = False, f"session is {r['connection_state']}"
         controls[action] = {"enabled": ok, "reason": reason}
     return {
@@ -109,6 +115,7 @@ def session_view(r: Any) -> dict[str, Any]:
         "active_run_id": r["active_run_id"],
         "execution_cwd": r["execution_cwd"],
         "lease_generation": r["lease_generation"],
+        "control_owner": r["control_owner"] or ("robin" if r["mode"] == "managed" else None),
         "project_id": r["project_id"],
         "current_task_id": r["current_task_id"],
         "pending_task_id": r["pending_task_id"],
@@ -353,6 +360,10 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
             )
         elif body.type == "stop":
             coro = m.stop(session_id, action_id=body.action_id)
+        elif body.type == "handoff":
+            coro = m.handoff(session_id, action_id=body.action_id, interrupt_running=body.interrupt_running)
+        elif body.type == "reclaim":
+            coro = m.reclaim(session_id, action_id=body.action_id)
         else:
             if not body.request_id or body.allow is None:
                 raise ApiError(422, "invalid_request", "approval needs request_id and allow", "fix_request")
@@ -384,6 +395,43 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
                 409, str(reply.get("error")), f"would end: {reply.get('would_end')}", "fix_request"
             )
         return {"ending": reply.get("ending", [])}
+
+    @app.get(f"{API}/sessions/{{session_id}}/terminal")
+    async def terminal_info(session_id: str, _: str = Authed) -> dict[str, Any]:
+        """The runtime's own resume command for this session (FR-037)."""
+        from robin.runtime.terminal import resume_command
+
+        with store.reader.connect() as conn:
+            rows = _sessions(conn, session_id)
+        if not rows:
+            raise ApiError(404, "not_found", f"no session {session_id}")
+        s = rows[0]
+        if not s["native_session_id"]:
+            raise ApiError(409, "no_native_id", "the runtime hasn't reported its session id yet")
+        try:
+            command = resume_command(s["runtime"], s["native_session_id"])
+        except ValueError as exc:
+            raise ApiError(409, "unsupported", str(exc)) from exc
+        return {
+            "mode": s["capabilities"]["terminal_mode"],
+            "command": command,
+            "cwd": s["execution_cwd"],
+            "owner": s["control_owner"],
+        }
+
+    @app.post(f"{API}/sessions/{{session_id}}/terminal/open")
+    async def terminal_open(session_id: str, _: str = Authed) -> dict[str, Any]:
+        """Open Terminal.app on the resume command. Only once Robin doesn't hold the session (TR-046)."""
+        from robin.runtime.terminal import open_in_terminal_app
+
+        info = await terminal_info(session_id, _)
+        if info["owner"] == "robin":
+            raise ApiError(409, "not_handed_off", "hand the session off first; Robin still controls it")
+        try:
+            await asyncio.to_thread(open_in_terminal_app, info["command"], info["cwd"] or str(Path.home()))
+        except Exception as exc:
+            raise ApiError(500, "terminal_failed", f"couldn't open Terminal: {exc}", "retry_later") from exc
+        return {"opened": True, "command": info["command"]}
 
     @app.get(f"{API}/actions/{{action_id}}")
     async def get_action(action_id: str, _: str = Authed) -> dict[str, Any]:

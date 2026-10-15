@@ -8,21 +8,49 @@ function ago(iso: string | null): string {
   return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)}m ago` : `${Math.round(s / 3600)}h ago`;
 }
 
+function resumeCommand(runtime: string, id: string): string {
+  if (runtime === "claude") return `claude --resume ${id}`;
+  if (runtime === "codex") return `codex resume ${id}`;
+  if (runtime === "pi") return `pi --session ${id}`;
+  return `robin open ${id}`;
+}
+
 export function SessionDetail({ session }: { session: Session }) {
   const [text, setText] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const c = session.controls;
 
-  async function act(body: { type: string; text?: string }, label: string) {
+  async function act(body: { type: string; text?: string; interrupt_running?: boolean }, label: string) {
     setStatus(`${label}…`);
     try {
       const { action } = await api.act(session.session_id, body);
       setStatus(`${label}: ${action.state}`);
       if (body.type === "message") setText("");
+      return action;
     } catch (e) {
       setStatus(e instanceof ApiError ? `${label} not sent: ${e.message}` : `${label} failed`);
+      return null;
     }
   }
+
+  async function handOff() {
+    const running = ["running", "waiting_for_input"].includes(session.runtime_state);
+    if (running && !window.confirm("A turn is running. Handing off now ends it. Continue?")) return;
+    await act({ type: "handoff", interrupt_running: running }, "Hand off");
+  }
+
+  async function openTerminal() {
+    setStatus("Opening Terminal…");
+    try {
+      await api.openTerminal(session.session_id);
+      setStatus("Opened in Terminal");
+    } catch (e) {
+      setStatus(e instanceof ApiError ? `Couldn't open Terminal: ${e.message}` : "Couldn't open Terminal");
+    }
+  }
+
+  const handedOff = session.control_owner === "terminal";
+  const resume = session.native_session_id ? resumeCommand(session.runtime, session.native_session_id) : null;
 
   const sendLabel = session.runtime_state === "running" ? (session.capabilities.steer_mid_turn ? "Steer" : "Queue follow-up") : "Send";
 
@@ -41,8 +69,50 @@ export function SessionDetail({ session }: { session: Session }) {
           <dd>{ago(session.state_evidence_at)}</dd>
           <dt>Mode</dt>
           <dd>{session.mode === "managed" ? "Launched by Robin" : "Observed (read-only)"}</dd>
+          {session.mode === "managed" && (
+            <>
+              <dt>Control</dt>
+              <dd>{handedOff ? "Handed off to a terminal" : "Robin"}</dd>
+            </>
+          )}
         </dl>
       </div>
+
+      {session.mode === "managed" && (
+        <div className="terminal">
+          {handedOff ? (
+            <>
+              <p className="hint">
+                Continue in a terminal with <code>{resume}</code>. Close it before taking control back.
+              </p>
+              <div className="actions">
+                <button type="button" onClick={() => void openTerminal()}>
+                  Open in Terminal
+                </button>
+                <button
+                  type="button"
+                  disabled={!c.reclaim.enabled}
+                  title={c.reclaim.reason ?? undefined}
+                  onClick={() => void act({ type: "reclaim" }, "Take back control")}
+                >
+                  Take back control
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="actions">
+              <button
+                type="button"
+                disabled={!c.handoff.enabled}
+                title={c.handoff.reason ?? "Robin stops its process; you continue the session in a terminal"}
+                onClick={() => void handOff()}
+              >
+                Hand off to terminal
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       <form
         className="compose"

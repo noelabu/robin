@@ -15,6 +15,7 @@ const session = (over: Partial<Session> = {}): Session => ({
   active_run_id: null,
   execution_cwd: "/work/app",
   lease_generation: 0,
+  control_owner: "robin",
   created_at: "2026-10-15T00:00:00Z",
   updated_at: "2026-10-15T00:00:00Z",
   controls: {
@@ -22,6 +23,8 @@ const session = (over: Partial<Session> = {}): Session => ({
     interrupt: { enabled: true, reason: null },
     stop: { enabled: true, reason: null },
     approval: { enabled: true, reason: null },
+    handoff: { enabled: true, reason: null },
+    reclaim: { enabled: false, reason: "Robin already controls this session" },
   },
   capabilities: { runtime: "claude", steer_mid_turn: false, tested_versions: "x", level: "live" },
   ...over,
@@ -43,7 +46,7 @@ test("agent text renders as text, never as markup", () => {
 test("disabled controls say why", () => {
   const off = { enabled: false, reason: "session is disconnected" };
   render(<SessionDetail session={session({ connection_state: "disconnected",
-    controls: { message: off, interrupt: off, stop: off, approval: off } })} />);
+    controls: { message: off, interrupt: off, stop: off, approval: off, handoff: off, reclaim: off } })} />);
   expect(screen.getByRole("button", { name: "Interrupt" })).toHaveProperty("disabled", true);
   expect(screen.getByText(/Controls unavailable: session is disconnected/)).toBeTruthy();
 });
@@ -58,4 +61,16 @@ test("a runtime that steers mid-turn says Steer", () => {
   render(<SessionDetail session={session({ runtime: "codex",
     capabilities: { runtime: "codex", steer_mid_turn: true, tested_versions: "x", level: "live" } })} />);
   expect(screen.getByRole("button", { name: "Steer" })).toBeTruthy();
+});
+
+test("a handed-off session shows the resume command and only Take back control", () => {
+  const off = { enabled: false, reason: "handed off to a terminal; take control back first" };
+  render(<SessionDetail session={session({ control_owner: "terminal", native_session_id: "abc-1",
+    runtime_state: "idle", connection_state: "disconnected",
+    controls: { message: off, interrupt: off, stop: off, approval: off, handoff: off,
+      reclaim: { enabled: true, reason: null } } })} />);
+  expect(screen.getByText("claude --resume abc-1")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Take back control" })).toHaveProperty("disabled", false);
+  expect(screen.queryByRole("button", { name: "Hand off to terminal" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Interrupt" })).toHaveProperty("disabled", true);
 });

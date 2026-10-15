@@ -428,3 +428,41 @@ def test_attention_queue_answers_an_approval_once(service):
         time.sleep(0.05)
     assert c.get(f"/api/v1/attention/{item['attention_id']}").json()["resolution"] == "allowed"
     c.post(f"/api/v1/sessions/{sid}/actions", json={"type": "stop", "action_id": aid()})
+
+
+def test_handoff_and_reclaim_through_the_api(service):
+    store, port, auth = service
+    c = browser(port, auth)
+    sid = c.post(
+        "/api/v1/sessions/launch", json={"runtime": "fake", "cwd": work(store), "action_id": aid()}
+    ).json()["session_id"]
+    deadline = time.time() + 10
+    while c.get(f"/api/v1/sessions/{sid}").json()["runtime_state"] != "idle" and time.time() < deadline:
+        time.sleep(0.05)
+    assert c.post(f"/api/v1/sessions/{sid}/terminal/open").status_code == 409  # Robin still holds it
+    handoff = aid()
+    assert (
+        c.post(f"/api/v1/sessions/{sid}/actions", json={"type": "handoff", "action_id": handoff}).status_code
+        == 202
+    )
+    while c.get(f"/api/v1/actions/{handoff}").json()["state"] != "acknowledged" and time.time() < deadline:
+        time.sleep(0.05)
+    s = c.get(f"/api/v1/sessions/{sid}").json()
+    assert s["control_owner"] == "terminal"
+    assert s["controls"]["message"] == {
+        "enabled": False,
+        "reason": "handed off to a terminal; take control back first",
+    }
+    assert s["controls"]["reclaim"]["enabled"] is True
+    info = c.get(f"/api/v1/sessions/{sid}/terminal")  # the scripted runtime has no terminal of its own
+    assert info.status_code == 409 and info.json()["error"]["code"] == "unsupported"
+    reclaim = aid()
+    assert (
+        c.post(f"/api/v1/sessions/{sid}/actions", json={"type": "reclaim", "action_id": reclaim}).status_code
+        == 202
+    )
+    deadline = time.time() + 10
+    while c.get(f"/api/v1/actions/{reclaim}").json()["state"] != "acknowledged" and time.time() < deadline:
+        time.sleep(0.05)
+    assert c.get(f"/api/v1/sessions/{sid}").json()["control_owner"] == "robin"
+    c.post(f"/api/v1/sessions/{sid}/actions", json={"type": "stop", "action_id": aid()})

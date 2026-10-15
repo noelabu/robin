@@ -111,10 +111,50 @@ def cmd_serve(args: argparse.Namespace) -> None:
 
 
 def cmd_open(args: argparse.Namespace) -> None:
+    if getattr(args, "session", None):
+        return cmd_terminal(args)
     with client(args.data) as c:
         url = call(c, "POST", "/auth/bootstrap")["url"]
     print(f"Opening Robin: {url}")
     webbrowser.open(url)
+
+
+def cmd_terminal(args: argparse.Namespace) -> None:
+    """Hand a session to this terminal (FR-037): Robin releases it, then this process becomes the runtime."""
+    with client(args.data) as c:
+        session = call(c, "GET", f"/sessions/{args.session}")
+        if session.get("control_owner") == "robin":
+            aid = action_id()
+            body = {"type": "handoff", "action_id": aid, "interrupt_running": args.force}
+            try:
+                call(c, "POST", f"/sessions/{args.session}/actions", body)
+            except CliError as exc:
+                if "turn_in_progress" in str(exc):
+                    raise CliError(f"{exc}\nRun again with --force to end the running turn.") from exc
+                raise
+            action = wait_action(c, aid, 30)
+            if action["state"] != "acknowledged":
+                print_action(action)
+                raise CliError("Robin didn't release the session; nothing was opened")
+        info = call(c, "GET", f"/sessions/{args.session}/terminal")
+    if args.print_only:
+        print(" ".join(info["command"]))
+        return
+    print(
+        f"Continuing {session['runtime']} session {args.session} here. "
+        f"When you're done, give it back with: robin reclaim {args.session}",
+        flush=True,
+    )
+    if info.get("cwd"):
+        os.chdir(info["cwd"])
+    os.execvp(info["command"][0], info["command"])
+
+
+def cmd_reclaim(args: argparse.Namespace) -> None:
+    with client(args.data) as c:
+        aid = action_id()
+        call(c, "POST", f"/sessions/{args.session}/actions", {"type": "reclaim", "action_id": aid})
+        print_action(wait_action(c, aid, args.wait) if args.wait else call(c, "GET", f"/actions/{aid}"))
 
 
 def cmd_run(args: argparse.Namespace) -> None:
@@ -396,9 +436,21 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--no-browser", action="store_true")
     p.set_defaults(func=cmd_serve)
 
-    sub.add_parser(
-        "open", parents=[common], help="open the dashboard with a fresh sign-in link"
-    ).set_defaults(func=cmd_open)
+    p = sub.add_parser("open", parents=[common], help="open the dashboard, or a session in this terminal")
+    p.add_argument(
+        "session", nargs="?", help="session to continue in this terminal (hands it off from Robin)"
+    )
+    p.add_argument("--terminal", action="store_true", help="(default when a session is given)")
+    p.add_argument("--force", action="store_true", help="end a running turn to hand off now")
+    p.add_argument(
+        "--print-only", action="store_true", help="hand off and print the command instead of running it"
+    )
+    p.set_defaults(func=cmd_open)
+
+    p = sub.add_parser("reclaim", parents=[common], help="take a handed-off session back into Robin")
+    p.add_argument("session")
+    p.add_argument("--wait", type=float, default=15)
+    p.set_defaults(func=cmd_reclaim)
 
     p = sub.add_parser("run", parents=[common], help="launch a managed session")
     p.add_argument("agent", help="claude, codex or pi")

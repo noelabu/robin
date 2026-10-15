@@ -13,9 +13,10 @@ export type Session = {
   active_run_id: string | null;
   execution_cwd: string | null;
   lease_generation: number;
+  control_owner: "robin" | "terminal" | null;
   created_at: string;
   updated_at: string;
-  controls: Record<"message" | "interrupt" | "stop" | "approval", Control>;
+  controls: Record<"message" | "interrupt" | "stop" | "approval" | "handoff" | "reclaim", Control>;
   capabilities: { runtime: string; steer_mid_turn: boolean; tested_versions: string; level: string };
 };
 
@@ -110,7 +111,10 @@ export const api = {
       prompt: prompt || null,
       action_id: newActionId(),
     }),
-  act: (sessionId: string, body: { type: string; text?: string; request_id?: string; allow?: boolean }) =>
+  act: (
+    sessionId: string,
+    body: { type: string; text?: string; request_id?: string; allow?: boolean; interrupt_running?: boolean },
+  ) =>
     request<{ action: Action }>("POST", `/sessions/${sessionId}/actions`, { ...body, action_id: newActionId() }),
   action: (actionId: string) => request<Action>("GET", `/actions/${actionId}`),
   attention: () => request<{ items: AttentionItem[] }>("GET", "/attention"),
@@ -118,5 +122,11 @@ export const api = {
     request<{ action: Action }>("POST", `/attention/${attentionId}/responses`, { decision, action_id: newActionId() }),
   notice: (attentionId: string, to: "acknowledge" | "dismiss") =>
     request<AttentionItem>("POST", `/attention/${attentionId}/${to}`),
+  terminal: (sessionId: string) =>
+    request<{ mode: string; command: string[]; cwd: string | null; owner: string | null }>(
+      "GET",
+      `/sessions/${sessionId}/terminal`,
+    ),
+  openTerminal: (sessionId: string) => request<{ opened: boolean }>("POST", `/sessions/${sessionId}/terminal/open`),
   adapters: () => request<{ adapters: { runtime: string; level: string }[] }>("GET", "/adapters"),
 };
