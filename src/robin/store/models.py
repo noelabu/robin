@@ -62,6 +62,7 @@ AUTHOR_KINDS = ("user", "agent")
 PUBLICATION_PATHS = ("tool", "message", "user")
 SUBMISSION_STATES = ("accepted", "rejected")
 LINEAGE_RELATIONS = ("parent", "input")
+PACKET_STATES = ("previewed", "confirmed", "invalidated", "delivered")
 
 
 class Meta(Base):
@@ -486,3 +487,42 @@ class LineageEdge(Base):
     parent_artifact_id: Mapped[str] = mapped_column(ForeignKey("artifact.artifact_id"), primary_key=True)
     parent_version: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
     relation: Mapped[str] = mapped_column(String)
+
+
+class ContextPacket(Base):
+    """A context transfer (FR-021–024, TR-061–065, TR-069): previewed, then confirmed, then delivered.
+
+    The preview's exact payload, its hash and the source versions it was built from are stored; confirming
+    locks them and keeps the approved payload as a packet artifact. A changed source or target invalidates it.
+    """
+
+    __tablename__ = "context_packet"
+    __table_args__ = (
+        CheckConstraint(_in("state", PACKET_STATES), name="state"),
+        Index("ix_context_packet_task", "task_id", "created_at"),
+    )
+    packet_id: Mapped[str] = mapped_column(String, primary_key=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("task.task_id"))
+    target_session_id: Mapped[str] = mapped_column(ForeignKey("session.session_id"))
+    target_generation: Mapped[int] = mapped_column(Integer)
+    state: Mapped[str] = mapped_column(String)
+    payload_blob: Mapped[str] = mapped_column(ForeignKey("blob.sha256"))
+    payload_hash: Mapped[str] = mapped_column(String)
+    size: Mapped[int] = mapped_column(Integer)
+    manifest: Mapped[str] = mapped_column(Text)  # JSON: sources, excerpts, redactions, flags, selection
+    artifact_id: Mapped[str | None] = mapped_column(ForeignKey("artifact.artifact_id"))  # once confirmed
+    invalid_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    confirmed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class ContextDelivery(Base):
+    """A confirmed packet sent to its target. Created in the same transaction as its control action, whose
+    state is the delivery state: acknowledged means the runtime accepted the input, not that it was used."""
+
+    __tablename__ = "context_delivery"
+    delivery_id: Mapped[str] = mapped_column(String, primary_key=True)
+    packet_id: Mapped[str] = mapped_column(ForeignKey("context_packet.packet_id"))
+    action_id: Mapped[str] = mapped_column(ForeignKey("control_action.action_id"), unique=True)
+    target_session_id: Mapped[str] = mapped_column(ForeignKey("session.session_id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)

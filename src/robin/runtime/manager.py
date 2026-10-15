@@ -101,8 +101,16 @@ class RuntimeManager:
         return await self._control(session_id, "launch", payload, action_id, msg, needs_connection=False)
 
     async def message(
-        self, session_id: str, text: str, *, action_id: str, expected_generation: int | None = None
+        self,
+        session_id: str,
+        text: str,
+        *,
+        action_id: str,
+        expected_generation: int | None = None,
+        record: Callable[[Connection], None] | None = None,
     ) -> Action:
+        """Send input. `record` runs in the transaction that creates the action, for rows that must exist
+        exactly when the action does (a context delivery's manifest, TR-064)."""
         cmd = {"cmd": "send", "text": text, "action_id": action_id}
         return await self._control(
             session_id,
@@ -111,6 +119,7 @@ class RuntimeManager:
             action_id,
             {"type": "command", "session": session_id, "command": cmd},
             expected_generation=expected_generation,
+            record=record,
         )
 
     async def interrupt(
@@ -248,6 +257,7 @@ class RuntimeManager:
         expected_generation: int | None = None,
         check: Callable[[Any], None] | None = None,
         on_submitted: Callable[[], Awaitable[None]] | None = None,
+        record: Callable[[Connection], None] | None = None,
     ) -> Action:
         with self.store.reader.connect() as conn:
             known = conn.execute(
@@ -256,8 +266,9 @@ class RuntimeManager:
         if known is None:  # nothing to record an action against
             raise ActionRejected("unknown_session", f"no session {session_id}")
         async with self._locks[session_id]:
-            action, created = await self.store.writer.acall(
-                lambda c: ledger.create(
+
+            def create(c: Connection) -> tuple[Action, bool]:
+                result = ledger.create(
                     c,
                     action_id=action_id,
                     session_id=session_id,
@@ -265,7 +276,11 @@ class RuntimeManager:
                     payload=payload,
                     expected_generation=expected_generation,
                 )
-            )
+                if result[1] and record is not None:
+                    record(c)
+                return result
+
+            action, created = await self.store.writer.acall(create)
             if not created:
                 return action  # identical repeat: report the stored outcome, never resend
             try:

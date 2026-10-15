@@ -376,6 +376,65 @@ def cmd_finding(args: argparse.Namespace) -> None:
                 print(f"- {x}")
 
 
+def _print_packet(p: dict[str, Any]) -> None:
+    r = p["recipient"]
+    print(f"packet {p['packet_id']}  [{p['state']}]  to {r['runtime']} session {r['session_id']}")
+    for s in p["sources"]:
+        print(f"  {s['n']}. {s['label']}  ({s['content_hash'][:19]})")
+    if p["redactions"]:
+        hits = ", ".join(f"{x['rule_id']} in source {x['source']}" for x in p["redactions"])
+        print(f"  redacted: {hits}")
+    for f in p["flags"]:
+        print(f"  note: {f}")
+    print(f"  {p['bytes']:,} bytes, ~{p['approx_tokens']:,} tokens (approximate)")
+    print(f"  payload {p['payload_hash']}")
+    for d in p["deliveries"]:
+        print(f"  delivery {d['action_id']}: {d['state']}" + (f" ({d['error']})" if d["error"] else ""))
+    if p["invalid_reason"]:
+        print(f"  invalidated: {p['invalid_reason']}")
+
+
+def cmd_context(args: argparse.Namespace) -> None:
+    with client(args.data) as c:
+        if args.action == "preview":
+            if not (args.task and args.to and args.question):
+                raise CliError("robin context preview --task T --to SESSION --question TEXT [--findings A,B]")
+            body = {
+                "task_id": args.task,
+                "target_session_id": args.to,
+                "question": args.question,
+                "findings": [{"id": f} for f in (args.findings or "").split(",") if f],
+                "excerpts": [
+                    {"session_id": sid, "after": int(a), "through": int(t) if t else None}
+                    for sid, a, t in ((x.split(":", 2) + ["", ""])[:3] for x in args.excerpt or [])
+                ],
+            }
+            p = call(c, "POST", "/context/preview", body)
+            if args.show:
+                print(p["text"])
+            _print_packet(p)
+            print(f"\nTo send it: robin context deliver {p['packet_id']} --confirm {p['payload_hash']}")
+        elif args.action == "show":
+            p = call(c, "GET", f"/context/{args.packet}")
+            if args.show:
+                print(p["text"])
+            _print_packet(p)
+        elif args.action == "deliver":
+            if not args.confirm:
+                raise CliError("deliver needs --confirm <payload hash> from the preview you reviewed")
+            p = call(c, "GET", f"/context/{args.packet}")
+            if p["state"] == "previewed":
+                call(c, "POST", f"/context/{args.packet}/confirm", {"payload_hash": args.confirm})
+            elif p["payload_hash"] != args.confirm:
+                raise CliError("that isn't this packet's payload hash")
+            aid = action_id()
+            call(c, "POST", f"/context/{args.packet}/deliver", {"action_id": aid})
+            print_action(wait_action(c, aid, args.wait))
+        else:
+            for p in call(c, "GET", "/context" + (f"?task_id={args.task}" if args.task else ""))["packets"]:
+                _print_packet(p)
+
+
 def cmd_hooks(args: argparse.Namespace) -> None:
     """Opt-in, observe-only hooks (TR-076). Shows exactly what changes and writes only on confirmation."""
     from robin.hooks import install as hooks
@@ -594,6 +653,19 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--file", help="publish: JSON with summary, claims, recommendations, questions")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_finding)
+
+    p = sub.add_parser("context", parents=[common], help="preview and deliver context to a session")
+    p.add_argument("action", choices=["preview", "show", "deliver", "list"])
+    p.add_argument("packet", nargs="?", help="show/deliver: the packet ID")
+    p.add_argument("--task")
+    p.add_argument("--to", help="preview: the session to send it to")
+    p.add_argument("--question", help="preview: what the recipient should do with it")
+    p.add_argument("--findings", help="preview: finding IDs, comma-separated")
+    p.add_argument("--excerpt", action="append", help="preview: SESSION:AFTER[:THROUGH] event cursors")
+    p.add_argument("--show", action="store_true", help="print the exact payload")
+    p.add_argument("--confirm", help="deliver: the payload hash you reviewed")
+    p.add_argument("--wait", type=float, default=10)
+    p.set_defaults(func=cmd_context)
 
     p = sub.add_parser("hooks", parents=[common], help="opt-in hooks for sessions started outside Robin")
     p.add_argument("action", choices=["status", "install", "uninstall"])
