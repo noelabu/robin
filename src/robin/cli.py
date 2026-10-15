@@ -171,9 +171,17 @@ def cmd_run(args: argparse.Namespace) -> None:
                 "prompt": prompt,
                 "action_id": aid,
                 "task_id": args.task,
+                "independent": args.independent,
             },
         )
         print(f"session {r['session_id']}")
+        if args.independent:
+            s = call(c, "GET", f"/sessions/{r['session_id']}")
+            label = {
+                "enforced": "enforced (can't read other agents' findings)",
+                "not_isolated": f"NOT isolated: {args.agent} has no sandbox to enforce it",
+            }
+            print(f"independent review: {label.get(s.get('independence'), 'unknown')}")
         for warning in r.get("warnings") or []:
             print(f"warning: {warning}", file=sys.stderr)
         print_action(wait_action(c, aid, args.wait) if args.wait else r["action"])
@@ -600,6 +608,9 @@ def parser() -> argparse.ArgumentParser:
     g.add_argument("--prompt-file")
     p.add_argument("--task", help="task to bind the new session to")
     p.add_argument("--wait", type=float, default=0, help="seconds to wait for the runtime to accept")
+    p.add_argument(
+        "--independent", action="store_true", help="a reviewer that can't read other agents' findings"
+    )
     p.set_defaults(func=cmd_run)
 
     for control, help_text in (

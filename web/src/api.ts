@@ -19,6 +19,7 @@ export type Session = {
   archived: boolean;
   branch: string | null;
   shared_folder_with: string[];
+  independence: "enforced" | "not_isolated" | null;
   created_at: string;
   updated_at: string;
   controls: Record<"message" | "interrupt" | "stop" | "approval" | "handoff" | "reclaim", Control>;
@@ -140,12 +141,19 @@ export const newActionId = () => `ui-${crypto.randomUUID()}`;
 
 export const api = {
   workspace: () => request<Workspace>("GET", "/workspace"),
-  launch: (runtime: string, cwd: string | null, prompt: string | null, taskId: string | null = null) =>
+  launch: (
+    runtime: string,
+    cwd: string | null,
+    prompt: string | null,
+    taskId: string | null = null,
+    independent = false,
+  ) =>
     request<{ action: Action; session_id: string; warnings: string[] }>("POST", "/sessions/launch", {
       runtime,
       cwd: cwd || null,
       prompt: prompt || null,
       task_id: taskId,
+      independent,
       action_id: newActionId(),
     }),
   history: (scope: { session_id?: string; task_id?: string; project_id?: string }, limit = 200) =>

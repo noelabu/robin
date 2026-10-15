@@ -8,6 +8,7 @@ move the action forward; nothing is resent automatically. State is projected fro
 import asyncio
 import json
 import logging
+import os
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -198,13 +199,18 @@ class RuntimeManager:
         async def taken() -> None:
             await self.store.writer.acall(lambda c: _move_lease(c, session_id, "robin"))
 
+        env = {"ROBIN_RESUME_NATIVE_ID": (row["native_session_id"] or "") if row else ""}
+        if row and row["current_task_id"]:
+            env["ROBIN_FINDINGS"] = "tool,message"
+        if row and row["independence"] == "enforced":  # a reviewer stays a reviewer after a handoff
+            self.independence_env(row["runtime"], env)
         msg = {
             "type": "launch",
             "session": session_id,
             "runtime": row["runtime"] if row else "",
             "cwd": (row["execution_cwd"] if row else None),
             "action_id": action_id,
-            "env": {"ROBIN_RESUME_NATIVE_ID": (row["native_session_id"] or "") if row else ""},
+            "env": env,
         }
         return await self._control(
             session_id, "reclaim", {}, action_id, msg, needs_connection=False, check=check, on_submitted=taken
@@ -215,6 +221,16 @@ class RuntimeManager:
             return (
                 conn.execute(select(SessionRow).where(SessionRow.session_id == session_id)).mappings().first()
             )
+
+    def independence_env(self, runtime: str, env: dict[str, str]) -> str:
+        """Add the reviewer's deny rule for Robin's data directory where the runtime can enforce one (TR-064).
+
+        Returns "enforced", or "not_isolated" when the runtime has no sandbox to do it with.
+        """
+        if capabilities_for(runtime).review_independence != "enforced_with_deny_rules":
+            return "not_isolated"
+        env["ROBIN_DENY_READ"] = os.path.realpath(self.store.data_dir)  # findings, database, CLI token
+        return "enforced"
 
     async def get_action(self, action_id: str) -> Action | None:
         with self.store.reader.connect() as conn:

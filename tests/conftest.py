@@ -65,3 +65,41 @@ def supervised(store, monkeypatch):
     for host in map(int, hosts):
         if _alive(host):
             os.kill(host, signal.SIGKILL)
+
+
+@pytest.fixture
+def api(supervised):
+    """A running service with a CLI-token client, a registered project and one task."""
+    import asyncio
+    import threading
+    import time
+    import uuid
+
+    import httpx
+
+    from robin.service.main import build, free_port
+
+    store = supervised
+    port = free_port()
+    server, auth = build(store, port)
+    thread = threading.Thread(target=lambda: asyncio.run(server.serve()), daemon=True)
+    thread.start()
+    while not server.started:
+        time.sleep(0.02)
+    c = httpx.Client(
+        base_url=f"http://127.0.0.1:{port}/api/v1",
+        headers={"authorization": f"Bearer {auth.cli_token}"},
+        timeout=10,
+    )
+    project = store.data_dir.parent / "review-project"
+    project.mkdir()
+    pid = c.post("/projects", json={"path": str(project)}).json()["project_id"]
+    task = c.post("/tasks", json={"project_id": pid, "title": "Review auth", "objective": "Find bugs"}).json()
+    yield store, c, task["task_id"], project
+    for s in c.get("/workspace").json()["sessions"]:
+        c.post(
+            f"/sessions/{s['session_id']}/actions",
+            json={"type": "stop", "action_id": f"t-{uuid.uuid4().hex}"},
+        )
+    server.should_exit = True
+    thread.join(10)

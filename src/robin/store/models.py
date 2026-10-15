@@ -79,6 +79,9 @@ class Session(Base):
         CheckConstraint(_in("mode", SESSION_MODES), name="mode"),
         CheckConstraint(_in("runtime_state", RUNTIME_STATES), name="runtime_state"),
         CheckConstraint(_in("connection_state", CONNECTION_STATES), name="connection_state"),
+        CheckConstraint(
+            "independence IS NULL OR independence IN ('enforced', 'not_isolated')", name="independence"
+        ),
     )
     session_id: Mapped[str] = mapped_column(String, primary_key=True)
     host_id: Mapped[str] = mapped_column(String)
@@ -102,6 +105,9 @@ class Session(Base):
     current_task_id: Mapped[str | None] = mapped_column(ForeignKey("task.task_id"))
     pending_task_id: Mapped[str | None] = mapped_column(ForeignKey("task.task_id"))
     archived: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    # An independent reviewer (TR-064): "enforced" when the sandbox excludes Robin's store, "not_isolated"
+    # when the runtime can't; NULL for ordinary sessions.
+    independence: Mapped[str | None] = mapped_column(String)
 
 
 class Run(Base):

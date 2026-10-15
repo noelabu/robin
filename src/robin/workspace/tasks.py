@@ -454,3 +454,11 @@ def archive_session(store: Store, session_id: str, archived: bool) -> None:
             raise WorkspaceError("not_found", f"no session {session_id}", 404)
 
     store.writer.call(work)
+
+
+def set_independence(store: Store, session_id: str, independence: str | None) -> None:
+    store.writer.call(
+        lambda c: c.execute(
+            update(SessionRow).where(SessionRow.session_id == session_id).values(independence=independence)
+        )
+    )

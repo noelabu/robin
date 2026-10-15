@@ -1,41 +1,10 @@
 """Findings end to end with the scripted runtime (FR-020, TR-060, TR-064, TR-067)."""
 
-import asyncio
 import json
-import threading
 import time
 import uuid
 
-import httpx
-import pytest
-
 from robin.findings import schema
-from robin.service.main import build, free_port
-
-
-@pytest.fixture
-def api(supervised):
-    store = supervised
-    port = free_port()
-    server, auth = build(store, port)
-    thread = threading.Thread(target=lambda: asyncio.run(server.serve()), daemon=True)
-    thread.start()
-    while not server.started:
-        time.sleep(0.02)
-    c = httpx.Client(
-        base_url=f"http://127.0.0.1:{port}/api/v1",
-        headers={"authorization": f"Bearer {auth.cli_token}"},
-        timeout=10,
-    )
-    project = store.data_dir.parent / "review-project"
-    project.mkdir()
-    pid = c.post("/projects", json={"path": str(project)}).json()["project_id"]
-    task = c.post("/tasks", json={"project_id": pid, "title": "Review auth", "objective": "Find bugs"}).json()
-    yield store, c, task["task_id"], project
-    for s in c.get("/workspace").json()["sessions"]:
-        c.post(f"/sessions/{s['session_id']}/actions", json={"type": "stop", "action_id": aid()})
-    server.should_exit = True
-    thread.join(10)
 
 
 def aid():

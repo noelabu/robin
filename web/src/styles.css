@@ -145,3 +145,6 @@ h3 { font-size: 13px; margin: 12px 0 4px; color: var(--muted); }
 .evidence.ev-reported { color: var(--ink); }
 .evidence.ev-observed { color: var(--ok); }
 .evidence.ev-inferred { color: var(--warn); }
+
+label.check { margin: 10px 0 0; color: var(--ink); }
+.warn-text { color: var(--warn); }

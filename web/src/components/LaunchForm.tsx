@@ -19,6 +19,7 @@ export function LaunchForm(props: {
   const [runtime, setRuntime] = useState("claude");
   const [cwd, setCwd] = useState(props.defaultCwd);
   const [prompt, setPrompt] = useState("");
+  const [independent, setIndependent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const first = useRef<HTMLSelectElement>(null);
@@ -40,7 +41,13 @@ export function LaunchForm(props: {
         setBusy(true);
         setError(null);
         try {
-          const r = await api.launch(runtime, props.task ? null : cwd.trim(), prompt.trim() || null, props.task?.task_id ?? null);
+          const r = await api.launch(
+            runtime,
+            props.task ? null : cwd.trim(),
+            prompt.trim() || null,
+            props.task?.task_id ?? null,
+            independent,
+          );
           props.onLaunched(r.session_id, r.warnings);
         } catch (err) {
           setError(err instanceof ApiError ? err.message : "Launch failed");
@@ -69,6 +76,15 @@ export function LaunchForm(props: {
         <p className="hint warn" role="status">
           {sharing.length === 1 ? "A session" : `${sharing.length} sessions`} may already be editing this folder (
           {sharing.map((s) => s.runtime).join(", ")}). Changes can collide.
+        </p>
+      )}
+      <label className="inline check">
+        <input type="checkbox" checked={independent} onChange={(e) => setIndependent(e.target.checked)} /> Independent
+        review: this session can&apos;t read other agents&apos; findings
+      </label>
+      {independent && runtime === "pi" && (
+        <p className="hint warn" role="status">
+          Pi has no sandbox, so this review will be labelled not isolated.
         </p>
       )}
       <label htmlFor="prompt">First instruction (optional)</label>

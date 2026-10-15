@@ -115,8 +115,11 @@ async def run_fake(args: argparse.Namespace) -> None:
     emit(
         {
             "type": "session_started",
-            "native_session_id": uuid.uuid4().hex,
+            "native_session_id": os.environ.get("ROBIN_RESUME_NATIVE_ID") or uuid.uuid4().hex,
             "launch_token": os.environ.get("ROBIN_LAUNCH_TOKEN"),
+            "deny_read": os.environ.get(
+                "ROBIN_DENY_READ"
+            ),  # lets tests see what a real adapter would enforce
         }
     )
     turn: asyncio.Task[None] | None = None

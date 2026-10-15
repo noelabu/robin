@@ -74,6 +74,7 @@ class LaunchBody(BaseModel):
     prompt: str | None = None
     action_id: str = Field(min_length=8, max_length=128)
     finding_tool: bool = True  # False: publish by final-message block only (MCP stays optional, TR-066)
+    independent: bool = False  # a reviewer that can't read other agents' findings (FR-032, TR-064)
 
 
 class ActionBody(BaseModel):
@@ -126,6 +127,7 @@ def session_view(r: Any, shared: list[str] | None = None) -> dict[str, Any]:
         "current_task_id": r["current_task_id"],
         "pending_task_id": r["pending_task_id"],
         "archived": bool(r["archived"]),
+        "independence": r["independence"],
         "branch": None if r["archived"] else folders.branch_of(r["execution_cwd"]),
         "shared_folder_with": shared or [],
         "created_at": r["created_at"].isoformat(),
@@ -372,6 +374,12 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         sid = await asyncio.to_thread(
             ensure_session, store, runtime=body.runtime, mode="managed", execution_cwd=str(checked.path)
         )
+        env: dict[str, str] = {}
+        if body.task_id:
+            env["ROBIN_FINDINGS"] = "tool,message" if body.finding_tool else "message"
+        if body.independent:
+            independence = runtime.manager.independence_env(body.runtime, env)
+            await asyncio.to_thread(ws.set_independence, store, sid, independence)
         # Work for a task always starts a new native session bound to it (FR-013).
         await asyncio.to_thread(
             ws.bind_new_session,
@@ -388,10 +396,8 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
                 cwd=str(checked.path),
                 action_id=body.action_id,
                 prompt=body.prompt,
-                # Sessions working on a task get the finding tool; any session can publish by message.
-                env={"ROBIN_FINDINGS": "tool,message" if body.finding_tool else "message"}
-                if body.task_id
-                else None,
+                # Task sessions get the finding tool; any session can publish by message.
+                env=env or None,
             )
         )
         warnings = (

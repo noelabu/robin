@@ -69,6 +69,16 @@ export function SessionDetail({ session, onChanged }: { session: Session; onChan
           <dd>{session.native_session_id ?? "not reported yet"}</dd>
           <dt>Evidence</dt>
           <dd>{ago(session.state_evidence_at)}</dd>
+          {session.independence && (
+            <>
+              <dt>Review</dt>
+              <dd className={session.independence === "not_isolated" ? "warn-text" : undefined}>
+                {session.independence === "enforced"
+                  ? "Independent: can't read other agents' findings"
+                  : "Not isolated: this runtime can't be kept from Robin's findings"}
+              </dd>
+            </>
+          )}
           <dt>Mode</dt>
           <dd>{session.mode === "managed" ? "Launched by Robin" : "Observed (read-only)"}</dd>
           {session.mode === "managed" && (

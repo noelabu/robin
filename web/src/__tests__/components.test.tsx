@@ -22,6 +22,7 @@ const session = (over: Partial<Session> = {}): Session => ({
   archived: false,
   branch: "main",
   shared_folder_with: [],
+  independence: null,
   created_at: "2026-10-15T00:00:00Z",
   updated_at: "2026-10-15T00:00:00Z",
   controls: {
@@ -125,4 +126,11 @@ test("archive is offered, and restore once archived", () => {
   expect(screen.getByRole("button", { name: "Archive" })).toBeTruthy();
   rerender(<SessionDetail session={session({ archived: true })} />);
   expect(screen.getByRole("button", { name: "Restore" })).toBeTruthy();
+});
+
+test("an independent review says whether it is isolated", () => {
+  const { rerender } = render(<SessionDetail session={session({ independence: "enforced" })} />);
+  expect(screen.getByText("Independent: can't read other agents' findings")).toBeTruthy();
+  rerender(<SessionDetail session={session({ runtime: "pi", independence: "not_isolated" })} />);
+  expect(screen.getByText(/Not isolated/)).toBeTruthy();
 });
