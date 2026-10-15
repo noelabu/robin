@@ -497,6 +497,16 @@ def doctor(data_dir: Path) -> list[tuple[str, str, str]]:
             out.append(
                 (f"hooks {runtime}", "ok", "installed" if st["installed"] else "not installed (optional)")
             )
+    from robin.redact.scanner import load as load_rules
+
+    try:
+        rs = load_rules(data_dir / "redact.toml")
+        extra = sum(1 for r in rs.rules if r.source == "custom")
+        skipped = f"; {len(rs.skipped)} unusable: {', '.join(rs.skipped)}" if rs.skipped else ""
+        detail = f"{rs.version}, {len(rs.rules) - extra} rules + {extra} custom{skipped}"
+        out.append(("secret rules", "warn" if rs.skipped else "ok", detail))
+    except Exception as exc:
+        out.append(("secret rules", "fail", f"couldn't load: {type(exc).__name__}"))
     out.append(_supervisor_check(data_dir))
     url = endpoint(data_dir)
     if url is None:

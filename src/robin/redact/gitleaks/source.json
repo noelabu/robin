@@ -1,0 +1,9 @@
+{
+  "name": "gitleaks default rules",
+  "version": "v8.30.1",
+  "url": "https://raw.githubusercontent.com/gitleaks/gitleaks/v8.30.1/config/gitleaks.toml",
+  "sha256": "e163e53b9e7e8a8511e77271e2b323ed057759542a6d988258afe3a1fa329caf",
+  "license": "MIT (see LICENSE)",
+  "vendored": "2026-10-15",
+  "refresh": "Replace gitleaks.toml with a newer release's config/gitleaks.toml, update this file, and run tests/test_redact.py."
+}

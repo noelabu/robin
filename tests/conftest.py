@@ -103,3 +103,11 @@ def api(supervised):
         )
     server.should_exit = True
     thread.join(10)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_harness_configs(tmp_path_factory, monkeypatch):
+    """Tests never read or write the user's real Claude, Codex or Pi hook configs."""
+    root = tmp_path_factory.mktemp("harness")
+    for runtime, name in (("claude", "settings.json"), ("codex", "hooks.json"), ("pi", "robin-observer.ts")):
+        monkeypatch.setenv(f"ROBIN_HOOK_CONFIG_{runtime.upper()}", str(root / runtime / name))
