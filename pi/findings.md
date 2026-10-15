@@ -20,9 +20,11 @@
 
 **Classification: meets the floor. Live control, with approvals coming from Robin's extension (owner decision below).**
 
-## Owner decision needed
+## Owner decision (2026-10-15): approval extension on by default
 
-**Should Robin-launched Pi sessions load Robin's approval extension by default?**
+Robin-launched Pi sessions load Robin's approval extension by default, shown in Pi's capability report and switchable off per launch.
+
+**The question was:** should Robin-launched Pi sessions load Robin's approval extension by default?
 
 Pi's native behaviour is to run tools without asking. Loading the extension makes Robin-launched Pi sessions *stricter* than Pi's default, so it doesn't break FR-012 ("never more permissive than the harness default"). But it does mean Robin, not the harness, decides which calls need approval, which departs from the PRD principle that the harness owns permissions.
 

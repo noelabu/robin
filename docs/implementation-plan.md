@@ -12,6 +12,8 @@ The plan follows the PRD §16 phases (0–4). Each phase ends on demonstrated be
 | Decision | Effect on the plan |
 |---|---|
 | **Claude Agent SDK is the first adapter, on the owner's Claude subscription** | Robin is a personal tool: it runs the unmodified bundled Claude Code binary signed in through the owner's own `claude` login, which Anthropic's Claude Code terms allow for an end user's own subscription. No API key. Robin never reads the token. If Robin is ever shared, each person signs in themselves. Codex app-server stays the fallback. |
+| Pi approvals: Robin's extension on by default | Robin-launched Pi sessions ask before `bash`, `write`, `edit` and unannotated tools; `read`, `grep`, `find` and `ls` run freely. Labelled in Pi's capability report; off per launch if wanted. |
+| Phase 1 starts before the Mac mini re-run | The capability matrix is complete on the development MacBook. The Mac mini re-run, corpus and copy-paste baseline continue alongside Phase 1. |
 | Claude, Codex and Pi all have accounts | All three are spiked in Phase 0 and classified live or observed-only against the floor. |
 | macOS only for the first release | Linux validation is dropped from Phase 0 and the release gate. **This differs from PRD v0.4 ("macOS and Linux") and needs a PRD/TRD revision.** |
 | Reference and development machine is a Mac mini M4 | It replaces the TRD's proposed 8-core/16 GB reference (TR-080). Exact core count and RAM to be recorded in WP-0.3. |
@@ -317,7 +319,7 @@ A minimal detached process holding one runtime child over a Unix socket. Kill an
 - FTS5 over task names, prompts, responses, findings, file references and metadata, with secrets masked at index time.
 - Filesystem notifications plus a bounded polling fallback.
 - Indexing exclusions for files, directories, message types and tool outputs.
-- 1 MiB parser limit and 64 KiB display limit; larger payloads go to artifact storage with a truncated preview.
+- 16 MiB parser limit (raised from TR-082's proposed 1 MiB: the corpus has 171 valid records over 1 MiB, up to 3.9 MiB) and 64 KiB display limit; larger payloads go to artifact storage with a truncated preview. Index large files by streaming from a byte offset (one Claude session is 1.1 GB).
 - 20 GB default cap on copied activity and transcript text, with a warning at 80% and oldest-first pruning above it. Findings, manifests and audit records never count toward the cap. Pruned excerpts are marked unavailable, keeping their source identity (TR-081). The settings page shows storage usage and a cleanup preview.
 
 ### WP-4.2 Backup, export, restore (FR-043, TR-073–074)

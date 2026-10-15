@@ -17,6 +17,7 @@ The code here is Phase 0 spike code. Its runs are the evidence behind the capabi
 | `codex/findings.md` | Codex app-server results against the capability floor (WP-0.1) |
 | `pi/findings.md` | Pi RPC results against the capability floor (WP-0.1) |
 | `docs/capability-matrix.md` | All three runtimes side by side |
+| `docs/corpus.md` | Metadata-only inventory of the owner's existing sessions (`corpus/inventory.py`) |
 
 ## Setup
 

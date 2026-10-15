@@ -1,0 +1,9 @@
+## Observations (2026-10-15)
+
+- **Claude Code keeps about 30 days of history.** The oldest Claude file is from 2026-09-15, and `cleanupPeriodDays` isn't set, so Claude Code's default cleanup applies. Robin's normalized copy will often be the only long-term record of a Claude session. That matters for retention (TR-081) and the 20 GB cap. Codex history goes back to February; Pi's is small.
+- **Records larger than the proposed 1 MiB parser limit are real.** 164 Claude records (largest 1.3 MiB) in 22 files, and 7 Codex records (largest 3.9 MiB) in 3 files. TR-082's 1 MiB limit would reject valid records. Proposed change: a parser limit of 16 MiB per record. Records above the 64 KiB display limit keep their payload in artifact storage with a truncated preview; only records above the parser limit are rejected with a diagnostic.
+- **Session files can be very large.** One Claude session is 1.1 GB (10,114 records), so indexing must stream and resume from a byte offset (TR-033). Reading whole files is not an option.
+- **Claude subagent transcripts have their own format.** 76 of the 77 unversioned Claude files are under `subagents/`, with record types `launched`, `started`, `result`. The Claude adapter must parse them and link them to the parent session.
+- **Format churn is high.** About 20 Claude Code versions appear in 30 days, and Codex spans 0.98 to 0.162. Fixtures need to cover a range of versions, and unknown record types must be tolerated (FR-011).
+- **The stores were healthy at scan time:** no malformed lines and no incomplete tails. Live-write and partial-tail handling still needs fixture tests (NFR-03).
+- **Robin's Phase 0 tests added sessions to the owner's history:** 11 Claude and 18 Codex sessions with `robin-*` temp working folders. Future tests should use a separate Claude config dir or Codex home, or ephemeral threads where possible.
