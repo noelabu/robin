@@ -164,6 +164,12 @@ class RuntimeManager:
         needs_connection: bool = True,
         expected_generation: int | None = None,
     ) -> Action:
+        with self.store.reader.connect() as conn:
+            known = conn.execute(
+                select(SessionRow.session_id).where(SessionRow.session_id == session_id)
+            ).first()
+        if known is None:  # nothing to record an action against
+            raise ActionRejected("unknown_session", f"no session {session_id}")
         async with self._locks[session_id]:
             action, created = await self.store.writer.acall(
                 lambda c: ledger.create(
