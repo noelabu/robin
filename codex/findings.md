@@ -34,6 +34,15 @@
 - **Native resume: pass.** After the runtime host exited, a new host called `thread/resume {threadId}`. It got the same thread ID back, and the agent remembered the codeword from before.
 - **Terminal mode: handoff works.** With no Robin host attached, `codex exec resume <id> "<prompt>"` continued the same thread and recalled the codeword. Interactive `codex resume <id>` is the terminal equivalent. Outside a git repo or trusted folder, `codex exec` refuses to run without `--skip-git-repo-check`; real project folders are git repos.
 
+## Review independence (2026-10-15, `test_isolation.py codex [deny]`)
+
+- **The default sandbox does not isolate reviewers.** Under `:read-only` with approvals off, the agent ran `cat` on a fake unshared finding outside its working folder and read the secret. Codex's read-only sandbox limits writes, not reads.
+- **A deny profile does.** The runtime host passes a per-thread config override:
+  `default_permissions = "robin_review"`, with `permissions.robin_review` set to `{extends = ":read-only", filesystem = {"<artifact store>" = "deny"}}`.
+  - In the thread, Codex told the model the path was denied by policy, and nothing was read.
+  - Run directly with `codex sandbox` and the same profile, `cat` on the store failed with "Operation not permitted" (exit 1), while other files stayed readable. So macOS Seatbelt enforces it; it isn't just the model complying.
+- **For the build:** launch Codex reviewers with this profile on Robin's artifact store and report independence as **enforced**. The config needs an absolute, symlink-resolved path. On macOS `/var/...` resolves to `/private/var/...`. Keys containing dots must be written as an inline table, not dotted `-c` keys.
+
 ## Finding publication notes
 
 - **The tool schema has to be typed.** The first run declared `claims` as a list of plain objects, and the model invented its own keys (`claim`, `file_path`, `line_start`), which Robin rightly rejected. Typed `Claim` / `Evidence` models fixed it.
@@ -51,4 +60,3 @@ The supervisor hung on shutdown under Python 3.12.0: `Server.wait_closed()` wait
 
 - Inherited default policy and sandbox with no override
 - Terminal **attach** (joining a live session) through Codex's own daemon; handoff already works
-- Sandbox exclusion of the artifact store (review independence, TR-064)

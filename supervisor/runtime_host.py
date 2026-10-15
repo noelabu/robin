@@ -289,6 +289,11 @@ async def run_codex(args):
             "args": [os.path.join(os.path.dirname(os.path.abspath(__file__)), "robin_mcp.py")]}}}
     if os.environ.get("ROBIN_CODEX_APPROVAL_POLICY"):
         start["approvalPolicy"] = os.environ["ROBIN_CODEX_APPROVAL_POLICY"]
+    if os.environ.get("ROBIN_DENY_READ"):  # review independence: hide Robin's artifact store (TR-064)
+        start.setdefault("config", {}).update({
+            "default_permissions": "robin_review",
+            "permissions": {"robin_review": {"extends": ":read-only",
+                                             "filesystem": {os.environ["ROBIN_DENY_READ"]: "deny"}}}})
     if RESUME_ID:
         start.pop("config", None)  # resume keeps the thread's own MCP config
         started = await rpc.call("thread/resume", {**start, "threadId": RESUME_ID})
