@@ -117,3 +117,14 @@ def test_projects_and_tasks_from_the_cli(served, capsys):
     assert "--confirm" in capsys.readouterr().err
     assert "attached" in run(capsys, "task", "attach", other, sid, "--confirm", "--data", d)
     run(capsys, "stop", sid, "--data", d)
+
+
+def test_scan_from_the_cli_reads_only_the_configured_stores(served, capsys, tmp_path, monkeypatch):
+    from test_discovery import roots
+
+    store, _ = served
+    for name, path in roots(tmp_path, "/Users/me/app").items():
+        monkeypatch.setenv(f"ROBIN_HISTORY_{name.upper()}", str(path))
+    out = run(capsys, "scan", "--data", str(store.data_dir))
+    assert "claude  1 session(s), 1 new, 7 event(s)" in out
+    assert "codex   1 session(s), 1 new" in out and "pi      1 session(s), 1 new" in out

@@ -1,6 +1,7 @@
 import asyncio
 import os
 import signal
+import subprocess
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -51,12 +52,16 @@ def supervised(store, monkeypatch):
     asyncio.run(ensure_supervisor(store.data_dir))
     yield store
     pid = _supervisor_pid(store.data_dir)  # whichever supervisor holds the lock now
+    # Only this supervisor's own hosts: a broad pkill would hit other suites running at the same time.
+    hosts = subprocess.run(["pgrep", "-P", str(pid)], capture_output=True, text=True).stdout.split()
     if _alive(pid):
-        os.kill(pid, signal.SIGTERM)
+        os.kill(pid, signal.SIGTERM)  # the supervisor terminates its hosts on the way out
         for _ in range(50):
             if not _alive(pid):
                 break
             time.sleep(0.05)
         else:
             os.kill(pid, signal.SIGKILL)
-    os.system("pkill -f 'robin.runtime --runtime fake' >/dev/null 2>&1")
+    for host in map(int, hosts):
+        if _alive(host):
+            os.kill(host, signal.SIGKILL)

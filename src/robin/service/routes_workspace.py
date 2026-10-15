@@ -43,6 +43,10 @@ class SessionPatch(BaseModel):
     archived: bool
 
 
+class ScanBody(BaseModel):
+    runtimes: list[str] | None = None
+
+
 def register(app: FastAPI, store: Store, authed: Any, api: str) -> None:
     def run(fn: Any, *args: Any, **kw: Any) -> Any:
         return asyncio.to_thread(fn, store, *args, **kw)
@@ -99,6 +103,19 @@ def register(app: FastAPI, store: Store, authed: Any, api: str) -> None:
                 confirm_retained_context=body.confirm_retained_context,
             )
         )
+
+    @app.post(f"{api}/adapters/scan")
+    async def scan(body: ScanBody, _: str = authed) -> dict[str, Any]:
+        """Discover and ingest native session history (read-only on the runtimes' own stores)."""
+        from dataclasses import asdict
+
+        from robin.discovery import scan as run_scan
+
+        unknown = set(body.runtimes or []) - {"claude", "codex", "pi"}
+        if unknown:
+            raise ws.WorkspaceError("invalid_request", f"unknown runtimes {sorted(unknown)}")
+        reports = await asyncio.to_thread(run_scan, store, body.runtimes)
+        return {"runtimes": [asdict(r) for r in reports]}
 
     @app.patch(f"{api}/sessions/{{session_id}}")
     async def patch_session(session_id: str, body: SessionPatch, _: str = authed) -> dict[str, Any]:

@@ -199,6 +199,19 @@ def cmd_tasks(args: argparse.Namespace) -> None:
         print(f"{t['task_id']}  {t['status']:<9} {t['title']}")
 
 
+def cmd_scan(args: argparse.Namespace) -> None:
+    with client(args.data) as c:
+        c.timeout = httpx.Timeout(None)  # a first scan of a large history can take a while
+        reports = call(c, "POST", "/adapters/scan", {"runtimes": args.runtime or None})["runtimes"]
+    for r in reports:
+        line = f"{r['runtime']:<7} {r['found']} session(s), {r['new_sessions']} new, {r['events']} event(s)"
+        if r["quarantined"]:
+            line += f", {r['quarantined']} quarantined"
+        print(line)
+        for e in r["errors"]:
+            print(f"        skipped: {e}")
+
+
 def cmd_sessions(args: argparse.Namespace) -> None:
     with client(args.data) as c:
         sessions = call(c, "GET", "/sessions")["sessions"]
@@ -413,6 +426,10 @@ def parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_task_attach)
 
     sub.add_parser("tasks", parents=[common], help="list tasks").set_defaults(func=cmd_tasks)
+
+    p = sub.add_parser("scan", parents=[common], help="index native session history (read-only)")
+    p.add_argument("--runtime", action="append", choices=["claude", "codex", "pi"])
+    p.set_defaults(func=cmd_scan)
 
     p = sub.add_parser("sessions", parents=[common], help="list sessions")
     p.add_argument("--json", action="store_true")
