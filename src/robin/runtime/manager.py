@@ -312,6 +312,28 @@ def _project_one(
             error_message=str(ev.get("reason", "")),
             native_correlation=correlation,
         )
+    elif kind == "host_exited":
+        # A host that exits before its session starts means the launch failed.
+        never_started = (
+            conn.execute(
+                select(ControlAction.action_id).where(
+                    ControlAction.session_id == session_id,
+                    ControlAction.action_type == "launch",
+                    ControlAction.state.in_(("requested", "submitted", "outcome_unknown")),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for launch_id in never_started:
+            ledger.transition(
+                conn,
+                launch_id,
+                "failed",
+                error_code="host_exited_before_start",
+                error_message=f"runtime host exited with code {ev.get('returncode')}",
+                native_correlation=correlation,
+            )
     elif kind == "session_started":
         launches = (
             conn.execute(

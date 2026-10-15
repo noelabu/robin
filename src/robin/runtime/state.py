@@ -64,6 +64,8 @@ def apply(conn: Connection, session_id: str, cursor: int, at: datetime, event: d
     ).first()
     if change is None or row is None or cursor <= row.state_cursor:
         return
+    if event.get("type") == "session_started" and row.runtime_state != "unknown":
+        change = StateChange()  # init can arrive after the first turn started; it never downgrades state
     if change.runtime_state == "waiting_for_input" and row.runtime_state not in (
         "running",
         "waiting_for_input",
@@ -92,7 +94,33 @@ def apply(conn: Connection, session_id: str, cursor: int, at: datetime, event: d
             .values(ended_at=at, outcome=change.run_outcome)
         )
         values["active_run_id"] = None
+    native = event.get("native_session_id")
+    if event.get("type") == "session_started" and native:
+        _capture_native_id(conn, session_id, str(native))
     conn.execute(update(SessionRow).where(SessionRow.session_id == session_id).values(**values))
+
+
+def _capture_native_id(conn: Connection, session_id: str, native: str) -> None:
+    """Record the runtime's own session ID (FR-012) unless another Robin session already has it."""
+    me = conn.execute(
+        select(SessionRow.host_id, SessionRow.runtime, SessionRow.native_session_id).where(
+            SessionRow.session_id == session_id
+        )
+    ).one()
+    if me.native_session_id == native:
+        return
+    taken = conn.execute(
+        select(SessionRow.session_id).where(
+            SessionRow.host_id == me.host_id,
+            SessionRow.runtime == me.runtime,
+            SessionRow.native_session_id == native,
+            SessionRow.session_id != session_id,
+        )
+    ).first()
+    if taken is None and me.native_session_id is None:
+        conn.execute(
+            update(SessionRow).where(SessionRow.session_id == session_id).values(native_session_id=native)
+        )
 
 
 def mark_connection(conn: Connection, session_id: str, state: str, at: datetime) -> None:

@@ -3,7 +3,7 @@
 Commands arrive as JSON lines on stdin and events leave as JSON lines on stdout, so the supervisor stays
 runtime-agnostic. Runtimes register a coroutine in RUNTIMES; the scripted "fake" runtime here drives tests.
 
-    python -m robin.runtime.host --runtime fake --cwd DIR
+    python -m robin.runtime --runtime fake --cwd DIR
 
 Commands: {"cmd": "send", "text": ..., "action_id": ...}, {"cmd": "interrupt", "action_id": ...},
           {"cmd": "approval", "request_id": ..., "allow": bool, "message": ..., "action_id": ...},
@@ -100,6 +100,9 @@ def runtime(name: str) -> Callable[[RuntimeMain], RuntimeMain]:
 async def run_fake(args: argparse.Namespace) -> None:
     """Scripted runtime: ticks, one approval at tick 5, interrupt and stop. No network."""
     approvals = Approvals()
+    if os.environ.get("ROBIN_FAKE_FAIL_START"):
+        emit({"type": "host_error", "reason": "simulated start failure"})
+        raise SystemExit(3)
     emit(
         {
             "type": "session_started",

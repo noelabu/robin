@@ -205,3 +205,37 @@ async def test_ack_arriving_before_the_reply_settles_the_action(store):
     )
     assert store.writer.call(lambda c: ledger.transition(c, "a1", "acknowledged")).state == "acknowledged"
     assert store.writer.call(lambda c: ledger.transition(c, "a1", "submitted")).state == "acknowledged"
+
+
+async def test_launch_fails_when_host_exits_before_session_starts(supervised):
+    store = supervised
+    sid = ensure_session(store, runtime="fake", mode="managed")
+    manager, client, task = await connect(store)
+    await manager.launch(
+        sid, runtime="fake", cwd=str(store.data_dir), action_id="l1", env={"ROBIN_FAKE_FAIL_START": "1"}
+    )
+    for _ in range(100):
+        if (await manager.get_action("l1")).state == "failed":
+            break
+        await asyncio.sleep(0.05)
+    action = await manager.get_action("l1")
+    assert action.state == "failed" and action.error_code == "host_exited_before_start"
+    await client.close()
+    await asyncio.wait_for(task, 5)
+
+
+def test_adapters_register_into_the_host_main_reads(tmp_path):
+    """Regression: hosts launched with -m must see adapter registrations (the double-import bug)."""
+    import json
+    import subprocess
+    import sys
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "robin.runtime", "--runtime", "claude", "--cwd", str(tmp_path)],
+        input="",
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    first = json.loads(proc.stdout.splitlines()[0])
+    assert first.get("reason") != "unknown runtime 'claude'", first

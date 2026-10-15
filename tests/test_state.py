@@ -54,3 +54,21 @@ def test_host_exit_stops_and_disconnects(store):
     feed(store, sid, "host_spawned", "session_started", "turn_started", "host_exited")
     r = row(store, sid)
     assert (r["runtime_state"], r["connection_state"]) == ("stopped", "disconnected")
+
+
+def test_native_session_id_captured_once_and_never_stolen(store):
+    a = ensure_session(store, runtime="fake", mode="managed")
+    b = ensure_session(store, runtime="fake", mode="managed")
+    store.writer.call(
+        lambda c: state.apply(c, a, 1, T, {"type": "session_started", "native_session_id": "n1"})
+    )
+    store.writer.call(
+        lambda c: state.apply(c, b, 2, T, {"type": "session_started", "native_session_id": "n1"})
+    )
+    assert row(store, a)["native_session_id"] == "n1" and row(store, b)["native_session_id"] is None
+
+
+def test_late_session_started_does_not_downgrade_a_running_turn(store):
+    sid = ensure_session(store, runtime="fake", mode="managed")
+    feed(store, sid, "turn_started", "session_started")
+    assert row(store, sid)["runtime_state"] == "running"

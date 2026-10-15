@@ -95,7 +95,7 @@ class Supervisor:
         env = {**os.environ, "ROBIN_LAUNCH_TOKEN": token, **(req.get("env") or {})}
         with open(self.dir / f"host-{session}.log", "ab") as log:
             proc = await asyncio.create_subprocess_exec(
-                sys.executable, "-m", "robin.runtime.host", "--runtime", req["runtime"],
+                sys.executable, "-m", "robin.runtime", "--runtime", req["runtime"],
                 "--cwd", req.get("cwd") or os.getcwd(),
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, env=env, limit=MAX_LINE,
                 cwd=req.get("cwd") or None)

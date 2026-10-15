@@ -59,4 +59,4 @@ def supervised(store, monkeypatch):
             time.sleep(0.05)
         else:
             os.kill(pid, signal.SIGKILL)
-    os.system("pkill -f 'robin.runtime.host --runtime fake' >/dev/null 2>&1")
+    os.system("pkill -f 'robin.runtime --runtime fake' >/dev/null 2>&1")
