@@ -27,6 +27,8 @@ from protocol import MAX_LINE
 
 # Finding publication path for this session: "tool" (MCP / extension tool) or "message" (final-message block)
 PUBLISH_PATH = os.environ.get("ROBIN_PUBLISH_PATH", "tool")
+# Native session to resume through its original runtime (FR-013); empty starts a new session.
+RESUME_ID = os.environ.get("ROBIN_RESUME_NATIVE_ID")
 
 
 def emit(event: dict):
@@ -148,6 +150,7 @@ async def run_claude(args):
     options = ClaudeAgentOptions(
         mcp_servers=mcp,
         allowed_tools=["mcp__robin__finding_publish"] if mcp else [],
+        resume=RESUME_ID,
         cwd=args.cwd,
         setting_sources=["user", "project", "local"],  # load the user's harness settings (FR-012)
         permission_mode="default",                       # never more permissive than the harness default
@@ -286,7 +289,11 @@ async def run_codex(args):
             "args": [os.path.join(os.path.dirname(os.path.abspath(__file__)), "robin_mcp.py")]}}}
     if os.environ.get("ROBIN_CODEX_APPROVAL_POLICY"):
         start["approvalPolicy"] = os.environ["ROBIN_CODEX_APPROVAL_POLICY"]
-    started = await rpc.call("thread/start", start)
+    if RESUME_ID:
+        start.pop("config", None)  # resume keeps the thread's own MCP config
+        started = await rpc.call("thread/resume", {**start, "threadId": RESUME_ID})
+    else:
+        started = await rpc.call("thread/start", start)
     result = started.get("result") or {}
     state["thread"] = result.get("thread", {}).get("id")
     emit({"type": "session_started", "native_session_id": state["thread"],
@@ -334,6 +341,8 @@ async def run_pi(args):
     cmd = ["pi", "--mode", "rpc", "--no-approve", "-e", PI_APPROVAL_EXTENSION]
     if os.environ.get("ROBIN_PI_SESSION_DIR"):
         cmd += ["--session-dir", os.environ["ROBIN_PI_SESSION_DIR"]]
+    if RESUME_ID:
+        cmd += ["--session", RESUME_ID]
     proc = await asyncio.create_subprocess_exec(
         *cmd, cwd=args.cwd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
         stderr=sys.stderr, limit=MAX_LINE)

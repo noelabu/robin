@@ -12,7 +12,7 @@
 |---|---|---|
 | Launch with native ID capture | **Pass** | `thread/start` returns `thread.id` (UUIDv7), also sent in `thread/started`. The resolved approval policy, sandbox and model come back in the response. |
 | Structured event streaming | **Pass** | Typed notifications: `thread/*`, `turn/started`, `turn/completed`, `item/started`, `item/completed`, `item/agentMessage/delta`, `hook/started`, `hook/completed`, `thread/tokenUsage/updated`, `account/rateLimits/updated`, `serverRequest/resolved`, and more |
-| Follow-up message | **Pass (new turn)** | `turn/start` on the existing thread. `turn/steer` with `expectedTurnId` exists for input during an active turn but isn't exercised yet. |
+| Follow-up message | **Pass (new turn and steer)** | `turn/start` on the existing thread. `turn/steer` with `expectedTurnId` during an essay turn: Codex dropped the essay and replied only with the steered codeword, so steering takes effect mid-turn (`test_continuity.py codex`). |
 | Interruption | **Pass** | `turn/interrupt {threadId, turnId}` → `turn/completed` with `turn.status: "interrupted"` |
 | Approval response | **Pass** | `item/commandExecution/requestApproval` arrives as a server request carrying `threadId`, `turnId`, `itemId` and the command. Answered with `{"decision": "accept"}` after the service was SIGKILLed and reconnected. `serverRequest/resolved` confirms it. Decisions: `accept`, `acceptForSession`, `decline`, `cancel` (decline and interrupt the turn), plus policy amendments, which Robin must not offer by default. File changes use `item/fileChange/requestApproval` with the same decisions. |
 | Finding publication path | **Pass, both paths** | **Tool:** Robin's MCP server (`supervisor/robin_mcp.py`), added for one thread through `thread/start` `config.mcp_servers.robin`. Robin takes the finding from the completed `mcpToolCall` item in the session's own stream. **Message:** with no MCP server, a fenced `robin-finding` block in the `final_answer` agent message. Both runs produced one valid finding with PRD.md line evidence, attributed to the Codex thread (`finding-tool-20261015-104655.json`, `finding-message-20261015-104742.json`). |
@@ -29,6 +29,11 @@
 - **Protocol surface is large and changes often.** It has 100+ client methods, many marked experimental. Pin the tested `codex-cli` version and generate typed bindings from `generate-json-schema` per version (TRD integration candidates).
 - **Unhandled server requests** are refused with a JSON-RPC error, never left hanging. None occurred in these runs.
 
+## Resume and terminal handoff (2026-10-15, `test_continuity.py codex`)
+
+- **Native resume: pass.** After the runtime host exited, a new host called `thread/resume {threadId}`. It got the same thread ID back, and the agent remembered the codeword from before.
+- **Terminal mode: handoff works.** With no Robin host attached, `codex exec resume <id> "<prompt>"` continued the same thread and recalled the codeword. Interactive `codex resume <id>` is the terminal equivalent. Outside a git repo or trusted folder, `codex exec` refuses to run without `--skip-git-repo-check`; real project folders are git repos.
+
 ## Finding publication notes
 
 - **The tool schema has to be typed.** The first run declared `claims` as a list of plain objects, and the model invented its own keys (`claim`, `file_path`, `line_start`), which Robin rightly rejected. Typed `Claim` / `Evidence` models fixed it.
@@ -44,8 +49,6 @@ The supervisor hung on shutdown under Python 3.12.0: `Server.wait_closed()` wait
 
 ## Still to test
 
-- `thread/resume` after the runtime host exits (native resume)
-- `turn/steer` during an active turn
 - Inherited default policy and sandbox with no override
-- Terminal mode: `codex resume <id>` vs attaching through the existing daemon
+- Terminal **attach** (joining a live session) through Codex's own daemon; handoff already works
 - Sandbox exclusion of the artifact store (review independence, TR-064)

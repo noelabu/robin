@@ -12,7 +12,7 @@
 |---|---|---|
 | Launch with native ID capture | **Pass** | RPC mode emits no session header; `get_state` returns `sessionId` and `sessionFile` |
 | Structured event streaming | **Pass** | `agent_start`, `turn_start`, `message_start/update/end`, `tool_execution_start/update/end`, `turn_end`, `agent_end`, `agent_settled`, queue and compaction events |
-| Follow-up message | **Pass (new run)** | `prompt` after `agent_settled` returns `disposition: "started"`. During a run, `prompt` with `streamingBehavior: "steer"` (or `steer` / `follow_up`) queues input; not exercised yet. |
+| Follow-up message | **Pass (new run; steer is queued)** | `prompt` after `agent_settled` returns `disposition: "started"`. During a run, `prompt` with `streamingBehavior: "steer"` returns `disposition: "queued"`, and Pi applies it **at the next turn boundary**: the 13,275-character essay finished before Pi replied with the steered codeword. To stop mid-generation, Robin must `abort` and then `prompt`. |
 | Interruption | **Pass** | `abort` → `agent_settled` with `aborted: true` |
 | Approval response | **Pass, through a Robin extension** | Pi has no built-in approvals: its security doc says it "does not ask for approval before every tool call". Robin loads `supervisor/pi_robin_approval.ts` (`pi -e`). Its `tool_call` handler calls `ctx.ui.confirm`, which RPC turns into an `extension_ui_request`. The runtime host answers with `extension_ui_response {confirmed}`. A `bash` call was approved this way after the service was SIGKILLed and reconnected. |
 | Finding publication path | **Pass, both paths** | **Tool:** `robin_finding_publish`, registered by Robin's extension when `ROBIN_PUBLISH_PATH=tool`. Robin takes the finding from `tool_execution_start` in the session's own stream. **Message:** a fenced `robin-finding` block in the final assistant `message_end`, with no Robin tool registered. Both produced one valid finding attributed to the Pi session (`finding-tool-20261015-104851.json`, `finding-message-20261015-104822.json`). |
@@ -29,6 +29,11 @@ Pi's native behaviour is to run tools without asking. Loading the extension make
 - **Recommended:** load it by default and label it in the capability report ("approvals: Robin extension, rule = not read-only and destructive or networked"), with a per-launch option to turn it off.
 - **Alternative:** match Pi's native behaviour. Pi sessions then never raise approvals, and the capability report says "runtime does not ask for approval".
 
+## Resume and terminal handoff (2026-10-15, `test_continuity.py pi`)
+
+- **Native resume: pass.** A new runtime host started `pi --mode rpc --session <id>`. `get_state` returned the same session ID, and the agent remembered the codeword.
+- **Terminal mode: handoff works.** With no Robin host attached, `pi -p --session <id> "<prompt>"` continued the same session and recalled the codeword. Interactive `pi --session <id>` is the terminal equivalent. There's no attach mode: Pi has no daemon to join.
+
 ## Notes for the build
 
 - **Framing.** Split stdout on LF only and strip an optional CR. Python's `readline()` does this. Node's `readline` would wrongly split on U+2028/U+2029.
@@ -41,7 +46,4 @@ Pi's native behaviour is to run tools without asking. Loading the extension make
 
 ## Still to test
 
-- Native resume: `pi --session <id>` / `--continue` after the runtime host exits
-- Steering and follow-up during a run
-- Terminal mode: `pi --session <id>` in a terminal as handoff
 - Hook equivalent for observed sessions (WP-2.6): Pi's mechanism is extensions in `~/.pi/agent/extensions`, not a hooks config file

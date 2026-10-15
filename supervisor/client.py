@@ -70,7 +70,8 @@ async def main(args):
         await asyncio.sleep(args.seconds)
         return
     if args.action == "launch":
-        msg = {"type": "launch", "runtime": args.rest[0], "prompt": args.prompt, "cwd": args.cwd}
+        msg = {"type": "launch", "runtime": args.rest[0], "prompt": args.prompt, "cwd": args.cwd,
+               "env": dict(kv.split("=", 1) for kv in args.env)}
     elif args.action == "send":
         msg = {"type": "command", "session": args.rest[0], "command": {"cmd": "send", "text": args.rest[1]}}
     elif args.action == "interrupt":
@@ -92,6 +93,7 @@ if __name__ == "__main__":
     ap.add_argument("--seconds", type=float, default=0.5)
     ap.add_argument("--prompt")
     ap.add_argument("--cwd", default=str(Path.cwd()))
+    ap.add_argument("--env", action="append", default=[], help="KEY=VALUE for the runtime host (launch)")
     ap.add_argument("action", choices=["watch", "launch", "send", "interrupt", "approve", "deny",
                                        "stop", "status", "shutdown"])
     ap.add_argument("rest", nargs="*")
