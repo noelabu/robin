@@ -527,6 +527,18 @@ def cmd_search(args: argparse.Namespace) -> None:
         print(f"({r['pending_events']} newest events not indexed yet)")
 
 
+def cmd_watch(args: argparse.Namespace) -> None:
+    with client(args.data) as c:
+        if args.state == "status":
+            on = call(c, "GET", "/settings/watch")["enabled"]
+        else:
+            on = call(c, "PUT", "/settings/watch", {"enabled": args.state == "on"})["enabled"]
+    if on:
+        print("watching Claude Code, Codex and Pi history: Robin reads transcripts as they grow")
+    else:
+        print("not watching history (run `robin scan` to index it once, or `robin watch on`)")
+
+
 def cmd_hooks(args: argparse.Namespace) -> None:
     """Opt-in, observe-only hooks (TR-076). Shows exactly what changes and writes only on confirmation."""
     from robin.hooks import install as hooks
@@ -802,6 +814,10 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=20)
     p.add_argument("--offset", type=int, default=0, help="skip this many results (for the next page)")
     p.set_defaults(func=cmd_search)
+
+    p = sub.add_parser("watch", parents=[common], help="follow native session history as it grows (opt-in)")
+    p.add_argument("state", choices=["on", "off", "status"])
+    p.set_defaults(func=cmd_watch)
 
     p = sub.add_parser("hooks", parents=[common], help="opt-in hooks for sessions started outside Robin")
     p.add_argument("action", choices=["status", "install", "uninstall"])

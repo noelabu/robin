@@ -71,13 +71,28 @@ def _m(event_type: str, rec: dict[str, Any], native_id_key: str | None = None) -
 # -- Claude Code ------------------------------------------------------------------
 
 
+def claude_files(root: Path) -> list[Path]:
+    return sorted(root.glob("*/*.jsonl"))
+
+
+def claude_main(path: Path) -> Path:
+    """A subagent transcript (<project>/<session>/subagents/x.jsonl) belongs to <project>/<session>.jsonl."""
+    if path.parent.name == "subagents":
+        return path.parent.parent.parent / f"{path.parent.parent.name}.jsonl"
+    return path
+
+
+def claude_describe(path: Path) -> NativeSession:
+    recs = first_records(path)
+    meta = next((r for r in recs if r.get("sessionId")), {})
+    native = meta.get("sessionId") or path.stem
+    subagents = tuple(sorted((path.parent / path.stem / "subagents").glob("*.jsonl")))
+    return NativeSession("claude", str(native), path, meta.get("cwd"), meta.get("version"), subagents)
+
+
 def claude_discover(root: Path) -> Iterator[NativeSession]:
-    for path in sorted(root.glob("*/*.jsonl")):
-        recs = first_records(path)
-        meta = next((r for r in recs if r.get("sessionId")), {})
-        native = meta.get("sessionId") or path.stem
-        subagents = tuple(sorted((path.parent / path.stem / "subagents").glob("*.jsonl")))
-        yield NativeSession("claude", str(native), path, meta.get("cwd"), meta.get("version"), subagents)
+    for path in claude_files(root):
+        yield claude_describe(path)
 
 
 def claude_mapper(rec: Any, ctx: MapperContext) -> MappedRecord | None:
@@ -104,13 +119,21 @@ def claude_mapper(rec: Any, ctx: MapperContext) -> MappedRecord | None:
 # -- Codex ------------------------------------------------------------------------
 
 
+def codex_files(root: Path) -> list[Path]:
+    return sorted(root.rglob("rollout-*.jsonl"))
+
+
+def codex_describe(path: Path) -> NativeSession:
+    meta = next(
+        (r.get("payload") or {} for r in first_records(path, 5) if r.get("type") == "session_meta"), {}
+    )
+    native = meta.get("id") or path.stem.split("-", 6)[-1]
+    return NativeSession("codex", str(native), path, meta.get("cwd"), meta.get("cli_version"))
+
+
 def codex_discover(root: Path) -> Iterator[NativeSession]:
-    for path in sorted(root.rglob("rollout-*.jsonl")):
-        meta = next(
-            (r.get("payload") or {} for r in first_records(path, 5) if r.get("type") == "session_meta"), {}
-        )
-        native = meta.get("id") or path.stem.split("-", 6)[-1]
-        yield NativeSession("codex", str(native), path, meta.get("cwd"), meta.get("cli_version"))
+    for path in codex_files(root):
+        yield codex_describe(path)
 
 
 CODEX_EVENTS = {
@@ -158,17 +181,20 @@ def codex_mapper(rec: Any, ctx: MapperContext) -> MappedRecord | None:
 # -- Pi ---------------------------------------------------------------------------
 
 
+def pi_files(root: Path) -> list[Path]:
+    return sorted(root.glob("*/*.jsonl"))
+
+
+def pi_describe(path: Path) -> NativeSession:
+    header = next((r for r in first_records(path, 2) if r.get("type") == "session"), {})
+    native = header.get("id") or path.stem.split("_", 1)[-1]
+    version = str(header["version"]) if "version" in header else None
+    return NativeSession("pi", str(native), path, header.get("cwd"), version)
+
+
 def pi_discover(root: Path) -> Iterator[NativeSession]:
-    for path in sorted(root.glob("*/*.jsonl")):
-        header = next((r for r in first_records(path, 2) if r.get("type") == "session"), {})
-        native = header.get("id") or path.stem.split("_", 1)[-1]
-        yield NativeSession(
-            "pi",
-            str(native),
-            path,
-            header.get("cwd"),
-            str(header["version"]) if "version" in header else None,
-        )
+    for path in pi_files(root):
+        yield pi_describe(path)
 
 
 def pi_mapper(rec: Any, ctx: MapperContext) -> MappedRecord | None:
@@ -194,6 +220,9 @@ class HistoryAdapter:
     home_root: Callable[[], Path]
     discover: Callable[[Path], Iterator[NativeSession]]
     mapper: RecordMapper
+    files: Callable[[Path], list[Path]]  # every transcript a watcher should follow, subagents included
+    describe: Callable[[Path], NativeSession]  # one main transcript
+    main: Callable[[Path], Path] = lambda p: p  # the main transcript a file belongs to
 
     def default_root(self) -> Path:
         """The runtime's own store; ROBIN_HISTORY_<RUNTIME> points elsewhere (tests, unusual installs)."""
@@ -203,10 +232,28 @@ class HistoryAdapter:
 
 HISTORY: dict[str, HistoryAdapter] = {
     "claude": HistoryAdapter(
-        "claude", lambda: Path.home() / ".claude" / "projects", claude_discover, claude_mapper
+        "claude",
+        lambda: Path.home() / ".claude" / "projects",
+        claude_discover,
+        claude_mapper,
+        lambda root: claude_files(root) + sorted(root.glob("*/*/subagents/*.jsonl")),
+        claude_describe,
+        claude_main,
     ),
     "codex": HistoryAdapter(
-        "codex", lambda: Path.home() / ".codex" / "sessions", codex_discover, codex_mapper
+        "codex",
+        lambda: Path.home() / ".codex" / "sessions",
+        codex_discover,
+        codex_mapper,
+        codex_files,
+        codex_describe,
     ),
-    "pi": HistoryAdapter("pi", lambda: Path.home() / ".pi" / "agent" / "sessions", pi_discover, pi_mapper),
+    "pi": HistoryAdapter(
+        "pi",
+        lambda: Path.home() / ".pi" / "agent" / "sessions",
+        pi_discover,
+        pi_mapper,
+        pi_files,
+        pi_describe,
+    ),
 }

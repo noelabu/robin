@@ -196,7 +196,14 @@ def test_a_failing_discoverer_does_not_stop_other_runtimes(store, tmp_path, monk
     monkeypatch.setitem(
         history.HISTORY,
         "codex",
-        history.HistoryAdapter("codex", lambda: r["codex"], boom, history.codex_mapper),
+        history.HistoryAdapter(
+            "codex",
+            lambda: r["codex"],
+            boom,
+            history.codex_mapper,
+            history.codex_files,
+            history.codex_describe,
+        ),
     )
     reports = {x.runtime: x for x in scan(store, roots=r)}
     assert reports["codex"].errors and "format changed" in reports["codex"].errors[0]

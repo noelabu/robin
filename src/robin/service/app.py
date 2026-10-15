@@ -88,6 +88,10 @@ class ActionBody(BaseModel):
     interrupt_running: bool = False  # handoff: end a running turn
 
 
+class WatchBody(BaseModel):
+    enabled: bool
+
+
 class ExchangeBody(BaseModel):
     secret: str
 
@@ -523,6 +527,21 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
             log.exception("couldn't turn dropped hook events into coverage gaps")
         await runtime.notify()
         return result
+
+    @app.get(f"{API}/settings/watch")
+    async def watch_get(_: str = Authed) -> dict[str, Any]:
+        from robin import watch
+
+        return {"enabled": await asyncio.to_thread(watch.enabled, store)}
+
+    @app.put(f"{API}/settings/watch")
+    async def watch_put(body: WatchBody, _: str = Authed) -> dict[str, Any]:
+        """Follow native history continuously. Off by default: it reads the runtimes' own transcripts."""
+        from robin import watch
+
+        await asyncio.to_thread(watch.set_enabled, store, body.enabled)
+        await runtime.notify()
+        return {"enabled": body.enabled}
 
     @app.get(f"{API}/search")
     async def search_route(

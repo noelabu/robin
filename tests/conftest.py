@@ -111,3 +111,12 @@ def _no_real_harness_configs(tmp_path_factory, monkeypatch):
     root = tmp_path_factory.mktemp("harness")
     for runtime, name in (("claude", "settings.json"), ("codex", "hooks.json"), ("pi", "robin-observer.ts")):
         monkeypatch.setenv(f"ROBIN_HOOK_CONFIG_{runtime.upper()}", str(root / runtime / name))
+
+
+@pytest.fixture(autouse=True)
+def _no_real_history(tmp_path_factory, monkeypatch):
+    """Tests never read the user's real Claude, Codex or Pi history: every history root is an empty folder."""
+    root = tmp_path_factory.mktemp("history")
+    for runtime in ("claude", "codex", "pi"):
+        (root / runtime).mkdir()
+        monkeypatch.setenv(f"ROBIN_HISTORY_{runtime.upper()}", str(root / runtime))
