@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import Connection, func, select
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from robin.events.ingest import ensure_session, read_events
+from robin.events.ingest import ensure_session, read_events, read_payload_json
 from robin.paths import ExecutionCwd
 from robin.runtime.capabilities import RUNTIME_CAPABILITIES, capabilities_for
 from robin.runtime.ledger import Action, ActionConflict, ActionRejected
@@ -34,6 +34,7 @@ from robin.store.models import Session as SessionRow
 API = "/api/v1"
 HEARTBEAT_S = 15.0
 STREAM_BATCH = 200
+PREVIEW_CHARS = 500
 WEB_DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
 
 
@@ -210,6 +211,16 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         response.set_cookie(COOKIE, sid, httponly=True, samesite="strict", secure=False, path="/")
         return {"csrf_token": csrf}
 
+    @app.get(f"{API}/auth/session")
+    async def current_session(request: Request) -> dict[str, str]:
+        """For a page reload: the cookie is still valid, the CSRF token lived only in memory."""
+        s = auth.browser_session(request.cookies.get(COOKIE))
+        if s is None:
+            raise ApiError(
+                401, "unauthenticated", "sign in with the URL printed by `robin`", "reauthenticate"
+            )
+        return {"csrf_token": s.csrf}
+
     @app.post(f"{API}/auth/bootstrap")
     async def new_bootstrap(request: Request) -> dict[str, str]:
         """CLI only: mint a fresh single-use sign-in link for `robin open`."""
@@ -363,15 +374,37 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
                 with store.reader.connect() as conn:
                     views = {s: _sessions(conn, s)[0] for s in touched}
                 for e in evs:
-                    yield _frame(
-                        "event",
-                        {"event": e.model_dump(mode="json"), "session": views[e.session_id]},
-                        event_id=e.global_cursor,
-                    )
+                    data = {
+                        "event": e.model_dump(mode="json"),
+                        "session": views[e.session_id],
+                        "preview": await asyncio.to_thread(_preview, e.global_cursor, e.payload_ref),
+                    }
+                    yield _frame("event", data, event_id=e.global_cursor)
                 cursor = evs[-1].global_cursor
                 continue
             if await runtime.wait_change(seen, HEARTBEAT_S) == seen:
                 yield b": heartbeat\n\n"  # proves the Robin connection is alive, not that agents work
+
+    def _preview(cursor: int, payload_ref: str | None) -> str | None:
+        """A short plain-text summary for the activity feed. Large payloads stay behind their reference."""
+        if payload_ref is not None:
+            return None
+        try:
+            payload = read_payload_json(store, cursor)
+        except ValueError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        for key in ("text", "reason", "result", "output"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()[:PREVIEW_CHARS]
+        tool = payload.get("tool")
+        if isinstance(tool, str):
+            detail = payload.get("input")
+            command = detail.get("command") if isinstance(detail, dict) else None
+            return f"{tool}: {command}"[:PREVIEW_CHARS] if isinstance(command, str) else tool
+        return None
 
     def _frame(kind: str, data: dict[str, Any], event_id: int | None = None) -> bytes:
         head = f"id: {event_id}\n" if event_id is not None else ""

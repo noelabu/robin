@@ -6,3 +6,5 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 dist/
+web/node_modules/
+!src/robin/web/dist/

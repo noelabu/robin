@@ -1,0 +1,102 @@
+import { useCallback, useEffect, useReducer, useRef } from "react";
+import { api, type RobinEvent, type Session } from "./api";
+
+export type FeedItem = RobinEvent & { preview: string | null };
+
+type State = {
+  ready: boolean;
+  sessions: Record<string, Session>;
+  feed: FeedItem[];
+  seen: Set<string>;
+  cursor: number;
+  supervisorConnected: boolean;
+  streamState: "connecting" | "live" | "reconnecting";
+  gap: boolean;
+};
+
+type Msg =
+  | { kind: "snapshot"; sessions: Session[]; watermark: number; supervisorConnected: boolean }
+  | { kind: "event"; event: RobinEvent; session: Session; preview: string | null }
+  | { kind: "stream"; state: State["streamState"] };
+
+const FEED_LIMIT = 500; // bounded rendering; full history stays on the server
+
+function reducer(s: State, m: Msg): State {
+  switch (m.kind) {
+    case "snapshot":
+      return {
+        ...s,
+        ready: true,
+        sessions: Object.fromEntries(m.sessions.map((x) => [x.session_id, x])),
+        cursor: Math.max(s.cursor, m.watermark),
+        supervisorConnected: m.supervisorConnected,
+      };
+    case "event": {
+      if (s.seen.has(m.event.event_id)) return s; // dedupe replays by event id (TR-034)
+      const seen = new Set(s.seen);
+      seen.add(m.event.event_id);
+      const feed = [{ ...m.event, preview: m.preview }, ...s.feed].slice(0, FEED_LIMIT);
+      return {
+        ...s,
+        seen,
+        feed,
+        cursor: Math.max(s.cursor, m.event.global_cursor),
+        sessions: { ...s.sessions, [m.session.session_id]: m.session }, // upsert the projection
+        gap: s.gap || m.event.event_type === "connection.gap",
+      };
+    }
+    case "stream":
+      return { ...s, streamState: m.state };
+  }
+}
+
+const initial: State = {
+  ready: false,
+  sessions: {},
+  feed: [],
+  seen: new Set(),
+  cursor: 0,
+  supervisorConnected: false,
+  streamState: "connecting",
+  gap: false,
+};
+
+/** Snapshot, then a stream from the snapshot's watermark; a resync request reloads the snapshot. */
+export function useWorkspace(enabled: boolean) {
+  const [state, dispatch] = useReducer(reducer, initial);
+  const source = useRef<EventSource | null>(null);
+
+  const connect = useCallback(async () => {
+    source.current?.close();
+    const ws = await api.workspace();
+    dispatch({ kind: "snapshot", sessions: ws.sessions, watermark: ws.watermark, supervisorConnected: ws.supervisor.connected });
+    const es = new EventSource(`/api/v1/stream?after=${ws.watermark}`); // reconnects send Last-Event-ID
+    source.current = es;
+    es.onopen = () => dispatch({ kind: "stream", state: "live" });
+    es.onerror = () => dispatch({ kind: "stream", state: "reconnecting" });
+    es.addEventListener("event", (e) => {
+      const data = JSON.parse((e as MessageEvent).data);
+      dispatch({ kind: "event", event: data.event, session: data.session, preview: data.preview });
+    });
+    es.addEventListener("resync_required", () => void connect());
+  }, []);
+
+  useEffect(() => {
+    if (!enabled) return;
+    void connect();
+    const refresh = window.setInterval(async () => {
+      try {
+        const ws = await api.workspace();
+        dispatch({ kind: "snapshot", sessions: ws.sessions, watermark: ws.watermark, supervisorConnected: ws.supervisor.connected });
+      } catch {
+        /* the stream shows reconnecting */
+      }
+    }, 15000); // connection freshness and supervisor status between events
+    return () => {
+      window.clearInterval(refresh);
+      source.current?.close();
+    };
+  }, [enabled, connect]);
+
+  return state;
+}

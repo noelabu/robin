@@ -285,3 +285,11 @@ def test_supervisor_link_recovers_from_unexpected_errors(supervised, monkeypatch
     finally:
         server.should_exit = True
         thread.join(10)
+
+
+def test_reloaded_page_recovers_csrf_from_cookie(service):
+    _, port, auth = service
+    b = browser(port, auth)
+    assert b.get("/api/v1/auth/session").json()["csrf_token"] == b.headers[CSRF_HEADER]
+    with httpx.Client(base_url=base(port), timeout=5) as anon:
+        assert anon.get("/api/v1/auth/session").status_code == 401
