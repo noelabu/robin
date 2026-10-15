@@ -99,3 +99,12 @@ def test_resume_commands_are_argument_arrays_with_validated_ids():
     assert resume_command("pi", "x") == ["pi", "--session", "x"]
     with pytest.raises(ValueError):
         resume_command("claude", "abc; echo injected")
+
+
+@pytest.mark.parametrize("native_id", ["--dangerously-skip-permissions", "-x", ".", ""])
+@pytest.mark.parametrize("runtime", ["claude", "codex", "pi"])
+def test_a_native_id_that_could_be_a_flag_never_becomes_a_command(runtime, native_id):
+    # Observed ids come from transcript contents, which an agent can write.
+    with pytest.raises(ValueError):
+        resume_command(runtime, native_id)
+    assert holders(native_id) == []

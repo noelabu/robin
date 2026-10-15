@@ -13,6 +13,7 @@ Markdown, with relative paths and hashes. Native transcripts are listed as refer
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 from datetime import UTC, datetime
@@ -21,7 +22,7 @@ from typing import Any
 
 from robin import __version__
 from robin.paths import secure_mkdir
-from robin.store.blobs import BlobStore
+from robin.store.blobs import SHA256, BlobStore
 from robin.store.migrate import backup as sqlite_backup
 from robin.store.migrate import current_revision
 
@@ -31,6 +32,9 @@ NEVER_COPIED = ("cli.token", "service.json", "auth.json", "supervisor.sock")
 
 class BackupError(Exception):
     pass
+
+
+SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")  # ids that export uses as file and folder names
 
 
 def _sha(path: Path) -> str:
@@ -55,8 +59,11 @@ def create(data_dir: Path, dest_parent: Path) -> Path:
     snapshot = sqlite_backup(db, out, "snapshot")  # verified with quick_check and fsynced
     final_db = out / "robin.db"
     os.replace(snapshot, final_db)
-    with sqlite3.connect(f"file:{final_db}?mode=ro", uri=True) as conn:
+    conn = sqlite3.connect(f"file:{final_db}?mode=ro", uri=True)
+    try:
         shas = [r[0] for r in conn.execute("SELECT sha256 FROM blob WHERE state = 'present'")]
+    finally:
+        conn.close()
     blobs = _blob_store(data_dir)
     copied, missing = [], []
     for sha in shas:
@@ -100,6 +107,7 @@ def restore(backup_dir: Path, data_dir: Path) -> dict[str, Any]:
         raise BackupError(f"{backup_dir} has no robin.db")
     if _sha(src_db) != manifest["database"]["sha256"]:
         raise BackupError("the backup's database doesn't match its manifest")
+    _check_references(src_db)
     blob_files = (
         [p for p in (backup_dir / "blobs").rglob("*") if p.is_file()]
         if (backup_dir / "blobs").exists()
@@ -135,6 +143,41 @@ def restore(backup_dir: Path, data_dir: Path) -> dict[str, Any]:
         shutil.rmtree(staging, ignore_errors=True)
         raise
     return {"restored_blobs": len(blob_files), "missing_in_backup": manifest["blobs"]["missing"], **checked}
+
+
+# Every column holding a blob hash, and every id export turns into a path. The manifest only proves the
+# database is the one the manifest names; both can be forged, so the contents are checked too (TR-070).
+BLOB_COLUMNS = (
+    ("blob", "sha256"),
+    ("event", "payload_blob"),
+    ("quarantine", "payload_blob"),
+    ("control_action", "payload_blob"),
+    ("artifact_version", "content_blob"),
+    ("context_packet", "payload_blob"),
+    ("task_attachment", "snapshot_blob"),
+    ("retrieval_read", "content_blob"),
+)
+ID_COLUMNS = (("task", "task_id"), ("artifact", "artifact_id"), ("context_packet", "packet_id"))
+
+
+def _check_references(db: Path) -> None:
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        for table, col, pattern in [(t, c, SHA256) for t, c in BLOB_COLUMNS] + [
+            (t, c, SAFE_ID) for t, c in ID_COLUMNS
+        ]:
+            if table not in tables:
+                continue  # an older schema; migrations add it empty
+            for (value,) in conn.execute(f"SELECT {col} FROM {table} WHERE {col} IS NOT NULL"):
+                if not isinstance(value, str) or not pattern.fullmatch(value):
+                    raise BackupError(
+                        f"the backup's {table}.{col} holds a value that isn't a valid reference"
+                    )
+    except sqlite3.Error as exc:
+        raise BackupError(f"the backup's database can't be read: {exc}") from exc
+    finally:
+        conn.close()
 
 
 def verify(store: Any) -> dict[str, Any]:
@@ -212,8 +255,11 @@ def export(store: Any, out: Path, task_id: str | None = None) -> dict[str, Any]:
             ).mappings()
         ]
     index: dict[str, Any] = {"format": FORMAT, "exported_at": datetime.now(UTC).isoformat(), "tasks": []}
+    root = out.resolve()
     for t in tasks:
         tdir = out / "tasks" / t["task_id"]
+        if not SAFE_ID.fullmatch(t["task_id"]) or not tdir.resolve().is_relative_to(root):
+            raise BackupError(f"task id {t['task_id']!r} can't be used as a folder name")
         (tdir / "artifacts").mkdir(parents=True, exist_ok=True)
         project = projects.get(t["project_id"], {})
         entry: dict[str, Any] = {

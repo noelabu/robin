@@ -17,7 +17,6 @@ from sqlalchemy import Connection, func, insert, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from robin.ids import new_id, utc_now
-from robin.paths import ArtifactStoreRoot
 from robin.store import Store
 from robin.store.models import Blob, Project, Run, Task, TaskAttachment, TaskSession
 from robin.store.models import Session as SessionRow
@@ -62,7 +61,7 @@ def register_project(store: Store, path: str, name: str | None = None) -> dict[s
     if not root.is_absolute() or not root.is_dir():
         raise WorkspaceError("invalid_path", "a project must be an existing absolute directory")
     root = root.resolve()
-    _not_overlapping(root, store.artifacts)
+    _not_overlapping(root, store.data_dir)
     git = git_info(root)
     now = utc_now()
 
@@ -152,8 +151,10 @@ def _project_view(r: Any, last_activity: Any) -> dict[str, Any]:
     }
 
 
-def _not_overlapping(root: Path, store: ArtifactStoreRoot) -> None:
-    if root.is_relative_to(store.path) or store.path.is_relative_to(root):
+def _not_overlapping(root: Path, data_dir: Path) -> None:
+    # The whole data directory, not just its artifact store: cli.token and robin.db sit at its top.
+    data_dir = data_dir.resolve()
+    if root.is_relative_to(data_dir) or data_dir.is_relative_to(root):
         raise WorkspaceError("invalid_path", "a project can't contain, or sit inside, Robin's data directory")
 
 
@@ -226,6 +227,8 @@ def create_task(
 
 def _snapshot(store: Store, project_root: Path, file: str) -> tuple[str, str, int]:
     """Read an attached file as an approved snapshot. It must stay inside the project (TR-070)."""
+    if "\x00" in file:
+        raise WorkspaceError("invalid_attachment", "a file path can't contain a NUL byte")
     candidate = Path(file).expanduser()
     if not candidate.is_absolute():
         candidate = project_root / candidate
@@ -476,6 +479,8 @@ def read_project_file(
     """
     project = get_project(store, project_id)
     root = Path(project["path"]).resolve()
+    if "\x00" in rel:
+        raise WorkspaceError("invalid_path", "a file path can't contain a NUL byte", 403)
     target = (root / rel).resolve()
     if not target.is_relative_to(root) or target == root:
         raise WorkspaceError("invalid_path", "that path is outside the project", 403)

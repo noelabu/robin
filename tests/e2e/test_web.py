@@ -232,3 +232,48 @@ def test_compare_select_claims_send_and_save_a_synthesis(running):
             time.sleep(0.25)
         expect(share.locator(".status")).to_contain_text("Saved as synthesis")
         browser.close()
+
+
+def test_keyboard_only_reaches_every_session_and_keeps_focus(running):
+    from playwright.sync_api import expect, sync_playwright
+
+    from robin.events.ingest import ensure_session
+
+    store, port, auth = running
+    for i in range(60):
+        ensure_session(store, runtime="claude", mode="observed", execution_cwd=f"/w/app{i}")
+    with sync_playwright() as p:
+        browser = launch_browser(p)
+        page = browser.new_page()
+        page.goto(f"http://127.0.0.1:{port}/#bootstrap={auth.new_bootstrap()}")
+        expect(page.locator(".session-item").first).to_contain_text("app59", timeout=10_000)
+
+        # the list is one Tab stop, and the keyboard reaches its far end
+        assert page.locator(".session-item[tabindex='0']").count() == 1
+        page.locator(".session-item[tabindex='0']").focus()
+        page.keyboard.press("End")
+        expect(page.locator(":focus")).to_contain_text("app0")
+        page.keyboard.press("Enter")
+        expect(page.locator(".detail")).to_contain_text("/w/app0")
+
+        # closing a panel returns focus to the control that opened it
+        page.get_by_role("button", name="Launch session").focus()
+        page.keyboard.press("Enter")
+        expect(page.locator("#launch-title")).to_be_visible()
+        page.keyboard.press("Escape")
+        expect(page.get_by_role("button", name="Launch session")).to_be_focused()
+        page.get_by_role("button", name="Settings").focus()
+        page.keyboard.press("Enter")
+        expect(page.locator("#settings-title")).to_be_focused()
+
+        try:
+            page.add_script_tag(url="https://cdn.jsdelivr.net/npm/axe-core@4.10.2/axe.min.js")
+        except Exception:
+            browser.close()
+            return  # offline: the axe pass needs the network
+        violations = page.evaluate(
+            "axe.run(document, {runOnly: ['wcag2a', 'wcag2aa', 'wcag21aa']})"
+            ".then(r => r.violations.map(v => v.id))"
+        )
+        assert violations == []
+        browser.close()

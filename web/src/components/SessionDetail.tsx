@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api, ApiError, type Session } from "../api";
-import { StateBadge } from "./StateBadge";
+import { LABEL, StateBadge } from "./StateBadge";
 
 function ago(iso: string | null): string {
   if (!iso) return "no evidence yet";
@@ -8,7 +8,11 @@ function ago(iso: string | null): string {
   return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)}m ago` : `${Math.round(s / 3600)}h ago`;
 }
 
-function resumeCommand(runtime: string, id: string): string {
+// Like the server's check: an id that could be read as a flag is never shown as a command to run.
+const NATIVE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+function resumeCommand(runtime: string, id: string): string | null {
+  if (!NATIVE_ID.test(id)) return null;
   if (runtime === "claude") return `claude --resume ${id}`;
   if (runtime === "codex") return `codex resume ${id}`;
   if (runtime === "pi") return `pi --session ${id}`;
@@ -52,12 +56,17 @@ export function SessionDetail({ session, onChanged }: { session: Session; onChan
   const handedOff = session.control_owner === "terminal";
   const resume = session.native_session_id ? resumeCommand(session.runtime, session.native_session_id) : null;
 
+  const stale = session.connection_state !== "connected" && session.mode === "managed";
+  const disabledReasons = (["interrupt", "stop", "handoff", "reclaim"] as const)
+    .filter((k) => !c[k].enabled && c[k].reason && c[k].reason !== c.message.reason)
+    .map((k) => c[k].reason);
+
   const sendLabel = session.runtime_state === "running" ? (session.capabilities.steer_mid_turn ? "Steer" : "Queue follow-up") : "Send";
 
   return (
     <section className="detail" aria-labelledby="detail-title">
       <div className="detail-head">
-        <h2 id="detail-title">
+        <h2 id="detail-title" tabIndex={-1}>
           {session.runtime} <StateBadge session={session} />
         </h2>
         <dl className="facts">
@@ -90,6 +99,10 @@ export function SessionDetail({ session, onChanged }: { session: Session; onChan
         </dl>
       </div>
 
+      <p className="sr-only" role="status">
+        {`${session.runtime} ${LABEL[session.runtime_state]}${stale ? `, ${session.connection_state}` : ""}`}
+      </p>
+
       {session.shared_folder_with.length > 0 && (
         <p className="hint warn" role="alert">
           {session.shared_folder_with.length === 1 ? "Another session" : `${session.shared_folder_with.length} other sessions`}{" "}
@@ -102,7 +115,14 @@ export function SessionDetail({ session, onChanged }: { session: Session; onChan
           {handedOff ? (
             <>
               <p className="hint">
-                Continue in a terminal with <code>{resume}</code>. Close it before taking control back.
+                {resume ? (
+                  <>
+                    Continue in a terminal with <code>{resume}</code>.
+                  </>
+                ) : (
+                  "This session's native id can't be used in a command."
+                )}{" "}
+                Close it before taking control back.
               </p>
               <div className="actions">
                 <button type="button" onClick={() => void openTerminal()}>
@@ -192,6 +212,11 @@ export function SessionDetail({ session, onChanged }: { session: Session; onChan
           </button>
         </div>
         {!c.message.enabled && c.message.reason && <p className="hint">Controls unavailable: {c.message.reason}</p>}
+        {[...new Set(disabledReasons)].map((r) => (
+          <p className="hint" key={r}>
+            {r}
+          </p>
+        ))}
         {sendLabel === "Queue follow-up" && (
           <p className="hint">{session.runtime} applies input sent during a turn after the turn ends.</p>
         )}

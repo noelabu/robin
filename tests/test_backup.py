@@ -28,6 +28,7 @@ def test_backup_while_running_and_restore_reproduces_everything(api, tmp_path):
     names = {x.name for x in out.rglob("*")}
     assert {"robin.db", "manifest.json"} <= names
     assert not names & {"cli.token", "service.json"}  # credentials stay behind
+    assert not [n for n in names if n.endswith(("-wal", "-shm", ".partial"))]  # one self-contained database
     m = json.loads((out / "manifest.json").read_text())
     assert m["blobs"]["missing"] == [] and m["blobs"]["count"] > 0
     assert hashlib.sha256((out / "robin.db").read_bytes()).hexdigest() == m["database"]["sha256"]
@@ -120,3 +121,62 @@ def test_a_restore_that_fails_late_leaves_nothing_and_can_be_retried(api, tmp_pa
     assert not target.exists() and not list(tmp_path.glob(".new-data.restoring-*"))
     monkeypatch.undo()
     assert backup.restore(out, target)["mismatches"] == []  # the retry works
+
+
+def _forged_backup(tmp_path, *statements):
+    """A real backup whose database was edited afterwards, with the manifest rewritten to match it."""
+    import sqlite3
+
+    from robin.store import open_store
+    from robin.workspace import tasks as ws
+    from test_context import observed_session_with
+
+    src = open_store(tmp_path / "src-data")
+    observed_session_with(src, [("tool.result", {"tool": "shell", "output": "x" * (80 * 1024)})])
+    (tmp_path / "p").mkdir()
+    p = ws.register_project(src, str(tmp_path / "p"))
+    ws.create_task(src, project_id=p["project_id"], title="t", objective="o")
+    src.close()
+    bdir = backup.create(tmp_path / "src-data", tmp_path / "bk")
+    con = sqlite3.connect(bdir / "robin.db")
+    con.execute("PRAGMA foreign_keys=OFF")
+    for sql in statements:
+        con.execute(sql)
+    con.commit()
+    con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    con.close()
+    m = json.loads((bdir / "manifest.json").read_text())
+    m["database"]["sha256"] = hashlib.sha256((bdir / "robin.db").read_bytes()).hexdigest()
+    (bdir / "manifest.json").write_text(json.dumps(m))
+    return bdir
+
+
+@pytest.mark.parametrize(
+    "forgery",
+    [
+        # pruning would unlink the victim: a blob "hash" that is a path outside the store
+        (
+            "UPDATE event SET payload_blob = '{victim}' WHERE payload_blob IS NOT NULL",
+            "UPDATE blob SET sha256 = '{victim}'",
+        ),
+        ("UPDATE blob SET sha256 = '../../../../x'",),
+        # export would write outside its folder
+        ("UPDATE task SET task_id = '../../../../escaped'",),
+        ("UPDATE task SET task_id = '/tmp/escaped'",),
+    ],
+)
+def test_a_forged_backup_is_refused_and_leaves_nothing(tmp_path, forgery):
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep me")
+    bdir = _forged_backup(tmp_path, *(s.format(victim=victim) for s in forgery))
+    with pytest.raises(backup.BackupError, match="isn't a valid reference"):
+        backup.restore(bdir, tmp_path / "restored")
+    assert not (tmp_path / "restored").exists() and victim.exists()
+
+
+def test_blob_paths_are_only_ever_hashes(store):
+    for bad in ("/etc/hosts", "../../x", "ab/../../cd" + "0" * 54, "A" * 64, ""):
+        with pytest.raises(ValueError):
+            store.blobs.path_for(bad)
+    sha = store.blobs.put(b"x")
+    assert store.blobs.path_for(sha).is_relative_to(store.blobs.root)

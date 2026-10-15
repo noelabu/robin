@@ -142,3 +142,22 @@ def test_attaching_back_to_the_current_task_cancels_a_pending_switch(store, proj
     ws.attach_session(store, a, sid)  # back to A
     store.writer.call(lambda c: state.apply(c, sid, 1, T, {"type": "turn_started"}))
     assert run_task(store, sid) == [a]
+
+
+def test_a_project_never_overlaps_robins_data_directory(store):
+    inside = store.data_dir / "hooks"
+    inside.mkdir(exist_ok=True)
+    for path in (inside, store.data_dir, store.data_dir.parent):
+        with pytest.raises(WorkspaceError, match="data directory"):
+            ws.register_project(store, str(path))
+
+
+def test_a_nul_byte_in_a_file_path_is_refused(store, tmp_path):
+    (tmp_path / "proj").mkdir()
+    p = ws.register_project(store, str(tmp_path / "proj"))
+    with pytest.raises(WorkspaceError) as e:
+        ws.read_project_file(store, p["project_id"], "a\x00b")
+    assert e.value.code == "invalid_path"
+    with pytest.raises(WorkspaceError) as e:
+        ws.create_task(store, project_id=p["project_id"], title="t", objective="o", files=["a\x00b"])
+    assert e.value.code == "invalid_attachment"

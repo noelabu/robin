@@ -11,7 +11,9 @@ import shlex
 import subprocess
 from pathlib import Path
 
-NATIVE_ID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+# The first character is alphanumeric: an id read from a transcript must never be taken as a flag
+# (`claude --resume --dangerously-skip-permissions`).
+NATIVE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
 def resume_command(runtime: str, native_id: str) -> list[str]:

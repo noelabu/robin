@@ -114,3 +114,11 @@ def test_single_and_double_quoted_curl_auth_headers_are_both_found(rules):
     for quote in ('"', "'"):
         cmd = f"curl https://api.example.org -H {quote}Authorization: {token}{quote}"
         assert [m.rule_id for m in rules.scan(cmd)] == ["curl-auth-header"], quote
+
+
+def test_robins_own_agent_credentials_are_redacted(store, session_id):
+    from robin import retrieval
+
+    token = retrieval.mint(store, session_id)
+    clean, matches = load().redact(f"ROBIN_AGENT_TOKEN={token}\n")
+    assert token not in clean and [m.rule_id for m in matches] == ["robin-agent-credential"]

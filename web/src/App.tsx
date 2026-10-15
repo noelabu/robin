@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, signIn, type Session } from "./api";
 import { ActivityFeed, type FeedScope } from "./components/ActivityFeed";
 import { AttentionPanel } from "./components/AttentionPanel";
@@ -20,6 +20,20 @@ export function App() {
   const [scope, setScope] = useState<Scope>({ kind: "all" });
   const [selected, setSelected] = useState<string | null>(null);
   const [panel, setPanel] = useState<"none" | "launch" | "task" | "settings">("none");
+  // Keyboard focus goes back to whatever opened a panel when it closes (NFR-08).
+  const opener = useRef<HTMLElement | null>(null);
+  const openPanel = (p: "launch" | "task" | "settings") => {
+    opener.current = document.activeElement as HTMLElement | null;
+    setPanel(p);
+  };
+  const closePanel = () => {
+    setPanel("none");
+    requestAnimationFrame(() => opener.current?.focus());
+  };
+  const openSession = (id: string) => {
+    setSelected(id);
+    requestAnimationFrame(() => document.getElementById("detail-title")?.focus());
+  };
   const [storage, setStorage] = useState<{ state: string; ratio: number } | null>(null);
   const [runtimeFilter, setRuntimeFilter] = useState("");
   const [showArchived, setShowArchived] = useState(false);
@@ -88,11 +102,11 @@ export function App() {
   return (
     <div className="shell">
       <header className="topbar">
-        <span className="brand">Robin</span>
+        <h1 className="brand">Robin</h1>
         <SearchBox
           onOpenSession={(id) => {
             setPanel("none");
-            setSelected(id);
+            openSession(id);
           }}
           onOpenTask={(id) => choose({ kind: "task", id })}
         />
@@ -108,15 +122,15 @@ export function App() {
           </span>
         )}
         {scope.kind === "project" && project && (
-          <button onClick={() => setPanel("task")}>New task</button>
+          <button onClick={() => openPanel("task")}>New task</button>
         )}
         {storage && storage.state !== "ok" && (
-          <button className={`pill ${storage.state === "over" ? "bad" : "warn"}`} onClick={() => setPanel("settings")}>
+          <button className={`pill ${storage.state === "over" ? "bad" : "warn"}`} onClick={() => openPanel("settings")}>
             Storage {Math.round(storage.ratio * 100)}%
           </button>
         )}
-        <button onClick={() => setPanel("settings")}>Settings</button>
-        <button className="primary" onClick={() => setPanel("launch")}>
+        <button onClick={() => openPanel("settings")}>Settings</button>
+        <button className="primary" onClick={() => openPanel("launch")}>
           Launch session
         </button>
       </header>
@@ -153,7 +167,7 @@ export function App() {
         )}
       </nav>
       <main className="main">
-        <AttentionPanel refreshKey={ws.attentionVersion} onOpenSession={setSelected} />
+        <AttentionPanel refreshKey={ws.attentionVersion} onOpenSession={openSession} />
         {notice && (
           <p className="hint warn" role="status">
             {notice}
@@ -164,24 +178,24 @@ export function App() {
             task={task}
             defaultCwd={project?.path ?? ""}
             writers={writers}
-            onCancel={() => setPanel("none")}
+            onCancel={closePanel}
             onLaunched={(sid, warnings) => {
               setPanel("none");
               setNotice(warnings.length ? warnings.join(" ") : null);
-              setSelected(sid);
+              openSession(sid);
             }}
           />
         )}
         {panel === "settings" && (
           <SettingsPanel
-            onClose={() => setPanel("none")}
+            onClose={closePanel}
             onChanged={() => void api.storage().then(setStorage).catch(() => undefined)}
           />
         )}
         {panel === "task" && project && (
           <NewTaskForm
             project={project}
-            onCancel={() => setPanel("none")}
+            onCancel={closePanel}
             onCreated={(t) => {
               void ws.reload();
               choose({ kind: "task", id: t.task_id });
@@ -194,13 +208,13 @@ export function App() {
             project={project}
             refreshKey={ws.attentionVersion}
             sessions={all}
-            onOpenSession={setSelected}
-            onLaunch={() => setPanel("launch")}
+            onOpenSession={openSession}
+            onLaunch={() => openPanel("launch")}
             onChanged={() => void ws.reload()}
           />
         )}
         {current ? (
-          <SessionDetail session={current} onChanged={() => void ws.reload()} />
+          <SessionDetail key={current.session_id} session={current} onChanged={() => void ws.reload()} />
         ) : (
           panel === "none" &&
           !task && (

@@ -2,10 +2,13 @@
 
 import hashlib
 import os
+import re
 import secrets
 from pathlib import Path
 
 from robin.paths import FILE_MODE, secure_mkdir
+
+SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 def sha256_hex(data: bytes) -> str:
@@ -27,6 +30,9 @@ class BlobStore:
         self.root = secure_mkdir(root)
 
     def path_for(self, sha: str) -> Path:
+        # A hash read back from a database (a restored backup, say) must never name a path outside the store.
+        if not SHA256.fullmatch(sha):
+            raise ValueError("not a sha256 blob hash")
         return self.root / "sha256" / sha[:2] / sha[2:4] / sha
 
     def put(self, data: bytes) -> str:

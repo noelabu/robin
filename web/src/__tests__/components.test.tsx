@@ -142,10 +142,11 @@ test("a long session list renders only the rows in view, and scrolling moves the
     session({ session_id: `s${i}`, execution_cwd: `/work/app${i}`, mode: "observed", branch: null }),
   );
   const onSelect = vi.fn();
-  const { container } = render(<SessionList sessions={many} selected="s2600" onSelect={onSelect} />);
+  const { container, rerender } = render(<SessionList sessions={many} selected={null} onSelect={onSelect} />);
   expect(container.querySelectorAll("li").length).toBeLessThan(40);
   expect(screen.getByText("app0")).toBeTruthy();
   expect(screen.queryByText("app2600")).toBeNull();
+  rerender(<SessionList sessions={many} selected="s2600" onSelect={onSelect} />);
 
   fireEvent.scroll(container.querySelector(".session-scroll")!, { target: { scrollTop: 2600 * 64 } });
   expect(screen.queryByText("app0")).toBeNull();
@@ -154,4 +155,33 @@ test("a long session list renders only the rows in view, and scrolling moves the
   fireEvent.click(row);
   expect(onSelect).toHaveBeenCalledWith("s2600");
   vi.restoreAllMocks();
+});
+
+test("the session list is one tab stop and the keyboard reaches every session", () => {
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(640);
+  const many = Array.from({ length: 200 }, (_, i) => session({ session_id: `s${i}`, execution_cwd: `/w/app${i}`, branch: null }));
+  const { container } = render(<SessionList sessions={many} selected={null} onSelect={() => {}} />);
+  expect(container.querySelectorAll('button[tabindex="0"]')).toHaveLength(1);
+  const first = container.querySelector<HTMLElement>('button[tabindex="0"]')!;
+  first.focus();
+  fireEvent.keyDown(first, { key: "End" });
+  expect(document.activeElement?.textContent).toContain("app199");
+  fireEvent.keyDown(document.activeElement!, { key: "ArrowUp" });
+  expect(document.activeElement?.textContent).toContain("app198");
+  fireEvent.keyDown(document.activeElement!, { key: "Home" });
+  expect(document.activeElement?.textContent).toContain("app0");
+  expect(container.querySelector("li")!.getAttribute("aria-setsize")).toBe("200");
+  vi.restoreAllMocks();
+});
+
+test("a session state change is announced", () => {
+  const { rerender } = render(<SessionDetail session={session()} />);
+  rerender(<SessionDetail session={session({ runtime_state: "waiting_for_input" })} />);
+  expect(screen.getAllByRole("status").some((n) => /claude Needs input/.test(n.textContent ?? ""))).toBe(true);
+});
+
+test("a disabled control's reason is shown as text, not only a tooltip", () => {
+  const s = session();
+  render(<SessionDetail session={{ ...s, controls: { ...s.controls, stop: { enabled: false, reason: "Already stopping" } } }} />);
+  expect(screen.getByText("Already stopping")).toBeTruthy();
 });

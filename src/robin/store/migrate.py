@@ -51,10 +51,17 @@ def backup(db_path: Path, backups_dir: Path, label: str) -> Path:
     final = backups_dir / f"robin-{label}-{stamp}.db"
     partial = final.with_suffix(".db.partial")
     secure_touch(partial)
-    with sqlite3.connect(db_path) as src, sqlite3.connect(partial) as dst:
+    # sqlite3's `with` commits but doesn't close; both close before the rename, and the copy leaves WAL
+    # mode, so every page is in the one file that gets renamed (no -wal/-shm left behind or split off).
+    src, dst = sqlite3.connect(db_path), sqlite3.connect(partial)
+    try:
         src.backup(dst)
+        dst.execute("PRAGMA journal_mode=DELETE")
         if dst.execute("PRAGMA quick_check").fetchone()[0] != "ok":
             raise MigrationFailed(f"backup of {db_path} failed its integrity check")
+    finally:
+        src.close()
+        dst.close()
     fd = os.open(partial, os.O_RDONLY)
     try:
         os.fsync(fd)

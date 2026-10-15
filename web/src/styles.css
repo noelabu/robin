@@ -4,6 +4,7 @@
   --ink: #1d1c1a;
   --muted: #6b6862;
   --line: #e3e0d9;
+  --field: #858179; /* form-field borders: 3:1 against bg and panel (WCAG 1.4.11) */
   --accent: #2f5d50;
   --accent-ink: #ffffff;
   --ok: #2f6b3a;
@@ -22,6 +23,7 @@
     --ink: #ecebe6;
     --muted: #a19e96;
     --line: #34332e;
+    --field: #807c74;
     --accent: #7fb7a5;
     --accent-ink: #10201b;
     --ok: #7cc48a;
@@ -34,6 +36,9 @@
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--ink); }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 
 button, input, select, textarea { font: inherit; color: inherit; }
@@ -44,7 +49,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 button.danger { color: var(--bad); }
 input, select, textarea {
-  width: 100%; border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 6px 8px;
+  width: 100%; border: 1px solid var(--field); background: var(--panel); border-radius: 6px; padding: 6px 8px;
 }
 label { display: block; margin: 10px 0 4px; color: var(--muted); font-size: 12px; }
 code { font-family: var(--mono); }
@@ -58,7 +63,7 @@ code { font-family: var(--mono); }
   grid-column: 1 / -1; display: flex; gap: 10px; align-items: center; padding: 10px 16px;
   border-bottom: 1px solid var(--line); background: var(--panel);
 }
-.brand { font-weight: 650; margin-right: auto; letter-spacing: 0.01em; }
+.brand { font-size: inherit; margin-top: 0; margin-bottom: 0; font-weight: 650; margin-right: auto; letter-spacing: 0.01em; }
 .pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); }
 .pill.ok { color: var(--ok); }
 .pill.warn { color: var(--warn); }
@@ -185,4 +190,5 @@ button.pill { cursor: pointer; background: transparent; }
 
 .session-scroll { max-height: 55vh; overflow-y: auto; }
 .session-item { height: 60px; overflow: hidden; }
+.session-scroll .session-item:focus-visible { outline-offset: -2px; } /* the scroll box would clip it */
 .sidebar { display: flex; flex-direction: column; }

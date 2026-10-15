@@ -22,6 +22,14 @@ from typing import Any
 from robin.redact.regex import go_to_python
 
 VENDORED = Path(__file__).with_name("gitleaks")
+# Robin's own credentials: an agent that echoes its token must not leak it into shared excerpts or logs.
+ROBIN_RULES: list[dict[str, Any]] = [
+    {
+        "id": "robin-agent-credential",
+        "regex": r"robin_agent_[A-Za-z0-9_-]{43}",
+        "keywords": ["robin_agent_"],
+    },
+]
 
 
 @dataclass(frozen=True)
@@ -188,7 +196,7 @@ def _load(custom: Path | None) -> RuleSet:
     data = tomllib.loads((VENDORED / "gitleaks.toml").read_text())
     version = json.loads((VENDORED / "source.json").read_text())["version"]
     skipped: list[str] = []
-    rules = _rules(data["rules"], "gitleaks", skipped)
+    rules = _rules(data["rules"], "gitleaks", skipped) + _rules(ROBIN_RULES, "robin", skipped)
     allowlist = _allowlist(data.get("allowlist", {}))
     if custom is not None and custom.is_file():
         extra = tomllib.loads(custom.read_text())

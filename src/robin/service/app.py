@@ -416,6 +416,9 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
             raise ApiError(422, "invalid_cwd", "cwd must be an existing absolute directory", "fix_request")
         try:
             checked = ExecutionCwd.checked(cwd, store.artifacts)
+            data_dir = store.data_dir.resolve()
+            if checked.path.is_relative_to(data_dir) or data_dir.is_relative_to(checked.path):
+                raise ValueError(f"execution directory {checked.path} overlaps Robin's data directory")
         except ValueError as exc:
             raise ApiError(422, "invalid_cwd", str(exc), "fix_request") from exc
         caps = capabilities_for(body.runtime)

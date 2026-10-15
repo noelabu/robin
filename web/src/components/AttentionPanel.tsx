@@ -31,7 +31,9 @@ export function AttentionPanel(props: { refreshKey: number; onOpenSession: (id: 
   return (
     <section className="attention" aria-labelledby="attention-title">
       <h2 id="attention-title">
-        Needs attention <span className="count">{items.length}</span>
+        Needs attention <span className="count" role="status">
+          {items.length}
+        </span>
       </h2>
       {!items.length ? (
         <p className="empty">Nothing is waiting on you.</p>

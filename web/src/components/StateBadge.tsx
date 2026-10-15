@@ -1,6 +1,6 @@
 import type { Session } from "../api";
 
-const LABEL: Record<Session["runtime_state"], string> = {
+export const LABEL: Record<Session["runtime_state"], string> = {
   running: "Running",
   waiting_for_input: "Needs input",
   idle: "Idle",

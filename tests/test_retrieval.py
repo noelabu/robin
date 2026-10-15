@@ -9,7 +9,7 @@ from robin import retrieval
 from robin.events.ingest import read_events
 from robin.findings.store import canonical
 from test_context import observed_session_with, publish_user
-from test_findings import GOOD, block, launch, say, wait
+from test_findings import GOOD, aid, block, launch, say, wait
 from test_independence import started_with
 
 
@@ -164,3 +164,14 @@ def test_agent_reads_are_redacted_like_packets(api):
     assert probe["results"] == [] and hits["results"]
     for r in c.get(f"/grants?session_id={reviewer}").json()["reads"]:  # nor in what Robin recorded
         assert not leaked(store.blobs.read(r["content_hash"].split(":")[1]).decode())
+
+
+def test_a_sessions_credential_dies_with_its_host(api):
+    store, c, task_id, _ = api
+    sid = launch(c, task_id)
+    a = agent(c, store, sid)
+    assert a.get("/agent/task").status_code == 200
+    c.post(f"/sessions/{sid}/actions", json={"type": "stop", "action_id": aid()})
+    wait(lambda: c.get(f"/sessions/{sid}").json()["connection_state"] == "disconnected")
+    assert wait(lambda: a.get("/agent/task").status_code == 401)
+    assert a.post("/agent/artifacts", json={"title": "t", "text": "x", "inputs": []}).status_code == 401

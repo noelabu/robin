@@ -44,7 +44,10 @@ export function SearchBox(props: { onOpenSession: (id: string) => void; onOpenTa
         onKeyDown={(e) => e.key === "Escape" && setQ("")}
       />
       {results !== null && (
-        <div className="search-results" aria-live="polite">
+        <div className="search-results">
+          <p className="sr-only" role="status">
+            {results.length ? `${results.length} results` : (note ?? "No matches")}
+          </p>
           {!results.length ? (
             <p className="empty">{note ?? "No matches."}</p>
           ) : (

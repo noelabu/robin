@@ -14,7 +14,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Connection, select, update
+from sqlalchemy import Connection, delete, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from robin.events.supervisor_source import SupervisorRecord
@@ -24,7 +24,7 @@ from robin.runtime import attention, ledger, state
 from robin.runtime.capabilities import capabilities_for
 from robin.runtime.ledger import Action, ActionRejected
 from robin.store import Store
-from robin.store.models import AttentionItem, ControlAction, Event, Meta
+from robin.store.models import AgentCredential, AttentionItem, ControlAction, Event, Meta
 from robin.store.models import Session as SessionRow
 from robin.supervisor.client import SupervisorClient, SupervisorUnavailable
 
@@ -528,6 +528,14 @@ def _project_one(
 ) -> None:
     state.apply(conn, session_id, cursor, at, ev)
     attention.project(conn, session_id, cursor, at, ev)
+    if ev.get("type") == "host_exited":
+        # The tools' credential dies with the host (TR-066); one minted after this exit, for a new host,
+        # stays.
+        conn.execute(
+            delete(AgentCredential).where(
+                AgentCredential.session_id == session_id, AgentCredential.created_at <= at
+            )
+        )
     action_id = ev.get("action_id")
     kind = ev.get("type")
     if action_id and kind in ACK_EVENTS:

@@ -29,7 +29,9 @@ export function SettingsPanel(props: { onClose: () => void; onChanged: () => voi
 
   return (
     <section className="detail settings" aria-labelledby="settings-title">
-      <h2 id="settings-title">Settings</h2>
+      <h2 id="settings-title" tabIndex={-1} ref={(h) => h?.focus()}>
+        Settings
+      </h2>
       <h3>Storage</h3>
       {usage && (
         <>

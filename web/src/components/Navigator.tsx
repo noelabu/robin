@@ -22,7 +22,11 @@ export function Navigator(props: {
     <div className="navigator">
       <ul className="nav-list">
         <li>
-          <button className={`nav-item ${is({ kind: "all" }) ? "active" : ""}`} onClick={() => props.onScope({ kind: "all" })}>
+          <button
+            className={`nav-item ${is({ kind: "all" }) ? "active" : ""}`}
+            aria-current={is({ kind: "all" }) ? "true" : undefined}
+            onClick={() => props.onScope({ kind: "all" })}
+          >
             All sessions
           </button>
         </li>

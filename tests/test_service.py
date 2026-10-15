@@ -172,6 +172,12 @@ def test_validation_and_error_codes(service):
         json={"runtime": "fake", "cwd": str(store.artifacts.path), "action_id": aid()},
     )
     assert r.status_code == 422  # never run an agent inside Robin's artifact store
+    (store.data_dir / "hooks").mkdir(exist_ok=True)
+    r = c.post(
+        "/api/v1/sessions/launch",
+        json={"runtime": "fake", "cwd": str(store.data_dir / "hooks"), "action_id": aid()},
+    )
+    assert r.status_code == 422  # nor anywhere in its data directory, beside cli.token and robin.db
     r = c.post("/api/v1/sessions/launch", json={"runtime": "mystery", "cwd": "/tmp", "action_id": aid()})
     assert r.status_code == 409 and r.json()["error"]["code"] == "unsupported"
     r = c.post("/api/v1/sessions/nope/actions", json={"type": "interrupt", "action_id": aid()})

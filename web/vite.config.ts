@@ -6,5 +6,5 @@ export default defineConfig({
   plugins: [react()],
   build: { outDir: "../src/robin/web/dist", emptyOutDir: true, sourcemap: false },
   server: { proxy: { "/api": "http://127.0.0.1:7333" } },
-  test: { environment: "jsdom", globals: true },
+  test: { environment: "jsdom", globals: true, css: { include: [/styles\.css/] } },
 });
