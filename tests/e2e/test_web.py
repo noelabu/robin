@@ -100,3 +100,35 @@ def test_reused_sign_in_link_is_refused(running):
         second.goto(link)
         expect(second.get_by_text("already used or has expired")).to_be_visible(timeout=10_000)
         browser.close()
+
+
+def test_approve_from_the_attention_panel(running):
+    from playwright.sync_api import expect, sync_playwright
+
+    store, port, auth = running
+    project = store.data_dir.parent / "approve-project"
+    project.mkdir()
+    cli = httpx.Client(
+        base_url=f"http://127.0.0.1:{port}", headers={"authorization": f"Bearer {auth.cli_token}"}
+    )
+    with sync_playwright() as p:
+        browser = launch_browser(p)
+        page = browser.new_page()
+        page.goto(f"http://127.0.0.1:{port}/#bootstrap={auth.new_bootstrap()}")
+        expect(page.get_by_text("Supervisor connected")).to_be_visible(timeout=10_000)
+        cli.post(
+            "/api/v1/sessions/launch",
+            json={
+                "runtime": "fake",
+                "cwd": str(project),
+                "prompt": "go",
+                "action_id": f"e2e-{uuid.uuid4().hex}",
+            },
+        )
+        item = page.locator(".attention-item").first
+        expect(item).to_contain_text("Bash needs approval", timeout=10_000)
+        expect(item).to_contain_text("make test")
+        item.get_by_role("button", name="Approve").click()
+        expect(page.get_by_text("Nothing is waiting on you.")).to_be_visible(timeout=10_000)
+        expect(page.get_by_text("session.turn_started").first).to_be_visible()
+        browser.close()

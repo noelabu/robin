@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { signIn, type Session } from "./api";
 import { ActivityFeed } from "./components/ActivityFeed";
+import { AttentionPanel } from "./components/AttentionPanel";
 import { LaunchForm } from "./components/LaunchForm";
 import { SessionDetail } from "./components/SessionDetail";
 import { SessionList } from "./components/SessionList";
@@ -57,6 +58,7 @@ export function App() {
         <SessionList sessions={sessions} selected={current?.session_id ?? null} onSelect={setSelected} />
       </nav>
       <main className="main">
+        <AttentionPanel refreshKey={ws.attentionVersion} onOpenSession={setSelected} />
         {launching && (
           <LaunchForm
             onCancel={() => setLaunching(false)}

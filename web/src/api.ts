@@ -40,6 +40,18 @@ export type Action = {
   error: { code: string; message: string } | null;
 };
 
+export type AttentionItem = {
+  attention_id: string;
+  kind: "question" | "approval" | "failure" | "finding_review";
+  session_id: string;
+  task_id: string | null;
+  state: "open" | "acknowledged" | "resolved" | "dismissed" | "expired" | "handed_off";
+  title: string;
+  detail: { tool?: string; input?: unknown; reason?: unknown; event?: string };
+  allowed_responses: string[];
+  created_at: string;
+};
+
 export type Workspace = { watermark: number; sessions: Session[]; supervisor: { connected: boolean } };
 
 export class ApiError extends Error {
@@ -101,5 +113,10 @@ export const api = {
   act: (sessionId: string, body: { type: string; text?: string; request_id?: string; allow?: boolean }) =>
     request<{ action: Action }>("POST", `/sessions/${sessionId}/actions`, { ...body, action_id: newActionId() }),
   action: (actionId: string) => request<Action>("GET", `/actions/${actionId}`),
+  attention: () => request<{ items: AttentionItem[] }>("GET", "/attention"),
+  respond: (attentionId: string, decision: "allow" | "deny") =>
+    request<{ action: Action }>("POST", `/attention/${attentionId}/responses`, { decision, action_id: newActionId() }),
+  notice: (attentionId: string, to: "acknowledge" | "dismiss") =>
+    request<AttentionItem>("POST", `/attention/${attentionId}/${to}`),
   adapters: () => request<{ adapters: { runtime: string; level: string }[] }>("GET", "/adapters"),
 };

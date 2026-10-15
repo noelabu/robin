@@ -54,6 +54,8 @@ QUARANTINE_REASONS = (
 ACTION_STATES = ("requested", "submitted", "acknowledged", "failed", "cancelled", "outcome_unknown")
 ACTORS = ("user", "system")
 TASK_STATUSES = ("open", "completed", "abandoned")
+ATTENTION_KINDS = ("question", "approval", "failure", "finding_review")
+ATTENTION_STATES = ("open", "acknowledged", "resolved", "dismissed", "expired", "handed_off")
 ATTACHMENT_KINDS = ("file", "instruction", "expected_output")
 
 
@@ -358,3 +360,35 @@ class TaskAttachment(Base):
     content_hash: Mapped[str | None] = mapped_column(String)
     size: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class AttentionItem(Base):
+    """Something that needs the user: a question, an approval, a failure, a finding to review (FR-035).
+
+    Approvals and questions carry the runtime's own request ID; Robin-originated items have none (TR-045).
+    Only an explicit response is routed to the runtime; acknowledging or dismissing never approves.
+    """
+
+    __tablename__ = "attention_item"
+    __table_args__ = (
+        CheckConstraint(_in("kind", ATTENTION_KINDS), name="kind"),
+        CheckConstraint(_in("state", ATTENTION_STATES), name="state"),
+        UniqueConstraint("session_id", "native_request_id"),
+        Index("ix_attention_item_state", "state", "updated_at"),
+    )
+    attention_id: Mapped[str] = mapped_column(String, primary_key=True)
+    kind: Mapped[str] = mapped_column(String)
+    session_id: Mapped[str] = mapped_column(ForeignKey("session.session_id"))
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("task.task_id"))
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("run.run_id"))
+    native_request_id: Mapped[str | None] = mapped_column(String)
+    state: Mapped[str] = mapped_column(String)
+    title: Mapped[str] = mapped_column(Text)
+    detail: Mapped[str] = mapped_column(Text)  # JSON
+    allowed_responses: Mapped[str] = mapped_column(Text)  # JSON list
+    originating_cursor: Mapped[int] = mapped_column(ForeignKey("event.global_cursor"))
+    # Taken before the action is recorded (the claim comes first), so it isn't a foreign key.
+    resolution_action_id: Mapped[str | None] = mapped_column(String)
+    resolution: Mapped[str | None] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)

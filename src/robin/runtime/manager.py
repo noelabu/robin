@@ -16,7 +16,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from robin.events.supervisor_source import SupervisorRecord
 from robin.ids import utc_now
-from robin.runtime import ledger, state
+from robin.runtime import attention, ledger, state
 from robin.runtime.capabilities import capabilities_for
 from robin.runtime.ledger import Action, ActionRejected
 from robin.store import Store
@@ -311,6 +311,7 @@ def _project_one(
     conn: Connection, session_id: str, cursor: int, at: datetime, correlation: str, ev: dict[str, Any]
 ) -> None:
     state.apply(conn, session_id, cursor, at, ev)
+    attention.project(conn, session_id, cursor, at, ev)
     action_id = ev.get("action_id")
     kind = ev.get("type")
     if action_id and kind in ACK_EVENTS:

@@ -390,3 +390,41 @@ def test_projects_tasks_and_launch_for_a_task(service):
         x["session_id"] for x in c.get("/api/v1/sessions?include_archived=true").json()["sessions"]
     ]
     c.post(f"/api/v1/sessions/{sid}/actions", json={"type": "stop", "action_id": aid()})
+
+
+def test_attention_queue_answers_an_approval_once(service):
+    store, port, auth = service
+    c = browser(port, auth)
+    r = c.post(
+        "/api/v1/sessions/launch",
+        json={"runtime": "fake", "cwd": work(store), "prompt": "go", "action_id": aid()},
+    )
+    sid = r.json()["session_id"]
+    deadline = time.time() + 10
+    items = []
+    while not items and time.time() < deadline:
+        items = c.get(f"/api/v1/attention?session_id={sid}").json()["items"]
+        time.sleep(0.05)
+    (item,) = items
+    assert item["kind"] == "approval" and item["detail"]["tool"] == "Bash"
+    first = aid()
+    r = c.post(
+        f"/api/v1/attention/{item['attention_id']}/responses", json={"decision": "allow", "action_id": first}
+    )
+    assert r.status_code == 202
+    again = c.post(
+        f"/api/v1/attention/{item['attention_id']}/responses", json={"decision": "deny", "action_id": aid()}
+    )
+    assert again.status_code == 409  # one request, one response
+    retry = c.post(
+        f"/api/v1/attention/{item['attention_id']}/responses", json={"decision": "allow", "action_id": first}
+    )
+    assert retry.status_code == 202  # a retried request reports the stored action
+    deadline = time.time() + 10
+    while (
+        c.get(f"/api/v1/attention/{item['attention_id']}").json()["state"] != "resolved"
+        and time.time() < deadline
+    ):
+        time.sleep(0.05)
+    assert c.get(f"/api/v1/attention/{item['attention_id']}").json()["resolution"] == "allowed"
+    c.post(f"/api/v1/sessions/{sid}/actions", json={"type": "stop", "action_id": aid()})

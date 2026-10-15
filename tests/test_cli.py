@@ -128,3 +128,17 @@ def test_scan_from_the_cli_reads_only_the_configured_stores(served, capsys, tmp_
     out = run(capsys, "scan", "--data", str(store.data_dir))
     assert "claude  1 session(s), 1 new, 7 event(s)" in out
     assert "codex   1 session(s), 1 new" in out and "pi      1 session(s), 1 new" in out
+
+
+def test_attention_and_approve_from_the_cli(served, capsys):
+    store, project = served
+    d = str(store.data_dir)
+    run(capsys, "run", "fake", "--cwd", str(project), "--prompt", "go", "--wait", "10", "--data", d)
+    deadline = time.time() + 10
+    out = ""
+    while "approval" not in out and time.time() < deadline:
+        out = run(capsys, "attention", "--data", d)
+        time.sleep(0.1)
+    attention_id = out.split()[0]
+    assert "Bash needs approval" in out and "make test" in out
+    assert "acknowledged" in run(capsys, "approve", attention_id, "--data", d)

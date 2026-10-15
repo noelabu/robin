@@ -474,9 +474,10 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
     async def health(_: str = Authed) -> dict[str, Any]:
         return {"service": "ready", "supervisor_connected": runtime.supervisor_connected, "pid": os.getpid()}
 
-    from robin.service import routes_workspace
+    from robin.service import routes_attention, routes_workspace
 
     routes_workspace.register(app, store, Authed, API)
+    routes_attention.register(app, runtime, Authed, API, _error)
 
     # -- web client (mounted last: it matches every path) ----------------------
 

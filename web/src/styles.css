@@ -108,3 +108,13 @@ h2 { font-size: 15px; margin: 0 0 8px; display: flex; gap: 8px; align-items: bas
   .shell { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; }
   .sidebar { border-right: 0; border-bottom: 1px solid var(--line); max-height: 30vh; }
 }
+
+.attention { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.attention .count { font-size: 12px; color: var(--muted); font-weight: 400; }
+.attention-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.attention-item { border-left: 3px solid var(--warn); padding: 4px 0 4px 10px; }
+.attention-item.kind-failure { border-left-color: var(--bad); }
+.attention-head { display: flex; gap: 8px; align-items: baseline; }
+.attention-head .kind { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.attention-detail { display: block; margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.muted { color: var(--muted); }

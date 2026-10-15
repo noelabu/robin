@@ -12,6 +12,7 @@ type State = {
   supervisorConnected: boolean;
   streamState: "connecting" | "live" | "reconnecting";
   gap: boolean;
+  attentionVersion: number;
 };
 
 type Msg =
@@ -43,6 +44,10 @@ function reducer(s: State, m: Msg): State {
         cursor: Math.max(s.cursor, m.event.global_cursor),
         sessions: { ...s.sessions, [m.session.session_id]: m.session }, // upsert the projection
         gap: s.gap || m.event.event_type === "connection.gap",
+        attentionVersion:
+          ["attention", "session"].includes(m.event.event_family) || m.event.event_type.startsWith("control.")
+            ? s.attentionVersion + 1
+            : s.attentionVersion,
       };
     }
     case "stream":
@@ -59,6 +64,7 @@ const initial: State = {
   supervisorConnected: false,
   streamState: "connecting",
   gap: false,
+  attentionVersion: 0,
 };
 
 /** Snapshot, then a stream from the snapshot's watermark; a resync request reloads the snapshot. */

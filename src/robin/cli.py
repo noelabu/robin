@@ -212,6 +212,28 @@ def cmd_scan(args: argparse.Namespace) -> None:
             print(f"        skipped: {e}")
 
 
+def cmd_attention(args: argparse.Namespace) -> None:
+    with client(args.data) as c:
+        items = call(c, "GET", "/attention")["items"]
+    if not items:
+        print("nothing needs attention")
+    for i in items:
+        detail = i["detail"].get("input") or i["detail"].get("reason") or ""
+        print(f"{i['attention_id']}  {i['kind']:<9} {i['state']:<12} {i['title']}  {json.dumps(detail)[:80]}")
+
+
+def cmd_respond(args: argparse.Namespace) -> None:
+    with client(args.data) as c:
+        aid = action_id()
+        call(
+            c,
+            "POST",
+            f"/attention/{args.attention_id}/responses",
+            {"decision": args.decision, "action_id": aid},
+        )
+        print_action(wait_action(c, aid, args.wait) if args.wait else call(c, "GET", f"/actions/{aid}"))
+
+
 def cmd_sessions(args: argparse.Namespace) -> None:
     with client(args.data) as c:
         sessions = call(c, "GET", "/sessions")["sessions"]
@@ -426,6 +448,15 @@ def parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_task_attach)
 
     sub.add_parser("tasks", parents=[common], help="list tasks").set_defaults(func=cmd_tasks)
+
+    sub.add_parser("attention", parents=[common], help="list questions, approvals and failures").set_defaults(
+        func=cmd_attention
+    )
+    for decision, verb in (("allow", "approve"), ("deny", "deny")):
+        p = sub.add_parser(verb, parents=[common], help=f"{verb} a pending request")
+        p.add_argument("attention_id")
+        p.add_argument("--wait", type=float, default=5)
+        p.set_defaults(func=cmd_respond, decision=decision)
 
     p = sub.add_parser("scan", parents=[common], help="index native session history (read-only)")
     p.add_argument("--runtime", action="append", choices=["claude", "codex", "pi"])
