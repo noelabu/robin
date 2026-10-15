@@ -575,6 +575,85 @@ def cmd_storage(args: argparse.Namespace) -> None:
         print(f"pruned {r['pruned_events']:,} events; now {_gb(r['after']['counted'])}")
 
 
+def cmd_backup(args: argparse.Namespace) -> None:
+    from robin import backup
+
+    dest = Path(args.to).expanduser() if args.to else Path.home() / "robin-backups"
+    try:
+        out = backup.create(args.data, dest)
+    except backup.BackupError as exc:
+        raise CliError(str(exc)) from exc
+    m = json.loads((out / "manifest.json").read_text())
+    print(f"backup written to {out}")
+    print(f"  schema {m['schema_revision']}, {m['blobs']['count']} files; credentials and tokens left out")
+    if m["blobs"]["missing"]:
+        print(
+            f"  warning: {len(m['blobs']['missing'])} referenced files were missing or damaged "
+            "in the data dir"
+        )
+
+
+def cmd_restore(args: argparse.Namespace) -> None:
+    from robin import backup
+
+    try:
+        r = backup.restore(Path(args.backup).expanduser(), Path(args.into).expanduser())
+    except backup.BackupError as exc:
+        raise CliError(str(exc)) from exc
+    print(
+        f"restored into {args.into}: {r['restored_blobs']} files, "
+        f"{r['artifacts_checked']} artifact versions and "
+        f"{r['packets_checked']} packets checked against their hashes"
+    )
+    if r["mismatches"]:
+        raise CliError(f"these don't match their hashes: {', '.join(r['mismatches'])}")
+    print(f"start it with: robin --data {args.into}")
+
+
+def cmd_export(args: argparse.Namespace) -> None:
+    from robin import backup
+
+    store = backup.ReadOnlyStore(args.data)
+    try:
+        if args.to_repo:
+            if not args.task:
+                raise CliError("--to-repo needs --task (it writes into that task's project)")
+            from sqlalchemy import select
+
+            from robin.store.models import Project, Task
+
+            with store.reader.connect() as conn:
+                path = conn.execute(
+                    select(Project.path)
+                    .join(Task, Task.project_id == Project.project_id)
+                    .where(Task.task_id == args.task)
+                ).scalar()
+            if not path:
+                raise CliError(f"no task {args.task}")
+            out = Path(path) / ".robin"
+            print(
+                f"This writes into your repository at {out}. "
+                "Anything you commit there is visible to everyone "
+                "who can see the repository, including findings and shared context."
+            )
+            if not args.yes and (
+                not sys.stdin.isatty() or input("Export there? [y/N] ").strip().lower() != "y"
+            ):
+                print("nothing exported")
+                return
+        else:
+            out = Path(args.out).expanduser() if args.out else Path.cwd() / "robin-export"
+        r = backup.export(store, out, args.task)
+    except backup.BackupError as exc:
+        raise CliError(str(exc)) from exc
+    finally:
+        store.close()
+    print(
+        f"exported {r['tasks']} task(s), {r['artifacts']} artifact versions, "
+        f"{r['packets']} packets to {r['out']}"
+    )
+
+
 def cmd_hooks(args: argparse.Namespace) -> None:
     """Opt-in, observe-only hooks (TR-076). Shows exactly what changes and writes only on confirmation."""
     from robin.hooks import install as hooks
@@ -862,6 +941,24 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--target-gb", type=float, help="prune down to this (default: below the cap)")
     p.add_argument("--yes", action="store_true")
     p.set_defaults(func=cmd_storage)
+
+    p = sub.add_parser(
+        "backup", parents=[common], help="a consistent backup of Robin's data (no credentials)"
+    )
+    p.add_argument("--to", help="folder to write the backup into (default ~/robin-backups)")
+    p.set_defaults(func=cmd_backup)
+
+    p = sub.add_parser("restore", parents=[common], help="restore a backup into a new, empty data directory")
+    p.add_argument("backup")
+    p.add_argument("--into", required=True, help="the new data directory")
+    p.set_defaults(func=cmd_restore)
+
+    p = sub.add_parser("export", parents=[common], help="tasks, findings and syntheses as JSON and Markdown")
+    p.add_argument("--task")
+    p.add_argument("--out")
+    p.add_argument("--to-repo", action="store_true", help="write into the task's project under .robin/")
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(func=cmd_export)
 
     p = sub.add_parser("hooks", parents=[common], help="opt-in hooks for sessions started outside Robin")
     p.add_argument("action", choices=["status", "install", "uninstall"])
