@@ -27,6 +27,14 @@ The plan follows the PRD §16 phases (0–4). Each phase ends on demonstrated be
 | Trunk-based: commit directly to `main` | No phase or work-package branches and no PRs. Phase 0 code lives at the repo root (`supervisor/`, `claude/`), not in a separate `spikes/` folder. Run `/review-lite` before committing a work package, since there is no PR review step. |
 | Revise PRD and TRD now | Done: PRD v0.5 and TRD v0.4 record these decisions. Hook installers are TR-076. |
 
+## Status
+
+| Phase | State | Commits |
+|---|---|---|
+| 0 Integration validation | Done on the development MacBook: all three runtimes live (`docs/capability-matrix.md`). Mac mini re-run and copy-paste baseline still to do. | `9b476fb`…`b9802eb` |
+| 1 One managed session | **Done.** Storage, ingestion, supervisor, runtime manager, Claude adapter, API + auth + SSE, web client, CLI. Exit tests pass, including a session surviving a full service restart. | `12d37e2`, `455ddbb`, `d45c554`, `598bcb1`, `34a2199`, `a8cb03f`, `6c00415`, `43623e4` |
+| 2 Shared workspace | In progress | |
+
 Durations are rough single-developer estimates. They are for sequencing, not commitments.
 
 | Phase | Goal | Rough size |
