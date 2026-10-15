@@ -17,7 +17,7 @@ from sqlalchemy import Connection, insert, select, update
 from robin.ids import utc_now
 from robin.store.models import ControlAction
 
-ACTION_TYPES = ("launch", "message", "interrupt", "approval", "stop", "handoff", "reclaim")
+ACTION_TYPES = ("launch", "message", "interrupt", "approval", "stop", "handoff", "reclaim", "resume")
 TERMINAL = {"acknowledged", "failed", "cancelled"}
 # Allowed transitions. outcome_unknown can still resolve when a native acknowledgement arrives late.
 TRANSITIONS: dict[str, set[str]] = {

@@ -68,7 +68,7 @@ def apply(conn: Connection, session_id: str, cursor: int, at: datetime, event: d
     ).first()
     if change is None or row is None or cursor <= row.state_cursor:
         return
-    if event.get("type") == "session_started" and row.runtime_state != "unknown":
+    if event.get("type") == "session_started" and row.runtime_state in ("running", "waiting_for_input"):
         change = StateChange()  # init can arrive after the first turn started; it never downgrades state
     if change.runtime_state == "waiting_for_input" and row.runtime_state not in (
         "running",

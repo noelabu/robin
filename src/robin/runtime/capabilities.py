@@ -36,6 +36,7 @@ class Capabilities:
             "stop": True,
             "handoff": self.terminal_mode != "unavailable",
             "reclaim": self.terminal_mode != "unavailable",
+            "resume": self.resume,
         }.get(action_type, False)
         if self.level != "live":
             return (

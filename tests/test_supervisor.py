@@ -149,3 +149,27 @@ def test_long_data_dir_socket_lives_in_private_directory(tmp_path):
     sock = socket_path(deep)
     assert len(str(sock)) < 100
     assert sock.parent.stat().st_mode & 0o777 == 0o700 and sock.parent.stat().st_uid == os.getuid()
+
+
+async def test_an_ack_after_close_is_dropped_not_raised():
+    """Closing the client races the bridge's ack; a lost ack is harmless (the bridge resumes from its
+    committed cursor on reconnect), so it must never fail the bridge task."""
+    from robin.supervisor.client import SupervisorClient
+
+    class ClosedWriter:
+        def __init__(self, closing: bool):
+            self.closing = closing
+
+        def is_closing(self) -> bool:
+            return self.closing
+
+        def write(self, data: bytes) -> None:
+            pass
+
+        async def drain(self) -> None:
+            raise ConnectionResetError("Connection lost")
+
+    for closing in (True, False):
+        c = SupervisorClient.__new__(SupervisorClient)
+        c._writer = ClosedWriter(closing)
+        await c.ack(5)

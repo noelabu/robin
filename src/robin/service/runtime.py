@@ -9,8 +9,10 @@ import asyncio
 import logging
 import threading
 from contextlib import suppress
+from typing import Any
 
 from robin.events.supervisor_source import SupervisorRecord
+from robin.ids import utc_now
 from robin.runtime.manager import RuntimeManager
 from robin.store import Store
 from robin.supervisor.client import (
@@ -37,6 +39,7 @@ class ServiceRuntime:
         self._indexer: asyncio.Task[None] | None = None
         self._watcher: asyncio.Task[None] | None = None
         self._watch_stop = threading.Event()
+        self.index_error: dict[str, Any] | None = None  # a retryable indexing failure, reported once
         self._client: SupervisorClient | None = None
 
     async def start(self) -> None:
@@ -78,8 +81,13 @@ class ServiceRuntime:
         while True:
             try:
                 await asyncio.to_thread(search.catch_up, self.store)
-            except Exception:
-                log.exception("search indexing failed; retrying")
+                self.index_error = None
+            except Exception as exc:
+                code = type(exc).__name__
+                if self.index_error is None or self.index_error["code"] != code:  # once per kind of failure
+                    log.warning("search indexing failed; retrying", extra={"stage": "index", "code": code})
+                    self.index_error = {"code": code, "since": utc_now().isoformat(), "retries": 0}
+                self.index_error["retries"] += 1
             now = asyncio.get_running_loop().time()
             if now - last_cap_check > CAP_CHECK_S:  # oldest-first pruning above the cap (TR-081)
                 last_cap_check = now

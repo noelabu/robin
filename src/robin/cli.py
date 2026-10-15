@@ -322,6 +322,86 @@ def cmd_supervisor_stop(args: argparse.Namespace) -> None:
     print(f"supervisor stopping; ended {len(r['ending'])} session(s)")
 
 
+def cmd_supervisor_restart(args: argparse.Namespace) -> None:
+    """Restart the supervisor (to upgrade it): only with no turns running, or after draining them (TR-071)."""
+    import time as _time
+
+    with client(args.data) as c:
+
+        def managed() -> list[dict[str, Any]]:
+            return [
+                s
+                for s in call(c, "GET", "/sessions")["sessions"]
+                if s["mode"] == "managed" and s["connection_state"] == "connected"
+            ]
+
+        busy = [s for s in managed() if s["runtime_state"] in ("running", "waiting_for_input")]
+        if busy and not args.drain:
+            names = ", ".join(f"{s['runtime']} {s['session_id'][:8]}" for s in busy)
+            raise CliError(f"turns are running in {names}; wait for them, or use --drain to wait here")
+        deadline = _time.time() + args.timeout
+        while busy:
+            if _time.time() > deadline:
+                raise CliError("turns were still running when --timeout ran out; nothing was restarted")
+            print(f"waiting for {len(busy)} running turn(s) to finish…", flush=True)
+            _time.sleep(5)
+            busy = [s for s in managed() if s["runtime_state"] in ("running", "waiting_for_input")]
+        idle = managed()
+        if idle and not args.yes:
+            print("Restarting the supervisor ends these sessions' hosts; Robin resumes them afterwards:")
+            for s in idle:
+                print(f"  {s['runtime']} {s['session_id']}")
+            if input("Type 'restart' to confirm: ").strip() != "restart":
+                raise CliError("not restarted")
+        call(c, "POST", "/supervisor/shutdown", {"confirm_sessions": [s["session_id"] for s in idle]})
+        deadline = _time.time() + 10
+        while call(c, "GET", "/health")["supervisor_connected"] and _time.time() < deadline:
+            _time.sleep(
+                0.2
+            )  # the old one going away first, so its last "connected" isn't mistaken for the new
+        deadline = _time.time() + 60
+        while not call(c, "GET", "/health")["supervisor_connected"]:  # the service starts the new one
+            if _time.time() > deadline:
+                raise CliError("the new supervisor didn't come up within a minute; see `robin doctor`")
+            _time.sleep(1)
+        resumed = 0
+        for s in idle:
+            if s.get("native_session_id"):
+                call(
+                    c,
+                    "POST",
+                    f"/sessions/{s['session_id']}/actions",
+                    {"type": "resume", "action_id": action_id()},
+                )
+                resumed += 1
+    print(f"supervisor restarted; resumed {resumed} session(s)")
+
+
+def cmd_diagnostics(args: argparse.Namespace) -> None:
+    """A previewed, redacted diagnostic bundle (TR-083). Nothing is written until you confirm."""
+    from robin import diagnostics
+
+    health = None
+    if endpoint(args.data) is not None:
+        with client(args.data) as c:
+            health = call(c, "GET", "/health")
+    bundle = diagnostics.collect(args.data, doctor(args.data), health)
+    text, rules = diagnostics.preview(args.data, bundle)
+    if args.show:
+        print(text)
+    print(f"diagnostic bundle: {len(text.encode()):,} bytes; sections: {', '.join(bundle)}")
+    print("redactions: " + (", ".join(rules) if rules else "none needed"))
+    print("It contains no prompts, messages, transcripts, findings, credentials or tokens.")
+    out = Path(args.out).expanduser() if args.out else Path.cwd() / "robin-diagnostics.json"
+    if not args.yes and (
+        not sys.stdin.isatty() or input(f"Write it to {out}? [y/N] ").strip().lower() != "y"
+    ):
+        print("nothing written (use --show to read it all first)")
+        return
+    out.write_text(text + "\n")
+    print(f"written to {out}")
+
+
 def cmd_findings(args: argparse.Namespace) -> None:
     with client(args.data) as c:
         q = f"?task_id={args.task}" if args.task else ""
@@ -786,6 +866,7 @@ def doctor(data_dir: Path) -> list[tuple[str, str, str]]:
     except Exception as exc:
         out.append(("secret rules", "fail", f"couldn't load: {type(exc).__name__}"))
     out.append(_supervisor_check(data_dir))
+    out.append(_port_check(data_dir))
     url = endpoint(data_dir)
     if url is None:
         out.append(("service", "warn", "not running (start with `robin`)"))
@@ -805,6 +886,26 @@ def doctor(data_dir: Path) -> list[tuple[str, str, str]]:
     return out
 
 
+def _port_check(data_dir: Path) -> tuple[str, str, str]:
+    """TR-071: an available loopback port (or Robin's own service already on it)."""
+    import socket
+
+    from robin.service.main import DEFAULT_PORT
+
+    if endpoint(data_dir) is not None:
+        return ("loopback port", "ok", "in use by this Robin's service")
+    with socket.socket() as s:
+        try:
+            s.bind(("127.0.0.1", DEFAULT_PORT))
+            return ("loopback port", "ok", f"127.0.0.1:{DEFAULT_PORT} is free")
+        except OSError:
+            return (
+                "loopback port",
+                "warn",
+                f"127.0.0.1:{DEFAULT_PORT} is taken; start with `robin --port N`",
+            )
+
+
 def _supervisor_check(data_dir: Path) -> tuple[str, str, str]:
     import socket
 
@@ -819,6 +920,15 @@ def _supervisor_check(data_dir: Path) -> tuple[str, str, str]:
             s.sendall(encode({"type": "probe"}))  # a hello would evict the running service's connection
             hello = decode(s.makefile("rb").readline())
         alive = sum(1 for v in hello.get("sessions", {}).values() if v.get("alive"))
+        from robin.supervisor.protocol import PROTOCOL_VERSION
+
+        if hello.get("protocol") != PROTOCOL_VERSION:
+            return (
+                "supervisor",
+                "fail",
+                f"speaks protocol {hello.get('protocol')}, this Robin needs {PROTOCOL_VERSION}: "
+                "restart it with `robin supervisor restart` (after its turns finish)",
+            )
         return (
             "supervisor",
             "ok",
@@ -1057,6 +1167,17 @@ def parser() -> argparse.ArgumentParser:
     s = ssub.add_parser("stop", parents=[common], help="stop the supervisor (ends its running sessions)")
     s.add_argument("--yes", action="store_true", help="don't ask for confirmation")
     s.set_defaults(func=cmd_supervisor_stop)
+    s = ssub.add_parser("restart", parents=[common], help="restart it (to upgrade); resumes idle sessions")
+    s.add_argument("--drain", action="store_true", help="wait for running turns to finish first")
+    s.add_argument("--timeout", type=float, default=600)
+    s.add_argument("--yes", action="store_true")
+    s.set_defaults(func=cmd_supervisor_restart)
+
+    p = sub.add_parser("diagnostics", parents=[common], help="a previewed, redacted diagnostic bundle")
+    p.add_argument("--show", action="store_true", help="print the whole bundle")
+    p.add_argument("--out")
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(func=cmd_diagnostics)
     return ap
 
 

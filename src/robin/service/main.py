@@ -47,6 +47,9 @@ def build(store: Store, port: int, *, start_supervisor: bool = True) -> tuple[uv
 
 def serve(data_dir: Path | None = None, port: int = DEFAULT_PORT, open_browser: bool = True) -> None:
     store = open_store(data_dir)  # one service per data directory (store lock)
+    from robin import logs
+
+    logs.setup(store.data_dir)
     try:
         server, auth = build(store, port)
         write_endpoint(store, port)

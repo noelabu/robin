@@ -208,17 +208,9 @@ class RuntimeManager:
         async def taken() -> None:
             await self.store.writer.acall(lambda c: _move_lease(c, session_id, "robin"))
 
-        env = {"ROBIN_RESUME_NATIVE_ID": (row["native_session_id"] or "") if row else ""}
-        if row and row["current_task_id"]:
-            env["ROBIN_FINDINGS"] = "tool,message"
-            url = _service_url(self.store)
-            if url:  # a new host gets a new credential; the old one stops working
-                from robin import retrieval
-
-                env["ROBIN_AGENT_TOKEN"] = await asyncio.to_thread(retrieval.mint, self.store, session_id)
-                env["ROBIN_SERVICE_URL"] = url
-        if row and row["independence"] == "enforced":  # a reviewer stays a reviewer after a handoff
-            self.independence_env(row["runtime"], env)
+        if row is not None:
+            check(row)  # before minting: a rejected request must not replace a live session's credential
+        env = await self._relaunch_env(session_id, row)
         msg = {
             "type": "launch",
             "session": session_id,
@@ -230,6 +222,49 @@ class RuntimeManager:
         return await self._control(
             session_id, "reclaim", {}, action_id, msg, needs_connection=False, check=check, on_submitted=taken
         )
+
+    async def resume(self, session_id: str, *, action_id: str) -> Action:
+        """Start a new runtime host on a session whose host ended (after a supervisor restart, say), resuming
+        the same native session. It starts no turn (TR-072)."""
+        row = self._row(session_id)
+
+        def check(r: Any) -> None:
+            if r["control_owner"] == "terminal":
+                raise ActionRejected("handed_off", "handed off to a terminal; take control back instead")
+            if r["connection_state"] == "connected":
+                raise ActionRejected("already_running", "the session is already running")
+            if not r["native_session_id"]:
+                raise ActionRejected("no_native_id", "the runtime never reported a session to resume")
+
+        if row is not None:
+            check(row)  # before minting: a rejected request must not replace a live session's credential
+        env = await self._relaunch_env(session_id, row)
+        msg = {
+            "type": "launch",
+            "session": session_id,
+            "runtime": row["runtime"] if row else "",
+            "cwd": (row["execution_cwd"] if row else None),
+            "action_id": action_id,
+            "env": env,
+        }
+        return await self._control(
+            session_id, "resume", {}, action_id, msg, needs_connection=False, check=check
+        )
+
+    async def _relaunch_env(self, session_id: str, row: Any) -> dict[str, str]:
+        """What a new host for an existing session needs: native ID, finding tools, credential, isolation."""
+        env = {"ROBIN_RESUME_NATIVE_ID": (row["native_session_id"] or "") if row else ""}
+        if row and row["current_task_id"]:
+            env["ROBIN_FINDINGS"] = "tool,message"
+            url = _service_url(self.store)
+            if url:  # a new host gets a new credential; the old one stops working
+                from robin import retrieval
+
+                env["ROBIN_AGENT_TOKEN"] = await asyncio.to_thread(retrieval.mint, self.store, session_id)
+                env["ROBIN_SERVICE_URL"] = url
+        if row and row["independence"] == "enforced":  # a reviewer stays a reviewer
+            self.independence_env(row["runtime"], env)
+        return env
 
     def _row(self, session_id: str) -> Any:
         with self.store.reader.connect() as conn:
@@ -516,7 +551,7 @@ def _project_one(
             conn.execute(
                 select(ControlAction.action_id).where(
                     ControlAction.session_id == session_id,
-                    ControlAction.action_type.in_(("launch", "reclaim")),
+                    ControlAction.action_type.in_(("launch", "reclaim", "resume")),
                     ControlAction.state.in_(("requested", "submitted", "outcome_unknown")),
                 )
             )
@@ -537,7 +572,7 @@ def _project_one(
             conn.execute(
                 select(ControlAction.action_id).where(
                     ControlAction.session_id == session_id,
-                    ControlAction.action_type.in_(("launch", "reclaim")),
+                    ControlAction.action_type.in_(("launch", "reclaim", "resume")),
                     ControlAction.state.in_(("requested", "submitted", "outcome_unknown")),
                 )
             )

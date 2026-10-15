@@ -79,7 +79,7 @@ class LaunchBody(BaseModel):
 
 
 class ActionBody(BaseModel):
-    type: Literal["message", "interrupt", "stop", "approval", "handoff", "reclaim"]
+    type: Literal["message", "interrupt", "stop", "approval", "handoff", "reclaim", "resume"]
     action_id: str = Field(min_length=8, max_length=128)
     text: str | None = None
     request_id: str | None = None
@@ -103,7 +103,7 @@ class ExchangeBody(BaseModel):
 
 # -- views --------------------------------------------------------------------
 
-CONTROL_TYPES = ("message", "interrupt", "stop", "approval", "handoff", "reclaim")
+CONTROL_TYPES = ("message", "interrupt", "stop", "approval", "handoff", "reclaim", "resume")
 
 
 def session_view(r: Any, shared: list[str] | None = None) -> dict[str, Any]:
@@ -116,6 +116,13 @@ def session_view(r: Any, shared: list[str] | None = None) -> dict[str, Any]:
         handed_off = r["control_owner"] == "terminal"
         if ok and action == "reclaim":
             ok, reason = (True, None) if handed_off else (False, "Robin already controls this session")
+        elif ok and action == "resume":
+            if handed_off:
+                ok, reason = False, "handed off to a terminal; take control back instead"
+            elif r["connection_state"] == "connected":
+                ok, reason = False, "the session is already running"
+            elif not r["native_session_id"]:
+                ok, reason = False, "the runtime never reported a session to resume"
         elif ok and handed_off:
             ok, reason = False, "handed off to a terminal; take control back first"
         elif ok and r["connection_state"] != "connected":
@@ -439,6 +446,8 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
             coro = m.handoff(session_id, action_id=body.action_id, interrupt_running=body.interrupt_running)
         elif body.type == "reclaim":
             coro = m.reclaim(session_id, action_id=body.action_id)
+        elif body.type == "resume":
+            coro = m.resume(session_id, action_id=body.action_id)
         else:
             if not body.request_id or body.allow is None:
                 raise ApiError(422, "invalid_request", "approval needs request_id and allow", "fix_request")
@@ -710,7 +719,21 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
 
     @app.get(f"{API}/health")
     async def health(_: str = Authed) -> dict[str, Any]:
-        return {"service": "ready", "supervisor_connected": runtime.supervisor_connected, "pid": os.getpid()}
+        """TR-084: each part's state separately. Diagnostics stay local."""
+        from robin import health as health_checks
+
+        result = await asyncio.to_thread(
+            health_checks.check,
+            store,
+            supervisor_connected=runtime.supervisor_connected,
+            index_error=runtime.index_error,
+        )
+        return {
+            "service": "ready",
+            "supervisor_connected": runtime.supervisor_connected,
+            "pid": os.getpid(),
+            **result,
+        }
 
     from robin.service import (
         routes_agent,

@@ -70,8 +70,16 @@ class SupervisorClient:
         return await asyncio.wait_for(fut, timeout)
 
     async def ack(self, seq: int) -> None:
-        self._writer.write(encode({"type": "ack", "seq": seq}))
-        await self._writer.drain()
+        """Tell the supervisor it may drop events up to `seq`. Losing one is harmless: unacked events stay in
+        its spool and the bridge resumes from its committed cursor on reconnect. So a closing or dropped
+        connection here is not an error (it races `close()`)."""
+        if self._writer.is_closing():
+            return
+        try:
+            self._writer.write(encode({"type": "ack", "seq": seq}))
+            await self._writer.drain()
+        except (ConnectionError, OSError):
+            pass
 
     async def close(self) -> None:
         self._writer.close()
