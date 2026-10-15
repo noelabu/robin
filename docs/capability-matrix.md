@@ -19,7 +19,7 @@ Dated evidence for each runtime against the PRD §16 minimum capability floor (T
 | Approval response | Pending | Pass (native) | Pass (Robin extension; Pi has no native approvals) |
 | Finding publication | Code ready; pending API key | Pass: MCP tool, and message block without MCP | Pass: extension tool, and message block |
 | Hosting under supervisor | Pass with scripted runtime; live pending | Pass | Pass |
-| **Level so far** | **Undetermined (needs API key)** | **Live** | **Live** (approvals via Robin's extension) |
+| **Level so far** | **Observed-only** (owner isn't using an Anthropic API key for now; live tests ready for when one is added) | **Live** | **Live** (approvals via Robin's extension) |
 
 ## Other capabilities (not floor items)
 

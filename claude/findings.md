@@ -1,5 +1,7 @@
 # Claude Agent SDK — Phase 0 findings
 
+> **Status 2026-10-15: observed-only.** The owner won't use an Anthropic API key for now, and the Agent SDK requires one for third-party tools. Claude ships observed-only: discovery, history, search, native terminal launch, and live observation through opt-in hooks. The runtime host and live tests below are ready for when a key is added.
+
 - **Runtime:** Claude Code via the Claude Agent SDK (Python)
 - **Versions seen:** `claude-agent-sdk` 0.2.167, bundled Claude Code CLI 2.1.300 (same as the installed `claude`)
 - **Machine so far:** MacBook Pro M4 Pro (development). Re-run on the Mac mini M4 for the recorded results.
