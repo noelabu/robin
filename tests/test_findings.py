@@ -176,3 +176,55 @@ def test_schema_rules():
     ]
     assert schema.parse_message_blocks("no blocks") == []
     assert schema.parse_message_blocks(block(GOOD) + block({"a": 1})) == [GOOD, {"a": 1}]
+
+
+def test_duplicate_parents_are_rejected_and_projection_keeps_going(api):
+    store, c, task_id, _ = api
+    sid = launch(c, task_id)
+    say(c, sid, block(GOOD))
+    (agent,) = wait(lambda: c.get(f"/findings?task_id={task_id}").json()["findings"])
+    fid = agent["finding_id"]
+    say(c, sid, block({**GOOD, "submission_id": "dup", "parents": [fid, fid]}))
+    (r,) = wait(lambda: c.get(f"/findings/rejections?task_id={task_id}").json()["rejections"])
+    assert r["errors"] == ["parents lists the same artifact more than once"]
+    say(c, sid, block({**GOOD, "submission_id": "after"}))
+    wait(lambda: len(c.get(f"/findings?task_id={task_id}").json()["findings"]) == 2)
+    dup = c.post("/findings", json={**GOOD, "task_id": task_id, "submission_id": "u", "parents": [fid, fid]})
+    assert dup.status_code == 422
+
+
+def test_a_failure_recording_a_finding_becomes_a_rejection_not_a_stall(api, monkeypatch):
+    from robin.findings import store as findings_store
+
+    store, c, task_id, _ = api
+    real = findings_store._create
+
+    def broken(*a, **kw):
+        if kw.get("submission_id") == "explodes":
+            raise RuntimeError("disk on fire")
+        return real(*a, **kw)
+
+    monkeypatch.setattr(findings_store, "_create", broken)
+    sid = launch(c, task_id)
+    say(c, sid, block({**GOOD, "submission_id": "explodes"}))
+    (r,) = wait(lambda: c.get(f"/findings/rejections?task_id={task_id}").json()["rejections"])
+    assert r["errors"] == ["Robin couldn't record this finding (RuntimeError)"]
+    say(c, sid, block({**GOOD, "submission_id": "fine"}))
+    (f,) = wait(lambda: c.get(f"/findings?task_id={task_id}").json()["findings"])
+    assert c.get(f"/findings/{f['finding_id']}").json()["submission_id"] == "fine"
+
+
+def test_a_corrected_retry_replaces_its_rejection(api):
+    store, c, task_id, _ = api
+    sid = launch(c, task_id)
+    bad = {"submission_id": "s1", "summary": "No evidence yet", "claims": [{"text": "trust me"}]}
+    say(c, sid, block(bad))
+    wait(lambda: c.get(f"/findings/rejections?task_id={task_id}").json()["rejections"])
+    wait(lambda: [i for i in c.get("/attention").json()["items"] if i["kind"] == "finding_review"])
+    say(c, sid, block({**GOOD, "submission_id": "s1"}))
+    (f,) = wait(lambda: c.get(f"/findings?task_id={task_id}").json()["findings"])
+    assert c.get(f"/findings/{f['finding_id']}").json()["submission_id"] == "s1"
+    assert c.get(f"/findings/rejections?task_id={task_id}").json()["rejections"] == []
+    assert not [i for i in c.get("/attention").json()["items"] if i["kind"] == "finding_review"]
+    resolved = c.get("/attention?state=resolved").json()["items"]
+    assert [i["resolution"] for i in resolved if i["kind"] == "finding_review"] == ["corrected"]

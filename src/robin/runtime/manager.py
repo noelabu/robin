@@ -7,6 +7,7 @@ move the action forward; nothing is resent automatically. State is projected fro
 
 import asyncio
 import json
+import logging
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -340,6 +341,7 @@ class RuntimeManager:
 
 
 PROJECTION_KEY = "projection_cursor"
+log = logging.getLogger(__name__)
 
 
 def _move_lease(conn: Connection, session_id: str, owner: str) -> None:
@@ -400,8 +402,8 @@ def _project_batch(conn: Connection, store: Store, batch: int) -> int:
             if task:
                 conn.execute(update(Event).where(Event.global_cursor == r.global_cursor).values(task_id=task))
             if ev.get("type") == "finding_submission":  # attributed from this session's launch identity
-                findings.project(
-                    conn, store.blobs, r.session_id, r.global_cursor, r.source_time or r.ingested_at, ev
+                _project_finding(
+                    conn, store, r.session_id, r.global_cursor, r.source_time or r.ingested_at, ev
                 )
     if rows:
         conn.execute(
@@ -410,6 +412,43 @@ def _project_batch(conn: Connection, store: Store, batch: int) -> int:
             .on_conflict_do_update(index_elements=["key"], set_={"value": str(rows[-1].global_cursor)})
         )
     return len(rows)
+
+
+def _project_finding(
+    conn: Connection, store: Store, session_id: str, cursor: int, at: datetime, ev: dict[str, Any]
+) -> None:
+    """A submission an agent controls must never stall projection for every session: if recording it fails,
+    record a rejection instead (in a savepoint, so the rest of the batch commits)."""
+    try:
+        with conn.begin_nested():
+            findings.project(conn, store.blobs, session_id, cursor, at, ev)
+    except Exception as exc:
+        log.exception("couldn't record finding submission at cursor %s", cursor)
+        raw = ev.get("payload")
+        payload: dict[str, Any] = raw if isinstance(raw, dict) else {}
+        sub_id = str(payload.get("submission_id") or f"failed-{cursor}")[:128]
+        runtime = conn.execute(select(SessionRow.runtime).where(SessionRow.session_id == session_id)).scalar()
+        task = conn.execute(
+            select(SessionRow.current_task_id).where(SessionRow.session_id == session_id)
+        ).scalar()
+        path = str(ev["path"]) if ev.get("path") in ("tool", "message") else "message"
+        try:
+            with conn.begin_nested():
+                findings.reject(
+                    conn,
+                    session_id,
+                    str(runtime),
+                    task,
+                    sub_id,
+                    path,
+                    [f"Robin couldn't record this finding ({type(exc).__name__})"],
+                    cursor,
+                    at,
+                )
+        except Exception:
+            log.exception(
+                "couldn't record the rejection either; skipping the submission at cursor %s", cursor
+            )
 
 
 def _project_one(

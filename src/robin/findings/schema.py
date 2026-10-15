@@ -98,6 +98,8 @@ def validate(payload: Any) -> list[str]:
     parents = payload.get("parents")
     if parents is not None and not (isinstance(parents, list) and all(isinstance(x, str) for x in parents)):
         errors.append("parents must be a list of artifact IDs")
+    elif parents and len(set(parents)) != len(parents):
+        errors.append("parents lists the same artifact more than once")
     sub = payload.get("submission_id")
     if sub is not None and (not isinstance(sub, str) or not 1 <= len(sub) <= 128):
         errors.append("submission_id must be a string of 1 to 128 characters")

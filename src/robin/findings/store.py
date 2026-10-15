@@ -75,47 +75,20 @@ def project(
         else "auto-" + hashlib.sha256(f"{session_id}:{native_ref}".encode()).hexdigest()[:16]
     )[:128]
     author_key = f"session:{session_id}"
-    if conn.execute(
-        select(FindingSubmission.submission_row_id).where(
+    existing = conn.execute(
+        select(FindingSubmission.submission_row_id, FindingSubmission.state).where(
             FindingSubmission.author_key == author_key, FindingSubmission.submission_id == sub_id
         )
-    ).first():
-        return  # a retry: the stored result stands
+    ).first()
+    if existing is not None and existing.state == "accepted":
+        return  # a retry of an accepted finding: the stored result stands
     task_id = s["current_task_id"]
     errors = schema.validate(payload)
     if task_id is None:
         errors.append("this session isn't working on a task; findings belong to a task")
     parents = _parents(conn, payload, task_id, errors) if not errors else []
     if errors:
-        conn.execute(
-            insert(FindingSubmission).values(
-                submission_row_id=new_id(),
-                author_key=author_key,
-                submission_id=sub_id,
-                session_id=session_id,
-                task_id=task_id,
-                path=path,
-                state="rejected",
-                errors=json.dumps(errors),
-                event_cursor=cursor,
-                created_at=at,
-            )
-        )
-        conn.execute(
-            insert(AttentionItem).values(
-                attention_id=new_id(),
-                kind="finding_review",
-                session_id=session_id,
-                task_id=task_id,
-                state="open",
-                title=f"A finding from {s['runtime']} was rejected",
-                detail=json.dumps({"errors": errors, "submission_id": sub_id, "path": path}),
-                allowed_responses=json.dumps([]),
-                originating_cursor=cursor,
-                created_at=at,
-                updated_at=at,
-            )
-        )
+        reject(conn, session_id, s["runtime"], task_id, sub_id, path, errors, cursor, at)
         return
     assert isinstance(payload, dict) and task_id is not None
     author = {
@@ -139,27 +112,105 @@ def project(
         ignored=schema.ignored_fields(payload),
         at=at,
     )
+    # A corrected retry of a rejected submission replaces the rejection (agents are told to reuse the ID).
+    _record(
+        conn,
+        author_key,
+        sub_id,
+        session_id=session_id,
+        task_id=task_id,
+        path=path,
+        state="accepted",
+        errors="[]",
+        artifact_id=artifact_id,
+        version=1,
+        event_cursor=cursor,
+        created_at=at,
+    )
     conn.execute(
-        insert(FindingSubmission).values(
-            submission_row_id=new_id(),
-            author_key=author_key,
-            submission_id=sub_id,
-            session_id=session_id,
-            task_id=task_id,
-            path=path,
-            state="accepted",
-            errors="[]",
-            artifact_id=artifact_id,
-            version=1,
-            event_cursor=cursor,
-            created_at=at,
+        _review_items(conn, session_id, sub_id).values(
+            state="resolved", resolution="corrected", updated_at=at
         )
     )
 
 
+def reject(
+    conn: Connection,
+    session_id: str,
+    runtime: str,
+    task_id: str | None,
+    sub_id: str,
+    path: str,
+    errors: list[str],
+    cursor: int,
+    at: datetime,
+) -> None:
+    """Record a rejected submission and keep one finding_review item open for it."""
+    _record(
+        conn,
+        f"session:{session_id}",
+        sub_id,
+        session_id=session_id,
+        task_id=task_id,
+        path=path,
+        state="rejected",
+        errors=json.dumps(errors),
+        artifact_id=None,
+        version=None,
+        event_cursor=cursor,
+        created_at=at,
+    )
+    detail = json.dumps({"errors": errors, "submission_id": sub_id, "path": path})
+    if conn.execute(_review_items(conn, session_id, sub_id).values(detail=detail, updated_at=at)).rowcount:
+        return
+    conn.execute(
+        insert(AttentionItem).values(
+            attention_id=new_id(),
+            kind="finding_review",
+            session_id=session_id,
+            task_id=task_id,
+            state="open",
+            title=f"A finding from {runtime} was rejected",
+            detail=detail,
+            allowed_responses=json.dumps([]),
+            originating_cursor=cursor,
+            created_at=at,
+            updated_at=at,
+        )
+    )
+
+
+def _review_items(conn: Connection, session_id: str, sub_id: str) -> Any:
+    """An UPDATE of the active finding_review items for one submission (execute it with .values(...))."""
+    return update(AttentionItem).where(
+        AttentionItem.session_id == session_id,
+        AttentionItem.kind == "finding_review",
+        AttentionItem.state.in_(("open", "acknowledged")),
+        func.json_extract(AttentionItem.detail, "$.submission_id") == sub_id,
+    )
+
+
+def _record(conn: Connection, author_key: str, sub_id: str, **values: Any) -> None:
+    row = conn.execute(
+        select(FindingSubmission.submission_row_id).where(
+            FindingSubmission.author_key == author_key, FindingSubmission.submission_id == sub_id
+        )
+    ).scalar()
+    if row is None:
+        conn.execute(
+            insert(FindingSubmission).values(
+                submission_row_id=new_id(), author_key=author_key, submission_id=sub_id, **values
+            )
+        )
+    else:
+        conn.execute(
+            update(FindingSubmission).where(FindingSubmission.submission_row_id == row).values(**values)
+        )
+
+
 def _parents(conn: Connection, payload: Any, task_id: str | None, errors: list[str]) -> list[tuple[str, int]]:
-    out = []
-    for pid in payload.get("parents") or []:
+    out: list[tuple[str, int]] = []
+    for pid in dict.fromkeys(payload.get("parents") or []):  # each parent once
         row = conn.execute(
             select(Artifact.latest_version, Artifact.task_id).where(Artifact.artifact_id == pid)
         ).first()
