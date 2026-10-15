@@ -3,6 +3,7 @@ import { beforeEach, vi } from "vitest";
 import type { Session } from "../api";
 import { ActivityFeed } from "../components/ActivityFeed";
 import { SessionDetail } from "../components/SessionDetail";
+import { SessionList } from "../components/SessionList";
 import type { FeedItem } from "../useWorkspace";
 
 const session = (over: Partial<Session> = {}): Session => ({
@@ -133,4 +134,24 @@ test("an independent review says whether it is isolated", () => {
   expect(screen.getByText("Independent: can't read other agents' findings")).toBeTruthy();
   rerender(<SessionDetail session={session({ runtime: "pi", independence: "not_isolated" })} />);
   expect(screen.getByText(/Not isolated/)).toBeTruthy();
+});
+
+test("a long session list renders only the rows in view, and scrolling moves the window", () => {
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(640);
+  const many = Array.from({ length: 5000 }, (_, i) =>
+    session({ session_id: `s${i}`, execution_cwd: `/work/app${i}`, mode: "observed", branch: null }),
+  );
+  const onSelect = vi.fn();
+  const { container } = render(<SessionList sessions={many} selected="s2600" onSelect={onSelect} />);
+  expect(container.querySelectorAll("li").length).toBeLessThan(40);
+  expect(screen.getByText("app0")).toBeTruthy();
+  expect(screen.queryByText("app2600")).toBeNull();
+
+  fireEvent.scroll(container.querySelector(".session-scroll")!, { target: { scrollTop: 2600 * 64 } });
+  expect(screen.queryByText("app0")).toBeNull();
+  const row = screen.getByText("app2600").closest("button")!;
+  expect(row.getAttribute("aria-current")).toBe("true");
+  fireEvent.click(row);
+  expect(onSelect).toHaveBeenCalledWith("s2600");
+  vi.restoreAllMocks();
 });

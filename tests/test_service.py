@@ -498,3 +498,31 @@ def test_launch_warns_when_sessions_share_a_folder_and_history_is_filtered(servi
     # an archived or stopped session no longer counts
     c.patch(f"/api/v1/sessions/{b}", json={"archived": True})
     assert c.get(f"/api/v1/sessions/{a}").json()["shared_folder_with"] == []
+
+
+def test_session_list_pages_and_snapshot_is_bounded(service, monkeypatch):
+    from robin.events.ingest import ensure_session
+    from robin.service import app as service_app
+
+    store, port, auth = service
+    monkeypatch.setattr(service_app, "SNAPSHOT_SESSIONS", 3)
+    observed = [ensure_session(store, runtime="claude", mode="observed") for _ in range(7)]
+    managed = ensure_session(store, runtime="fake", mode="managed")
+    c = cli(port, auth)
+
+    seen, offset = [], 0
+    while offset is not None:
+        page = c.get(f"/api/v1/sessions?mode=observed&limit=3&offset={offset}").json()
+        assert page["total"] == 7
+        seen += [s["session_id"] for s in page["sessions"]]
+        offset = page["next_offset"]
+    assert sorted(seen) == sorted(observed) and len(seen) == 7  # every session once, none twice
+
+    ws = c.get("/api/v1/workspace").json()
+    ids = [s["session_id"] for s in ws["sessions"]]
+    assert managed in ids  # managed sessions are always in the snapshot
+    assert len(ids) == 4 and ws["observed_total"] == 7
+    assert ids[1:] == seen[:3]  # the most recent observed ones, in the same order as page one
+
+    assert c.get("/api/v1/sessions?limit=0").status_code == 422
+    assert c.get("/api/v1/sessions?limit=1001").status_code == 422

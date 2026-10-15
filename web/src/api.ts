@@ -158,6 +158,7 @@ export type Workspace = {
   sessions: Session[];
   projects: Project[];
   tasks: Task[];
+  observed_total: number;
   supervisor: { connected: boolean };
 };
 
@@ -210,6 +211,11 @@ export const newActionId = () => `ui-${crypto.randomUUID()}`;
 
 export const api = {
   workspace: () => request<Workspace>("GET", "/workspace"),
+  sessions: (offset: number, limit = 200) =>
+    request<{ sessions: Session[]; total: number; next_offset: number | null }>(
+      "GET",
+      `/sessions?mode=observed&offset=${offset}&limit=${limit}`,
+    ),
   launch: (
     runtime: string,
     cwd: string | null,

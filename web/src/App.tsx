@@ -47,6 +47,8 @@ export function App() {
         : undefined;
 
   const all = useMemo(() => Object.values(ws.sessions).sort(ACTIVE_FIRST), [ws.sessions]);
+  // Like the server's count: observed sessions that aren't archived.
+  const observedLoaded = all.filter((s) => s.mode === "observed" && !s.archived).length;
   const runtimes = useMemo(() => [...new Set(all.map((s) => s.runtime))].sort(), [all]);
   const sessions = all.filter(
     (s) => inScope(s, scope, null) && (showArchived || !s.archived) && (!runtimeFilter || s.runtime === runtimeFilter),
@@ -143,6 +145,12 @@ export function App() {
           </label>
         </div>
         <SessionList sessions={sessions} selected={current?.session_id ?? null} onSelect={setSelected} />
+        {observedLoaded < ws.observedTotal && (
+          <button className="link" onClick={() => void ws.loadOlder(observedLoaded)}>
+            {observedLoaded.toLocaleString()} of {ws.observedTotal.toLocaleString()} observed sessions loaded · load
+            older
+          </button>
+        )}
       </nav>
       <main className="main">
         <AttentionPanel refreshKey={ws.attentionVersion} onOpenSession={setSelected} />

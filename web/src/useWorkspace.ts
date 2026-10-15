@@ -8,6 +8,7 @@ type State = {
   sessions: Record<string, Session>;
   projects: Project[];
   tasks: Task[];
+  observedTotal: number;
   feed: FeedItem[];
   seen: Set<string>;
   cursor: number;
@@ -19,6 +20,7 @@ type State = {
 
 type Msg =
   | { kind: "snapshot"; ws: Workspace }
+  | { kind: "older"; sessions: Session[] }
   | { kind: "event"; event: RobinEvent; session: Session; preview: string | null }
   | { kind: "stream"; state: State["streamState"] };
 
@@ -30,9 +32,11 @@ function reducer(s: State, m: Msg): State {
       return {
         ...s,
         ready: true,
-        sessions: Object.fromEntries(m.ws.sessions.map((x) => [x.session_id, x])),
         projects: m.ws.projects,
         tasks: m.ws.tasks,
+        observedTotal: m.ws.observed_total,
+        // keep older sessions already paged in; the snapshot carries the recent ones
+        sessions: { ...s.sessions, ...Object.fromEntries(m.ws.sessions.map((x) => [x.session_id, x])) },
         cursor: Math.max(s.cursor, m.ws.watermark),
         supervisorConnected: m.ws.supervisor.connected,
       };
@@ -56,6 +60,11 @@ function reducer(s: State, m: Msg): State {
     }
     case "stream":
       return { ...s, streamState: m.state };
+    case "older":
+      return {
+        ...s,
+        sessions: { ...Object.fromEntries(m.sessions.map((x) => [x.session_id, x])), ...s.sessions },
+      };
   }
 }
 
@@ -64,6 +73,7 @@ const initial: State = {
   sessions: {},
   projects: [],
   tasks: [],
+  observedTotal: 0,
   feed: [],
   seen: new Set(),
   cursor: 0,
@@ -114,5 +124,11 @@ export function useWorkspace(enabled: boolean) {
     dispatch({ kind: "snapshot", ws: await api.workspace() });
   }, []);
 
-  return { ...state, reload };
+  const loadOlder = useCallback(async (offset: number) => {
+    const page = await api.sessions(offset);
+    dispatch({ kind: "older", sessions: page.sessions });
+    return page.next_offset;
+  }, []);
+
+  return { ...state, reload, loadOlder };
 }

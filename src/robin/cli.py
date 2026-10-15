@@ -287,7 +287,10 @@ def cmd_respond(args: argparse.Namespace) -> None:
 
 def cmd_sessions(args: argparse.Namespace) -> None:
     with client(args.data) as c:
-        sessions = call(c, "GET", "/sessions")["sessions"]
+        page = call(c, "GET", "/sessions")
+        sessions = page["sessions"]
+    if page.get("next_offset") and not args.json:
+        print(f"(the {len(sessions)} most recent of {page['total']} sessions)")
     if args.json:
         print(json.dumps(sessions, indent=2))
         return
@@ -309,7 +312,7 @@ def cmd_supervisor_stop(args: argparse.Namespace) -> None:
     with client(args.data) as c:
         sessions = [
             s["session_id"]
-            for s in call(c, "GET", "/sessions")["sessions"]
+            for s in call(c, "GET", "/sessions?mode=managed&limit=1000")["sessions"]
             if s["mode"] == "managed" and s["connection_state"] == "connected"
         ]
         if sessions and not args.yes:
@@ -331,7 +334,7 @@ def cmd_supervisor_restart(args: argparse.Namespace) -> None:
         def managed() -> list[dict[str, Any]]:
             return [
                 s
-                for s in call(c, "GET", "/sessions")["sessions"]
+                for s in call(c, "GET", "/sessions?mode=managed&limit=1000")["sessions"]
                 if s["mode"] == "managed" and s["connection_state"] == "connected"
             ]
 

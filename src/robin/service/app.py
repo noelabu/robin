@@ -39,6 +39,7 @@ API = "/api/v1"
 HEARTBEAT_S = 15.0
 STREAM_BATCH = 200
 HOOK_BODY_MAX = 1024 * 1024
+SNAPSHOT_SESSIONS = 500  # observed sessions in the workspace snapshot; older ones page in
 
 log = logging.getLogger(__name__)
 PREVIEW_CHARS = 500
@@ -168,11 +169,22 @@ def action_view(a: Action) -> dict[str, Any]:
 
 
 def _sessions(
-    conn: Connection, session_id: str | None = None, writers: list[Any] | None = None
+    conn: Connection,
+    session_id: str | None = None,
+    writers: list[Any] | None = None,
+    *,
+    where: tuple[Any, ...] = (),
+    limit: int | None = None,
+    offset: int = 0,
 ) -> list[dict[str, Any]]:
-    q = select(SessionRow).order_by(SessionRow.updated_at.desc())
+    # session_id breaks ties so offset pages never overlap or skip
+    q = select(SessionRow).order_by(SessionRow.updated_at.desc(), SessionRow.session_id.desc())
     if session_id:
         q = q.where(SessionRow.session_id == session_id)
+    for clause in where:
+        q = q.where(clause)
+    if limit is not None:
+        q = q.limit(limit).offset(offset)
     rows = list(conn.execute(q).mappings())
     writers = _writers(conn) if writers is None else writers
     return [
@@ -309,10 +321,25 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         """Snapshot and watermark from one read transaction; subscribe to /stream after the watermark."""
         with store.reader.connect() as conn, conn.begin():
             watermark = conn.execute(select(func.coalesce(func.max(Event.global_cursor), 0))).scalar_one()
-            sessions = _sessions(conn)
+            writers = _writers(conn)
+            # Every managed session, and the most recent others; older ones load a page at a time.
+            managed = _sessions(conn, writers=writers, where=(SessionRow.mode == "managed",))
+            recent = _sessions(
+                conn,
+                writers=writers,
+                where=(SessionRow.mode != "managed", SessionRow.archived == 0),
+                limit=SNAPSHOT_SESSIONS,
+            )
+            total = conn.execute(
+                select(func.count())
+                .select_from(SessionRow)
+                .where(SessionRow.mode != "managed", SessionRow.archived == 0)
+            ).scalar_one()
+        sessions = managed + recent
         return {
             "watermark": watermark,
             "sessions": sessions,
+            "observed_total": total,  # non-archived observed sessions; the client pages these in
             "projects": await asyncio.to_thread(ws.list_projects, store),
             "tasks": await asyncio.to_thread(ws.list_tasks, store, include_archived=True),
             "supervisor": {"connected": runtime.supervisor_connected},
@@ -330,20 +357,32 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         project_id: str | None = None,
         task_id: str | None = None,
         include_archived: bool = False,
+        mode: str | None = None,
+        limit: int = Query(200, ge=1, le=1000),
+        offset: int = Query(0, ge=0),
     ) -> dict[str, Any]:
-        with store.reader.connect() as conn:
-            rows = _sessions(conn)
+        """Most recently updated first, a page at a time (NFR-01: history lists stay bounded)."""
+        where: list[Any] = []
         if not include_archived:
-            rows = [r for r in rows if not r["archived"]]
+            where.append(SessionRow.archived == 0)
         if project_id:
-            rows = [r for r in rows if r["project_id"] == project_id]
+            where.append(SessionRow.project_id == project_id)
         if task_id:
-            rows = [r for r in rows if task_id in (r["current_task_id"], r["pending_task_id"])]
+            where.append((SessionRow.current_task_id == task_id) | (SessionRow.pending_task_id == task_id))
         if runtime_name:
-            rows = [r for r in rows if r["runtime"] == runtime_name]
+            where.append(SessionRow.runtime == runtime_name)
         if state:
-            rows = [r for r in rows if r["runtime_state"] == state]
-        return {"sessions": rows}
+            where.append(SessionRow.runtime_state == state)
+        if mode:
+            where.append(SessionRow.mode == mode)
+        with store.reader.connect() as conn:
+            total = conn.execute(select(func.count()).select_from(SessionRow).where(*where)).scalar_one()
+            rows = _sessions(conn, where=tuple(where), limit=limit, offset=offset)
+        return {
+            "sessions": rows,
+            "total": total,
+            "next_offset": offset + limit if offset + limit < total else None,
+        }
 
     @app.get(f"{API}/sessions/{{session_id}}")
     async def session(session_id: str, _: str = Authed) -> dict[str, Any]:
