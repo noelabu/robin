@@ -1,29 +1,101 @@
 # Robin
 
-A local workspace for running, observing, and coordinating coding agents (Claude Code, Codex, Pi).
+A local workspace for running, observing and coordinating coding agents: Claude Code, Codex and Pi.
+
+Robin launches agent sessions under a supervisor that keeps them alive when the service restarts, indexes the sessions you already have, and lets agents working on the same task exchange findings. You choose exactly what gets shared, and preview it before it is sent. Everything runs on your machine; the dashboard listens on loopback only.
 
 - Product requirements: `docs/Robin_PRD.docx` (v0.5)
 - Technical requirements: `docs/Robin_Technical_Requirements.docx` (v0.4)
-- Implementation plan: `docs/implementation-plan.md`
+- Implementation plan and status: `docs/implementation-plan.md`
+- Runtime capabilities: `docs/capability-matrix.md`
+- Threat model: `docs/threat-model.md`
+- Benchmarks: `docs/benchmarks.md`
 
-## Current state: Phase 0 (integration validation)
+## Requirements
 
-The code here is Phase 0 spike code. Its runs are the evidence behind the capability matrix; the product code comes in Phase 1.
+- macOS, Python 3.13, [uv](https://docs.astral.sh/uv/)
+- Any of the runtimes, each signed in with its own login: `claude` (Claude Code), `codex`, `pi`. Robin never reads their credentials.
+- Node.js, only to rebuild the dashboard
 
-| Path | What it proves |
-|---|---|
-| `supervisor/` | A detached supervisor keeps runtime sessions alive across a service kill and replays events from a durable cursor (TR-006, WP-0.2). Runtime hosts for a scripted runtime, the Claude Agent SDK, `codex app-server` and `pi --mode rpc`. |
-| `claude/findings.md` | Claude Agent SDK results against the capability floor (WP-0.1) |
-| `codex/findings.md` | Codex app-server results against the capability floor (WP-0.1) |
-| `pi/findings.md` | Pi RPC results against the capability floor (WP-0.1) |
-| `docs/capability-matrix.md` | All three runtimes side by side |
-| `docs/corpus.md` | Metadata-only inventory of the owner's existing sessions (`corpus/inventory.py`) |
-
-## Setup
+## Install
 
 ```bash
-uv sync                      # installs claude-agent-sdk into .venv
+uv tool install .            # puts `robin` on your PATH, dashboard included
+robin doctor                 # runtimes, storage, port, supervisor
 ```
+
+For development, `uv sync` and prefix commands with `uv run`.
+
+## Use
+
+```bash
+robin                        # start the service and open the dashboard (or open it if already running)
+robin serve --no-browser     # run the service only
+robin open                   # a fresh sign-in link for the dashboard
+```
+
+Robin's data lives in `~/Library/Application Support/Robin` (override with `--data` or `ROBIN_DATA_DIR`).
+
+### Sessions
+
+```bash
+robin project add ~/code/app
+robin task create "Review the PRD" --project ~/code/app --attach docs/prd.md
+robin run claude --task <task> --prompt "Review docs/prd.md"
+robin sessions
+robin message <session> --text "Focus on the auth section"
+robin interrupt <session>
+robin attention              # questions, approvals and failures waiting on you
+robin approve <attention-id> # or: robin deny <attention-id>
+robin open <session>         # continue the session in this terminal; Robin hands over control
+robin reclaim <session>      # take it back
+robin stop <session>
+```
+
+Managed sessions are ones Robin launched; it can control them. Observed sessions are ones you started elsewhere; Robin reads their history and never changes them.
+
+```bash
+robin scan                   # index your existing Claude, Codex and Pi sessions (read-only)
+robin watch on               # follow native history as it grows
+robin hooks install claude   # opt-in live events for sessions started outside Robin (shows the change first)
+```
+
+### Findings and context
+
+Each agent publishes findings with cited evidence. Agents with Robin's tools publish by tool call; the rest publish in a fenced block that Robin parses from the message.
+
+```bash
+robin findings --task <task>
+robin compare --task <task>
+robin share --task <task> --to <session> --question "Reconcile these" --findings <id>,<id>
+robin context preview --task <task> --to <session> --question "..." --findings <id>,<id>
+robin context deliver <packet> --confirm <payload-hash>
+robin synthesize --task <task> --to <session> --findings <id>,<id>
+robin search "token refresh"
+```
+
+Nothing reaches another agent until you confirm the exact payload hash. Secrets are redacted before anything is stored, indexed or shared. Reviewers launched with `--independent` cannot read other agents' findings unless you grant them.
+
+### Backup and restore
+
+```bash
+robin backup --to ~/robin-backups               # writes robin-backup-<time>/ there; no credentials
+robin restore ~/robin-backups/robin-backup-<time> --into ~/robin-restored
+robin export --task <task> --out ~/robin-export   # tasks, findings and syntheses as JSON and Markdown
+```
+
+A restore goes into a new, empty data directory and is checked before anything is written. Point Robin at it with `--data` or `ROBIN_DATA_DIR`.
+
+### Operations
+
+```bash
+robin doctor                         # health of runtimes, storage, port and supervisor
+robin storage                        # copied activity against the 20 GB cap; `robin storage prune`
+robin supervisor restart             # upgrade the supervisor; refuses while turns run (or --drain)
+robin diagnostics                    # a redacted bundle, previewed before it's written
+```
+
+Logs are in `<data dir>/logs/robin.log` and never contain prompts, messages or secrets.
 
 ## Tests
 
@@ -32,38 +104,12 @@ uv run pytest                                  # Python suite
 cd web && npm test                             # web components
 uv run playwright install chromium             # once, if Google Chrome isn't installed
 ROBIN_E2E=1 uv run pytest tests/e2e            # the dashboard in a real browser
+ROBIN_PACKAGING=1 uv run pytest tests/packaging  # build the wheel and run it from a clean venv
+ROBIN_LIVE=1 uv run pytest tests/live          # real Claude, Codex and Pi sessions (uses your logins)
 ```
 
-## Runs
+Rebuild the dashboard after changing `web/`: `cd web && npm run build` (output goes to `src/robin/web/dist`).
 
-```bash
-# Supervisor with the scripted runtime: no network, no credentials
-python3 supervisor/test_restart.py
+## Phase 0 spikes
 
-# Supervisor with a real Claude Agent SDK session: uses your `claude` login (subscription)
-uv run python supervisor/test_live.py claude
-
-# Supervisor with a real Codex app-server session: uses your Codex login
-uv run python supervisor/test_live.py codex
-
-# Supervisor with a real Pi RPC session: uses Pi's configured provider
-uv run python supervisor/test_live.py pi
-
-# Finding publication: tool path (MCP / extension tool) or message path (no MCP)
-uv run python supervisor/test_publish.py codex tool
-uv run python supervisor/test_publish.py pi message
-uv run python supervisor/test_findings_unit.py     # offline
-
-# Steering, native resume and terminal handoff
-uv run python supervisor/test_continuity.py claude
-
-# Review independence: can a reviewer read Robin's artifact store (defaults vs Robin's deny rules)
-uv run python supervisor/test_isolation.py claude deny
-
-# Codex: can a second client attach to a live thread
-uv run --with websockets python supervisor/probe_codex_attach.py
-```
-
-Each run prints PASS/FAIL lines and the temp directory holding the full event spool. `test_live.py` also writes a summary to `<runtime>/evidence-<timestamp>.json`.
-
-Run these on the Mac mini M4 (the reference machine) for the recorded results.
+`supervisor/`, `claude/`, `codex/`, `pi/` and `corpus/` hold the Phase 0 integration spikes and their findings. They are the evidence behind `docs/capability-matrix.md` and are not part of the product.
