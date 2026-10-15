@@ -15,6 +15,7 @@ from robin.service.runtime import ServiceRuntime
 class FindingRef(BaseModel):
     id: str
     version: int | None = None  # None: the latest version at preview time, then pinned
+    claims: list[int] | None = None  # selected claim numbers (1-based); None: all of them
 
 
 class ExcerptRef(BaseModel):
@@ -35,6 +36,10 @@ class PreviewBody(BaseModel):
 
 class ConfirmBody(BaseModel):
     payload_hash: str
+
+
+class SaveReplyBody(BaseModel):
+    cursor: int | None = None  # the reply's event cursor; default: the latest reply since delivery
 
 
 class DeliverBody(BaseModel):
@@ -63,7 +68,9 @@ def register(app: FastAPI, runtime: ServiceRuntime, authed: Any, api: str, error
             task_id=body.task_id,
             target_session_id=body.target_session_id,
             question=body.question,
-            findings=tuple((f.id, f.version) for f in body.findings),
+            findings=tuple(
+                (f.id, f.version, tuple(f.claims) if f.claims is not None else None) for f in body.findings
+            ),
             excerpts=tuple((e.session_id, e.after, e.through) for e in body.excerpts),
             attachments=tuple(body.attachments),
             include_objective=body.include_objective,
@@ -81,6 +88,12 @@ def register(app: FastAPI, runtime: ServiceRuntime, authed: Any, api: str, error
     @app.post(f"{api}/context/{{packet_id}}/confirm")
     async def confirm(packet_id: str, body: ConfirmBody, _: str = authed) -> dict[str, Any]:
         return dict(await asyncio.to_thread(packets.confirm, store, packet_id, body.payload_hash))
+
+    @app.post(f"{api}/context/{{packet_id}}/save-reply", status_code=201)
+    async def save_reply(packet_id: str, body: SaveReplyBody, _: str = authed) -> dict[str, Any]:
+        result = await asyncio.to_thread(packets.save_reply, store, packet_id, body.cursor)
+        await runtime.notify()
+        return dict(result)
 
     @app.post(f"{api}/context/{{packet_id}}/deliver", status_code=202)
     async def deliver(packet_id: str, body: DeliverBody, _: str = authed) -> Any:

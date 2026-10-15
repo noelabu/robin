@@ -419,6 +419,12 @@ def cmd_context(args: argparse.Namespace) -> None:
             if args.show:
                 print(p["text"])
             _print_packet(p)
+        elif args.action == "save":
+            r = call(c, "POST", f"/context/{args.packet}/save-reply", {"cursor": args.cursor})
+            print(
+                f"saved synthesis {r['artifact_id']} from {r['author']['runtime']} "
+                f"(inputs: {', '.join(i['artifact_id'] for i in r['inputs'])})"
+            )
         elif args.action == "deliver":
             if not args.confirm:
                 raise CliError("deliver needs --confirm <payload hash> from the preview you reviewed")
@@ -464,6 +470,41 @@ def cmd_grant(args: argparse.Namespace) -> None:
         print(f"{g['grant_id']}  {g['kind']:<8} {what}")
     for r in result["reads"][-10:]:
         print(f"read {r['at']}  {r['tool']}  {r['bytes']} bytes  {r['content_hash'][:19]}")
+
+
+SYNTHESIS_QUESTION = (
+    "Synthesize these findings. Say where they agree, where they disagree and why, and which claims are "
+    "unsupported. Don't count repeated claims as independent confirmation. Mark any new claim you add and "
+    "give its evidence."
+)
+
+
+def cmd_compare(args: argparse.Namespace) -> None:
+    """Findings for a task side by side: claims and their evidence."""
+    with client(args.data) as c:
+        items = call(c, "GET", f"/findings?task_id={args.task}")["findings"]
+        full = [call(c, "GET", f"/findings/{f['finding_id']}") for f in items]
+    if not full:
+        print("no findings for this task yet")
+    for f in full:
+        a = f["author"]
+        who = "user" if a["kind"] == "user" else f"{a['runtime']} {str(a.get('native_session_id'))[:8]}"
+        print(f"== {f['finding_id']} v{f['version']} · {who} ==")
+        print(f"   {f['summary']}")
+        for i, cl in enumerate(f["claims"], 1):
+            ev = ", ".join(
+                f"{e.get('path') or e.get('artifact_id')}{':' + e['range'] if e.get('range') else ''}"
+                for e in cl["evidence"]
+            )
+            print(f"   {i}. {cl['text']}  [{ev or 'unsupported'}]")
+        print()
+
+
+def cmd_synthesize(args: argparse.Namespace) -> None:
+    """Preview a synthesis request: the chosen findings, sent to one session with a synthesis question."""
+    args.action, args.question = "preview", args.question or SYNTHESIS_QUESTION
+    args.excerpt, args.packet = None, None
+    cmd_context(args)
 
 
 def cmd_hooks(args: argparse.Namespace) -> None:
@@ -686,7 +727,7 @@ def parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_finding)
 
     p = sub.add_parser("context", parents=[common], help="preview and deliver context to a session")
-    p.add_argument("action", choices=["preview", "show", "deliver", "list"])
+    p.add_argument("action", choices=["preview", "show", "deliver", "save", "list"])
     p.add_argument("packet", nargs="?", help="show/deliver: the packet ID")
     p.add_argument("--task")
     p.add_argument("--to", help="preview: the session to send it to")
@@ -695,8 +736,33 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--excerpt", action="append", help="preview: SESSION:AFTER[:THROUGH] event cursors")
     p.add_argument("--show", action="store_true", help="print the exact payload")
     p.add_argument("--confirm", help="deliver: the payload hash you reviewed")
+    p.add_argument("--cursor", type=int, help="save: which reply (default: the latest since delivery)")
     p.add_argument("--wait", type=float, default=10)
     p.set_defaults(func=cmd_context)
+
+    p = sub.add_parser("share", parents=[common], help="preview sharing findings or excerpts with a session")
+    for flag, kw in (
+        ("--task", {"required": True}),
+        ("--to", {"required": True}),
+        ("--question", {"required": True}),
+        ("--findings", {}),
+        ("--excerpt", {"action": "append"}),
+    ):
+        p.add_argument(flag, **kw)  # type: ignore[arg-type]
+    p.add_argument("--show", action="store_true")
+    p.set_defaults(func=cmd_context, action="preview", packet=None, confirm=None, cursor=None, wait=10)
+
+    p = sub.add_parser("compare", parents=[common], help="a task's findings side by side")
+    p.add_argument("--task", required=True)
+    p.set_defaults(func=cmd_compare)
+
+    p = sub.add_parser("synthesize", parents=[common], help="preview a synthesis of findings for a session")
+    p.add_argument("--task", required=True)
+    p.add_argument("--to", required=True, help="the session that writes the synthesis")
+    p.add_argument("--findings", required=True, help="finding IDs, comma-separated")
+    p.add_argument("--question", help="instead of the default synthesis request")
+    p.add_argument("--show", action="store_true")
+    p.set_defaults(func=cmd_synthesize, confirm=None, cursor=None, wait=10)
 
     p = sub.add_parser("grant", parents=[common], help="let a session read shared findings or excerpts")
     p.add_argument("--session", help="the session that may read")

@@ -175,3 +175,60 @@ def test_reach_a_task_session_in_three_clicks_and_see_shared_folder_warnings(run
             json={"type": "stop", "action_id": f"e2e-{uuid.uuid4().hex}"},
         )
     assert sid
+
+
+def test_compare_select_claims_send_and_save_a_synthesis(running):
+    from playwright.sync_api import expect, sync_playwright
+
+    store, port, auth = running
+    folder = store.data_dir.parent / "compare-project"
+    folder.mkdir()
+    cli = httpx.Client(
+        base_url=f"http://127.0.0.1:{port}/api/v1", headers={"authorization": f"Bearer {auth.cli_token}"}
+    )
+    pid = cli.post("/projects", json={"path": str(folder), "name": "cmp"}).json()["project_id"]
+    task = cli.post("/tasks", json={"project_id": pid, "title": "Review", "objective": "Find bugs"}).json()[
+        "task_id"
+    ]
+    for summary in ("Race in refresh", "Logout leaks token"):
+        cli.post(
+            "/findings",
+            json={
+                "task_id": task,
+                "summary": summary,
+                "claims": [
+                    {"text": f"{summary} claim A", "unsupported": True},
+                    {"text": f"{summary} claim B", "unsupported": True},
+                ],
+            },
+        )
+    cli.post(
+        "/sessions/launch", json={"runtime": "fake", "task_id": task, "action_id": f"e2e-{uuid.uuid4().hex}"}
+    )
+    with sync_playwright() as p:
+        browser = launch_browser(p)
+        page = browser.new_page()
+        page.goto(f"http://127.0.0.1:{port}/#bootstrap={auth.new_bootstrap()}")
+        expect(page.get_by_text("Supervisor connected")).to_be_visible(timeout=10_000)
+        page.get_by_role("button", name="cmp").click()
+        page.get_by_role("button", name="Review").click()
+        expect(page.locator(".finding-card")).to_have_count(2, timeout=10_000)
+        page.get_by_label("Race in refresh claim A").check()
+        page.locator(".finding-card").nth(1).get_by_role("checkbox").first.check()  # all of the second
+        page.get_by_role("button", name="Send selected to a session…").click()
+        page.get_by_role("button", name="Preview").click()
+        share = page.locator(".share")
+        expect(share).to_contain_text("claims 1 of 2 selected")
+        expect(share).to_contain_text("tokens (approximate)")
+        share.get_by_text("Exact text that will be sent").click()
+        expect(share.locator(".payload")).to_contain_text("Race in refresh claim A")
+        expect(share.locator(".payload")).not_to_contain_text("Race in refresh claim B")
+        share.get_by_role("button", name="Confirm and send").click()
+        expect(share).to_contain_text("Delivery:", timeout=10_000)
+        for _ in range(40):
+            share.get_by_role("button", name="Save reply as synthesis").click()
+            if "Saved as synthesis" in (share.locator(".status").text_content() or ""):
+                break
+            time.sleep(0.25)
+        expect(share.locator(".status")).to_contain_text("Saved as synthesis")
+        browser.close()

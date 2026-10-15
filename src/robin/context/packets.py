@@ -69,7 +69,8 @@ class Selection:
     task_id: str
     target_session_id: str
     question: str
-    findings: tuple[tuple[str, int | None], ...] = ()  # (finding id, pinned version or latest)
+    # (finding id, pinned version or latest, selected claim numbers or None for all)
+    findings: tuple[tuple[str, int | None, tuple[int, ...] | None], ...] = ()
     excerpts: tuple[tuple[str, int, int | None], ...] = ()  # (session id, after cursor, through cursor)
     attachments: tuple[str, ...] = ()
     include_objective: bool = True
@@ -79,7 +80,7 @@ class Selection:
             "task_id": self.task_id,
             "target_session_id": self.target_session_id,
             "question": self.question,
-            "findings": [list(f) for f in self.findings],
+            "findings": [[f[0], f[1], list(f[2]) if f[2] is not None else None] for f in self.findings],
             "excerpts": [list(e) for e in self.excerpts],
             "attachments": list(self.attachments),
             "include_objective": self.include_objective,
@@ -91,7 +92,10 @@ class Selection:
             task_id=d["task_id"],
             target_session_id=d["target_session_id"],
             question=d["question"],
-            findings=tuple((f[0], f[1]) for f in d.get("findings", [])),
+            findings=tuple(
+                (f[0], f[1], tuple(f[2]) if len(f) > 2 and f[2] is not None else None)
+                for f in d.get("findings", [])
+            ),
             excerpts=tuple((e[0], int(e[1]), e[2]) for e in d.get("excerpts", [])),
             attachments=tuple(d.get("attachments", [])),
             include_objective=bool(d.get("include_objective", True)),
@@ -141,8 +145,8 @@ def build(store: Store, sel: Selection) -> Built:
             )
         for att_id in sel.attachments:
             sections.append(_attachment(store, conn, sel.task_id, att_id))
-        for fid, version in sel.findings:
-            sections.append(_finding(store, conn, sel.task_id, fid, version))
+        for fid, version, claims in sel.findings:
+            sections.append(_finding(store, conn, sel.task_id, fid, version, claims))
         for sid, after, through in sel.excerpts:
             sections.append(_excerpt(store, conn, sid, after, through))
 
@@ -212,7 +216,12 @@ def _attachment(store: Store, conn: Connection, task_id: str, att_id: str) -> tu
 
 
 def _finding(
-    store: Store, conn: Connection, task_id: str, fid: str, version: int | None
+    store: Store,
+    conn: Connection,
+    task_id: str,
+    fid: str,
+    version: int | None,
+    claims: tuple[int, ...] | None = None,
 ) -> tuple[dict[str, Any], str]:
     a = conn.execute(select(Artifact).where(Artifact.artifact_id == fid)).mappings().first()
     if a is None or a["kind"] != "finding" or a["task_id"] != task_id:
@@ -237,9 +246,16 @@ def _finding(
     flags = []
     if doc.get("parents"):
         flags.append(f"derived from {len(doc['parents'])} earlier artifact(s)")
+    if claims is not None:
+        bad = [n for n in claims if not 1 <= n <= len(doc["claims"])]
+        if bad or not claims:
+            raise ContextError("invalid_request", f"finding {fid} has claims 1–{len(doc['claims'])}")
+        flags.append(f"claims {', '.join(map(str, sorted(set(claims))))} of {len(doc['claims'])} selected")
     label = f"finding {fid} v{v} by {who}" + (f" · {'; '.join(flags)}" if flags else "")
     lines = [doc["summary"], ""]
     for i, c in enumerate(doc["claims"], 1):
+        if claims is not None and i not in claims:
+            continue
         ev = ", ".join(
             f"{e.get('path') or e.get('artifact_id')}{':' + e['range'] if e.get('range') else ''}"
             for e in c["evidence"]
@@ -256,6 +272,7 @@ def _finding(
         "label": label,
         "derived": bool(doc.get("parents")),
         "latest_selected": version is None,
+        "claims": sorted(set(claims)) if claims is not None else None,
     }
     return source, "\n".join(lines)
 
@@ -581,3 +598,97 @@ def list_packets(store: Store, task_id: str | None = None) -> list[dict[str, Any
     with store.reader.connect() as conn:
         ids = list(conn.execute(q).scalars())
     return [get(store, i, include_text=False) for i in ids]
+
+
+def save_reply(store: Store, packet_id: str, cursor: int | None = None) -> dict[str, Any]:
+    """Keep the target's reply to a delivered packet as a synthesis artifact (FR-024, TR-064, TR-065).
+
+    The author is the target session. The artifact links to the packet and to every finding the packet
+    carried, at the versions it carried, and labels itself as derived.
+    """
+    p = _row(store, packet_id)
+    manifest = json.loads(p["manifest"])
+    with store.reader.connect() as conn:
+        delivered = conn.execute(
+            select(ContextDelivery.created_at)
+            .join(ControlAction, ControlAction.action_id == ContextDelivery.action_id)
+            .where(ContextDelivery.packet_id == packet_id, ControlAction.state == "acknowledged")
+        ).scalar()
+        if delivered is None:
+            raise ContextError("not_delivered", "the packet hasn't been accepted by its target yet", 409)
+        q = select(Event.global_cursor, Event.run_id).where(
+            Event.session_id == p["target_session_id"],
+            Event.event_type == "message.completed",
+            Event.ingested_at >= delivered,
+        )
+        if cursor is not None:
+            q = q.where(Event.global_cursor == cursor)
+        reply = conn.execute(q.order_by(Event.global_cursor.desc()).limit(1)).first()
+        if reply is None:
+            raise ContextError("no_reply", "the target hasn't replied since the packet was delivered", 409)
+        s = (
+            conn.execute(select(SessionRow).where(SessionRow.session_id == p["target_session_id"]))
+            .mappings()
+            .one()
+        )
+        task = conn.execute(select(Task.title).where(Task.task_id == p["task_id"])).scalar()
+    text = _event_text(read_payload_json(store, reply.global_cursor))
+    findings = [(src["id"], src["version"]) for src in manifest["sources"] if src["kind"] == "finding"]
+    now = utc_now()
+    doc = {
+        "schema_version": 1,
+        "kind": "synthesis",
+        "title": f"Synthesis for {task}",
+        "text": text,
+        "task_id": p["task_id"],
+        "author": {
+            "kind": "agent",
+            "runtime": s["runtime"],
+            "native_session_id": s["native_session_id"],
+            "run_id": reply.run_id,
+        },
+        "packet_id": packet_id,
+        "reply_cursor": reply.global_cursor,
+        "inputs": [{"artifact_id": p["artifact_id"], "version": 1}]
+        + [{"artifact_id": f, "version": v} for f, v in findings],
+        "created_at": now.isoformat(),
+        "label": "synthesis: derived from the findings it was given; new claims need their own evidence",
+    }
+    data = json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+
+    def work(conn: Connection) -> str:
+        sha = _put(conn, store.blobs, data, "application/vnd.robin.synthesis+json")
+        aid = new_id()
+        conn.execute(
+            insert(Artifact).values(
+                artifact_id=aid,
+                kind="synthesis",
+                task_id=p["task_id"],
+                author_kind="agent",
+                author_session_id=s["session_id"],
+                author_runtime=s["runtime"],
+                author_native_session_id=s["native_session_id"],
+                author_run_id=reply.run_id,
+                latest_version=1,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        conn.execute(
+            insert(ArtifactVersion).values(
+                artifact_id=aid, version=1, schema_version=1, content_blob=sha, size=len(data), created_at=now
+            )
+        )
+        for parent, version in [(p["artifact_id"], 1), *findings]:
+            conn.execute(
+                insert(LineageEdge).values(
+                    child_artifact_id=aid,
+                    child_version=1,
+                    parent_artifact_id=parent,
+                    parent_version=version,
+                    relation="input",
+                )
+            )
+        return aid
+
+    return {"artifact_id": store.writer.call(work), "version": 1, **doc}

@@ -127,6 +127,16 @@ async def run_fake(args: argparse.Namespace) -> None:
 
     async def work(text: str) -> None:
         emit({"type": "turn_started", "input": text})
+        if text.startswith("<robin-context"):  # scripted reply to shared context
+            sources = text.count("\n[source ")
+            emit(
+                {
+                    "type": "message_completed",
+                    "text": f"Synthesis of {sources} sources: they agree on the main point.",
+                }
+            )
+            emit({"type": "turn_completed"})
+            return
         if "```robin-finding" in text or text.startswith("tool-finding:"):
             # Scripted publication: a final message with finding blocks, or a finding tool call.
             ref = uuid.uuid4().hex

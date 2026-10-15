@@ -84,6 +84,49 @@ export type AttentionItem = {
   created_at: string;
 };
 
+export type Evidence = { path?: string; range?: string; artifact_id?: string };
+export type Claim = { text: string; evidence: Evidence[]; unsupported?: boolean };
+export type Author = { kind: "user" | "agent"; runtime?: string; native_session_id?: string | null };
+
+export type Finding = {
+  finding_id: string;
+  version: number;
+  latest_version: number;
+  task_id: string;
+  author: Author;
+  summary: string;
+  claims: Claim[];
+  recommendations: string[];
+  questions: string[];
+  publication_path: string;
+  created_at: string;
+  content_hash: string;
+};
+
+export type Packet = {
+  packet_id: string;
+  state: "previewed" | "confirmed" | "invalidated" | "delivered";
+  invalid_reason: string | null;
+  recipient: { session_id: string; runtime: string; independence: string | null };
+  question: string;
+  sources: { n: number; kind: string; id: string; label: string; content_hash: string; flags?: string[] }[];
+  redactions: { source: number | string; rule_id: string }[];
+  flags: string[];
+  bytes: number;
+  approx_tokens: number;
+  payload_hash: string;
+  deliveries: { action_id: string; state: Action["state"]; error: string | null }[];
+  text?: string;
+};
+
+export type Artifact = {
+  artifact_id: string;
+  kind: string;
+  version: number;
+  inputs: { parent_artifact_id: string; parent_version: number; relation: string }[];
+  content: { title?: string; text?: string; author?: Author; label?: string } & Record<string, unknown>;
+};
+
 export type Workspace = {
   watermark: number;
   sessions: Session[];
@@ -187,4 +230,30 @@ export const api = {
     ),
   openTerminal: (sessionId: string) => request<{ opened: boolean }>("POST", `/sessions/${sessionId}/terminal/open`),
   adapters: () => request<{ adapters: { runtime: string; level: string }[] }>("GET", "/adapters"),
+  findings: (taskId: string) =>
+    request<{ findings: { finding_id: string }[] }>("GET", `/findings?task_id=${encodeURIComponent(taskId)}`),
+  finding: (id: string) => request<Finding>("GET", `/findings/${id}`),
+  artifacts: (taskId: string, kind: string) =>
+    request<{ artifacts: { artifact_id: string }[] }>(
+      "GET",
+      `/artifacts?task_id=${encodeURIComponent(taskId)}&kind=${kind}`,
+    ),
+  artifact: (id: string) => request<Artifact>("GET", `/artifacts/${id}`),
+  projectFile: (projectId: string, path: string, range?: string) =>
+    request<{ path: string; first_line: number; lines: string[]; truncated: boolean }>(
+      "GET",
+      `/projects/${projectId}/file?${new URLSearchParams(range ? { path, range } : { path })}`,
+    ),
+  previewContext: (body: {
+    task_id: string;
+    target_session_id: string;
+    question: string;
+    findings: { id: string; version: number; claims: number[] | null }[];
+    include_objective: boolean;
+  }) => request<Packet>("POST", "/context/preview", body),
+  getContext: (id: string) => request<Packet>("GET", `/context/${id}`),
+  confirmContext: (id: string, hash: string) =>
+    request<Packet>("POST", `/context/${id}/confirm`, { payload_hash: hash }),
+  deliverContext: (id: string) => request<Packet>("POST", `/context/${id}/deliver`, { action_id: newActionId() }),
+  saveReply: (id: string) => request<{ artifact_id: string }>("POST", `/context/${id}/save-reply`, {}),
 };

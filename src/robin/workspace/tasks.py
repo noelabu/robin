@@ -462,3 +462,51 @@ def set_independence(store: Store, session_id: str, independence: str | None) ->
             update(SessionRow).where(SessionRow.session_id == session_id).values(independence=independence)
         )
     )
+
+
+DISPLAY_LIMIT = 64 * 1024  # TR-082: display limit for inline text
+
+
+def read_project_file(
+    store: Store, project_id: str, rel: str, line_range: str | None = None
+) -> dict[str, Any]:
+    """Evidence lines from a project file, for the compare view (TR-070: confined to the project root).
+
+    Resolves symlinks before checking, so neither `..` nor a link can reach outside the project.
+    """
+    project = get_project(store, project_id)
+    root = Path(project["path"]).resolve()
+    target = (root / rel).resolve()
+    if not target.is_relative_to(root) or target == root:
+        raise WorkspaceError("invalid_path", "that path is outside the project", 403)
+    if not target.is_file():
+        raise WorkspaceError("not_found", f"no file {rel} in the project", 404)
+    first, last = 1, None
+    if line_range:
+        try:
+            a, _, b = line_range.partition("-")
+            first, last = int(a), int(b or a)
+        except ValueError as exc:
+            raise WorkspaceError("invalid_request", "range is like 40-52") from exc
+        if first < 1 or last < first:
+            raise WorkspaceError("invalid_request", "range is like 40-52")
+    lines: list[str] = []
+    size = 0
+    truncated = False
+    with target.open("rb") as f:
+        for n, raw in enumerate(f, 1):
+            if n < first:
+                continue
+            if last is not None and n > last:
+                break
+            size += len(raw)
+            if size > DISPLAY_LIMIT:
+                truncated = True  # said so in the response; evidence is shown, never cut silently
+                break
+            lines.append(raw.decode("utf-8", errors="replace").rstrip("\r\n"))
+    return {
+        "path": str(target.relative_to(root)),
+        "first_line": first,
+        "lines": lines,
+        "truncated": truncated,
+    }

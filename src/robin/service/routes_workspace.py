@@ -63,6 +63,13 @@ def register(app: FastAPI, store: Store, authed: Any, api: str) -> None:
     async def project(project_id: str, _: str = authed) -> dict[str, Any]:
         return dict(await run(ws.get_project, project_id))
 
+    @app.get(f"{api}/projects/{{project_id}}/file")
+    async def project_file(
+        project_id: str, path: str, _: str = authed, range: str | None = None
+    ) -> dict[str, Any]:
+        """Read-only evidence lines from inside the project (the compare view's "open source")."""
+        return dict(await run(ws.read_project_file, project_id, path, range))
+
     @app.post(f"{api}/tasks", status_code=201)
     async def create_task(body: TaskBody, _: str = authed) -> dict[str, Any]:
         return dict(

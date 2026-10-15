@@ -52,6 +52,14 @@ def register(app: FastAPI, runtime: ServiceRuntime, authed: Any, api: str, error
     async def rejections(_: str = authed, task_id: str | None = None) -> dict[str, Any]:
         return {"rejections": await asyncio.to_thread(findings.list_rejections, store, task_id)}
 
+    @app.get(f"{api}/artifacts")
+    async def artifacts(task_id: str, _: str = authed, kind: str | None = None) -> dict[str, Any]:
+        return {"artifacts": await asyncio.to_thread(findings.list_artifacts, store, task_id, kind)}
+
+    @app.get(f"{api}/artifacts/{{artifact_id}}")
+    async def artifact(artifact_id: str, _: str = authed, version: int | None = None) -> dict[str, Any]:
+        return dict(await asyncio.to_thread(findings.get_artifact, store, artifact_id, version))
+
     @app.get(f"{api}/findings/{{finding_id}}")
     async def get(finding_id: str, _: str = authed, version: int | None = None) -> dict[str, Any]:
         return dict(await asyncio.to_thread(findings.get, store, finding_id, version))

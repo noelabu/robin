@@ -507,3 +507,62 @@ def count(conn: Connection, task_id: str) -> int:
         ).scalar()
         or 0
     )
+
+
+def get_artifact(store: Store, artifact_id: str, version: int | None = None) -> dict[str, Any]:
+    """Any artifact: a finding, a synthesis, or an approved packet (its exact payload)."""
+    with store.reader.connect() as conn:
+        a = conn.execute(select(Artifact).where(Artifact.artifact_id == artifact_id)).mappings().first()
+        if a is None:
+            raise FindingError("not_found", f"no artifact {artifact_id}", 404)
+        v = version or a["latest_version"]
+        row = (
+            conn.execute(
+                select(ArtifactVersion).where(
+                    ArtifactVersion.artifact_id == artifact_id, ArtifactVersion.version == v
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if row is None:
+            raise FindingError("not_found", f"artifact {artifact_id} has no version {v}", 404)
+        inputs = [
+            dict(r)
+            for r in conn.execute(
+                select(
+                    LineageEdge.parent_artifact_id, LineageEdge.parent_version, LineageEdge.relation
+                ).where(LineageEdge.child_artifact_id == artifact_id, LineageEdge.child_version == v)
+            ).mappings()
+        ]
+    raw = store.blobs.read(row["content_blob"])
+    content: Any = raw.decode() if a["kind"] == "packet" else json.loads(raw)
+    return {
+        "artifact_id": artifact_id,
+        "kind": a["kind"],
+        "version": v,
+        "latest_version": a["latest_version"],
+        "task_id": a["task_id"],
+        "content_hash": f"sha256:{row['content_blob']}",
+        "inputs": inputs,
+        "content": content,
+    }
+
+
+def list_artifacts(store: Store, task_id: str, kind: str | None = None) -> list[dict[str, Any]]:
+    q = select(Artifact).where(Artifact.task_id == task_id).order_by(Artifact.created_at)
+    if kind:
+        q = q.where(Artifact.kind == kind)
+    with store.reader.connect() as conn:
+        rows = list(conn.execute(q).mappings())
+    return [
+        {
+            "artifact_id": r["artifact_id"],
+            "kind": r["kind"],
+            "version": r["latest_version"],
+            "author_kind": r["author_kind"],
+            "author_runtime": r["author_runtime"],
+            "created_at": r["created_at"].isoformat(),
+        }
+        for r in rows
+    ]

@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
-import { api, ApiError, type Project, type TaskDetail as TaskDetailT } from "../api";
+import { api, ApiError, type Project, type Session, type TaskDetail as TaskDetailT } from "../api";
+import { FindingsCompare } from "./FindingsCompare";
 
 /** A task: objective, the sessions working on it, and its status. Status changes are explicit. */
 export function TaskDetail(props: {
   taskId: string;
   project: Project | undefined;
   refreshKey: number;
+  sessions: Session[];
   onOpenSession: (id: string) => void;
   onLaunch: () => void;
   onChanged: () => void;
@@ -89,6 +91,12 @@ export function TaskDetail(props: {
       <p className="status" role="status" aria-live="polite">
         {status}
       </p>
+      <FindingsCompare
+        taskId={task.task_id}
+        projectId={props.project?.project_id}
+        sessions={props.sessions.filter((s) => task.sessions.some((t) => t.session_id === s.session_id))}
+        refreshKey={props.refreshKey}
+      />
     </section>
   );
 }

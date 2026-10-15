@@ -34,7 +34,8 @@ The plan follows the PRD §16 phases (0–4). Each phase ends on demonstrated be
 | 0 Integration validation | Done on the development MacBook: all three runtimes live (`docs/capability-matrix.md`). Mac mini re-run and copy-paste baseline still to do. | `9b476fb`…`b9802eb` |
 | 1 One managed session | **Done.** Storage, ingestion, supervisor, runtime manager, Claude adapter, API + auth + SSE, web client, CLI. Exit tests pass, including a session surviving a full service restart. | `12d37e2`, `455ddbb`, `d45c554`, `598bcb1`, `34a2199`, `a8cb03f`, `6c00415`, `43623e4` |
 | 2 Shared workspace | **Done.** Projects and tasks, Codex and Pi adapters live, discovery and history for all three, attention queue, terminal handoff with a control lease, dashboard and task workspace, opt-in hook installers (Claude and Pi verified live; Codex shape matches its existing hooks file, not yet fired live). | `67b4c2e`, `68e21b2`, `8120936`, `8da8713`, `0be4f4e`, `eddbf93`, WP-2.6 |
-| 3 Findings and transfer | Next | |
+| 3 Findings and transfer | **Done.** Attributed findings by tool and by message, independent reviewers (enforced on Claude and Codex; Pi labelled not isolated), gitleaks-based redaction, context packets with preview, confirm and delivery, retrieval grants and agent tools, compare and synthesis. Exit run passes live (three reviews, one with MCP off; Codex + Pi findings to Claude; saved synthesis; independence holds after transfer). | `7971cb4`…`befe471`, WP-3.6 |
+| 4 History and hardening | In progress | |
 
 Durations are rough single-developer estimates. They are for sequencing, not commitments.
 

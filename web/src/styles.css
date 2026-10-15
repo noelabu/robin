@@ -148,3 +148,20 @@ h3 { font-size: 13px; margin: 12px 0 4px; color: var(--muted); }
 
 label.check { margin: 10px 0 0; color: var(--ink); }
 .warn-text { color: var(--warn); }
+
+.compare { display: grid; gap: 10px; margin-top: 14px; }
+.compare-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.compare-grid { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(260px, 1fr); gap: 12px; overflow-x: auto; }
+.finding-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px; display: grid; gap: 6px; align-content: start; }
+.finding-card header { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.finding-card .summary { margin: 0; }
+.claims { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+label.claim { align-items: flex-start; font-size: 13px; color: var(--ink); }
+.evidence-list { display: flex; flex-wrap: wrap; gap: 6px; padding-left: 22px; }
+.mono { font-family: var(--mono); font-size: 12px; }
+.source-view { margin: 0; border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+.source-view pre, .payload { margin: 6px 0 0; overflow: auto; max-height: 24em; font-size: 12px; white-space: pre; }
+.share { border: 1px solid var(--accent); border-radius: 8px; padding: 10px 12px; }
+.sources { margin: 6px 0; padding-left: 20px; font-size: 13px; }
+.synthesis summary { cursor: pointer; }
+@media (max-width: 760px) { .compare-grid { grid-auto-flow: row; } }

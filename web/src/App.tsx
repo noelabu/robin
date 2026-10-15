@@ -155,6 +155,7 @@ export function App() {
             taskId={task.task_id}
             project={project}
             refreshKey={ws.attentionVersion}
+            sessions={all}
             onOpenSession={setSelected}
             onLaunch={() => setPanel("launch")}
             onChanged={() => void ws.reload()}
