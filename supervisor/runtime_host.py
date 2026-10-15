@@ -7,6 +7,7 @@ Runtimes:
   fake    scripted events, no network; used to test the supervisor
   claude  Claude Agent SDK (needs ANTHROPIC_API_KEY)
   codex   `codex app-server` over stdio JSON-RPC (uses the existing Codex login)
+  pi      `pi --mode rpc` with Robin's approval extension (uses Pi's configured provider)
 
 Commands: {"cmd": "send", "text": ...}, {"cmd": "interrupt"},
           {"cmd": "approval", "request_id": ..., "allow": bool, "message": ...},
@@ -280,7 +281,102 @@ async def run_codex(args):
     emit({"type": "session_stopping"})
 
 
-RUNTIMES = {"fake": run_fake, "claude": run_claude, "codex": run_codex}
+# -- Pi RPC runtime ---------------------------------------------------------------
+
+PI_APPROVAL_EXTENSION = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pi_robin_approval.ts")
+
+
+async def run_pi(args):
+    approvals = Approvals()
+    cmd = ["pi", "--mode", "rpc", "--no-approve", "-e", PI_APPROVAL_EXTENSION]
+    if os.environ.get("ROBIN_PI_SESSION_DIR"):
+        cmd += ["--session-dir", os.environ["ROBIN_PI_SESSION_DIR"]]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, cwd=args.cwd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+        stderr=sys.stderr, limit=MAX_LINE)
+    state = {"busy": False, "next_id": 0}
+    waiting: dict[str, asyncio.Future] = {}
+
+    async def write(msg):
+        proc.stdin.write((json.dumps(msg) + "\n").encode())
+        await proc.stdin.drain()
+
+    async def call(msg) -> dict:
+        state["next_id"] += 1
+        rid = f"robin-{state['next_id']}"
+        fut = asyncio.get_running_loop().create_future()
+        waiting[rid] = fut
+        await write({**msg, "id": rid})
+        return await asyncio.wait_for(fut, 60)
+
+    async def on_ui_request(msg):
+        if msg.get("method") == "confirm" and msg.get("title") == "robin:approval":
+            detail = json.loads(msg.get("message") or "{}")
+            decision = await approvals.request(detail.get("tool", "?"), detail.get("input", {}))
+            await write({"type": "extension_ui_response", "id": msg["id"],
+                         "confirmed": bool(decision.get("allow"))})
+        elif msg.get("method") in ("select", "confirm", "input", "editor"):
+            emit({"type": "pi_unhandled_dialog", "method": msg["method"], "title": msg.get("title")})
+            await write({"type": "extension_ui_response", "id": msg["id"], "cancelled": True})
+        else:  # fire-and-forget UI (notify, setStatus, ...): record, no reply
+            emit({"type": "pi_ui", "method": msg.get("method")})
+
+    async def pump():
+        while line := await proc.stdout.readline():  # splits on LF only, as Pi's framing requires
+            msg = json.loads(line.rstrip(b"\r\n"))
+            kind = msg.get("type")
+            if kind == "response":
+                fut = waiting.pop(msg.get("id"), None)
+                if fut and not fut.done():
+                    fut.set_result(msg)
+                emit({"type": "pi_response", "command": msg.get("command"), "success": msg.get("success"),
+                      "error": msg.get("error")})
+            elif kind == "extension_ui_request":
+                asyncio.create_task(on_ui_request(msg))
+            else:
+                if kind == "agent_start":
+                    state["busy"] = True
+                elif kind == "agent_settled":
+                    state["busy"] = False
+                    approvals.expire_all("run settled")
+                emit({"type": "pi_event", "event": kind, "data": msg})
+        emit({"type": "pi_exited", "returncode": await proc.wait()})
+
+    pump_task = asyncio.create_task(pump())
+    st = await call({"type": "get_state"})
+    data = st.get("data") or {}
+    emit({"type": "session_started", "native_session_id": data.get("sessionId"),
+          "session_file": data.get("sessionFile"), "model": (data.get("model") or {}).get("id"),
+          "launch_token": os.environ.get("ROBIN_LAUNCH_TOKEN"), "error": st.get("error")})
+
+    async for c in stdin_commands():
+        if c["cmd"] == "send":
+            mode = "steer" if state["busy"] else "new_turn"
+            msg = {"type": "prompt", "message": c["text"]}
+            if mode == "steer":
+                msg["streamingBehavior"] = "steer"
+            r = await call(msg)
+            emit({"type": "input_submitted", "mode": mode,
+                  "disposition": (r.get("data") or {}).get("disposition"), "error": r.get("error")})
+        elif c["cmd"] == "interrupt":
+            approvals.expire_all("interrupted")
+            r = await call({"type": "abort"})
+            emit({"type": "interrupt_submitted", "error": r.get("error")})
+        elif c["cmd"] == "approval":
+            approvals.answer(c["request_id"], c)
+        elif c["cmd"] == "stop":
+            break
+    approvals.expire_all("session stopped")
+    proc.stdin.close()
+    try:
+        await asyncio.wait_for(proc.wait(), 10)
+    except asyncio.TimeoutError:
+        proc.terminate()
+    pump_task.cancel()
+    emit({"type": "session_stopping"})
+
+
+RUNTIMES = {"fake": run_fake, "claude": run_claude, "codex": run_codex, "pi": run_pi}
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()

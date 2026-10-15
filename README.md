@@ -12,9 +12,11 @@ The code here is Phase 0 spike code. Its runs are the evidence behind the capabi
 
 | Path | What it proves |
 |---|---|
-| `supervisor/` | A detached supervisor keeps runtime sessions alive across a service kill and replays events from a durable cursor (TR-006, WP-0.2). Runtime hosts for a scripted runtime, the Claude Agent SDK and `codex app-server`. |
+| `supervisor/` | A detached supervisor keeps runtime sessions alive across a service kill and replays events from a durable cursor (TR-006, WP-0.2). Runtime hosts for a scripted runtime, the Claude Agent SDK, `codex app-server` and `pi --mode rpc`. |
 | `claude/findings.md` | Claude Agent SDK results against the capability floor (WP-0.1) |
 | `codex/findings.md` | Codex app-server results against the capability floor (WP-0.1) |
+| `pi/findings.md` | Pi RPC results against the capability floor (WP-0.1) |
+| `docs/capability-matrix.md` | All three runtimes side by side |
 
 ## Setup
 
@@ -34,6 +36,9 @@ uv run python supervisor/test_live.py claude
 
 # Supervisor with a real Codex app-server session: uses your Codex login
 uv run python supervisor/test_live.py codex
+
+# Supervisor with a real Pi RPC session: uses Pi's configured provider
+uv run python supervisor/test_live.py pi
 ```
 
 Each run prints PASS/FAIL lines and the temp directory holding the full event spool. `test_live.py` also writes a summary to `<runtime>/evidence-<timestamp>.json`.

@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-15T02:32:47.627751+00:00",
+  "runtime": "pi",
+  "native_session_id": "01a13d67-6f33-76fe-ad51-2e3018d444c1",
+  "approval": "bash",
+  "interrupt_result": {
+    "type": "pi_event",
+    "event": "agent_settled",
+    "data": {
+      "type": "agent_settled",
+      "aborted": true
+    }
+  },
+  "event_counts": {
+    "host_spawned": 1,
+    "pi_response": 4,
+    "session_started": 1,
+    "input_submitted": 2,
+    "pi_event": 73,
+    "approval_request": 1,
+    "approval_answered": 1,
+    "interrupt_submitted": 1,
+    "session_stopping": 1,
+    "host_exited": 1
+  },
+  "evidence_dir": "/var/folders/rt/2xh6q3653wn_chp30qpk7qx00000gn/T/robin-pi-20_kx_1k"
+}

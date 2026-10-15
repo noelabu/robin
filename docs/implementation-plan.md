@@ -75,6 +75,7 @@ robin/
   supervisor/                    # Phase 0 supervisor and runtime-host spike (evidence)
   claude/                        # Phase 0 Claude Agent SDK findings
   codex/                         # Phase 0 Codex app-server findings
+  pi/                            # Phase 0 Pi RPC findings
   docs/capability-matrix.md      # dated per OS × runtime version (TR-090)
 ```
 

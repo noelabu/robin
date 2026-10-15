@@ -2,6 +2,7 @@
 
     uv run python supervisor/test_live.py claude   # needs ANTHROPIC_API_KEY (env or .env); costs a few cents
     uv run python supervisor/test_live.py codex    # uses the existing Codex login
+    uv run python supervisor/test_live.py pi       # uses Pi's configured provider (OpenRouter here)
 
 Checks native ID capture, event streaming, an approval round-trip after
 the service is SIGKILLed and reconnects, a follow-up, interruption, and
@@ -66,6 +67,15 @@ RUNTIMES = {
         "prompt": "Run the shell command `touch robin_probe.txt` in the current directory. Then reply DONE.",
         # Stricter than the user's default so the command needs approval (never more permissive).
         "env": lambda: {"ROBIN_CODEX_APPROVAL_POLICY": "untrusted"},
+    },
+    "pi": {
+        "native_event": ev("session_started"),
+        "native_id": lambda e: e["event"].get("native_session_id"),
+        "result": lambda e: e["event"].get("type") == "pi_event" and e["event"]["event"] == "agent_settled",
+        "streaming": lambda e: e["event"].get("type") == "pi_event" and e["event"]["event"] == "message_update",
+        "prompt": "Run the shell command `touch robin_probe.txt` in the current directory. Then reply DONE.",
+        # Keep test sessions out of the user's Pi session list.
+        "env": lambda: {"ROBIN_PI_SESSION_DIR": tempfile.mkdtemp(prefix="robin-pi-sessions-")},
     },
 }
 
