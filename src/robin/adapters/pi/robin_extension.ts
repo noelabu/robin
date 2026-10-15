@@ -67,4 +67,59 @@ export default function (pi: ExtensionAPI) {
       return { content: [{ type: "text", text }] };
     },
   });
+
+  // Retrieval tools (TR-066): scoped by this session's own Robin credential to what the user granted it.
+  const url = process.env.ROBIN_SERVICE_URL;
+  const token = process.env.ROBIN_AGENT_TOKEN;
+  if (!url || !token) return;
+  const callRobin = async (method: string, path: string, body?: unknown): Promise<string> => {
+    try {
+      const res = await fetch(`${url}/api/v1${path}`, {
+        method,
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const text = await res.text();
+      if (res.ok) return text;
+      try {
+        return `Robin refused: ${JSON.parse(text).error.message}`;
+      } catch {
+        return `Robin refused: HTTP ${res.status}`;
+      }
+    } catch {
+      return "Robin isn't reachable right now; try again later.";
+    }
+  };
+  const readOnly = { readOnlyHint: true, openWorldHint: false };
+  const tools: [string, string, any, (p: any) => Promise<string>][] = [
+    ["robin_task_get", "Get this session's Robin task: title, objective, instructions and expected outputs.",
+      Type.Object({}), () => callRobin("GET", "/agent/task")],
+    ["robin_finding_list", "List the findings you can read: your own, and those the user shared with you.",
+      Type.Object({}), () => callRobin("GET", "/agent/findings")],
+    ["robin_finding_read", "Read one finding you can see (robin_finding_list shows which).",
+      Type.Object({ finding_id: Type.String() }),
+      (p) => callRobin("GET", `/agent/findings/${encodeURIComponent(p.finding_id)}`)],
+    ["robin_session_search", "Search the transcript ranges the user shared with you. Returns cursors and snippets.",
+      Type.Object({ query: Type.String() }), (p) => callRobin("POST", "/agent/search", p)],
+    ["robin_session_read_excerpt", "Read messages from a transcript range the user shared with you.",
+      Type.Object({ session_id: Type.String(), after: Type.Integer(), through: Type.Integer() }),
+      (p) => callRobin("POST", "/agent/excerpt", p)],
+    ["robin_artifact_publish",
+      "Save a written result (for example a synthesis) to the Robin task, listing the finding IDs it is based on " +
+        "as inputs. New claims need their own evidence.",
+      Type.Object({ title: Type.String(), text: Type.String(), inputs: Type.Optional(Type.Array(Type.String())) }),
+      (p) => callRobin("POST", "/agent/artifacts", { ...p, inputs: p.inputs ?? [] })],
+  ];
+  for (const [name, description, parameters, run] of tools) {
+    pi.registerTool({
+      name,
+      label: name.replace("robin_", "Robin: ").replaceAll("_", " "),
+      description,
+      parameters,
+      annotations: readOnly,
+      async execute(_toolCallId: string, params: any) {
+        return { content: [{ type: "text", text: await run(params) }] };
+      },
+    });
+  }
 }

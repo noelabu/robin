@@ -435,6 +435,37 @@ def cmd_context(args: argparse.Namespace) -> None:
                 _print_packet(p)
 
 
+def cmd_grant(args: argparse.Namespace) -> None:
+    """Let one session read exact finding versions or transcript ranges (TR-068)."""
+    with client(args.data) as c:
+        if args.revoke:
+            call(c, "DELETE", f"/grants/{args.revoke}")
+            print(f"revoked {args.revoke}")
+            return
+        if not args.session:
+            raise CliError("robin grant --session S [--findings A,B] [--excerpt SESSION:AFTER:THROUGH]")
+        if args.findings or args.excerpt:
+            body = {
+                "session_id": args.session,
+                "artifacts": [{"id": f} for f in (args.findings or "").split(",") if f],
+                "excerpts": [
+                    {"session_id": sid, "after": int(a), "through": int(t)}
+                    for sid, a, t in ((x.split(":", 2) + ["", ""])[:3] for x in args.excerpt or [])
+                ],
+            }
+            call(c, "POST", "/grants", body)
+        result = call(c, "GET", f"/grants?session_id={args.session}")
+    for g in result["grants"]:
+        what = (
+            f"{g['artifact_id']} v{g['version']}"
+            if g["kind"] == "artifact"
+            else f"{g['excerpt_session_id']} events {g['after_cursor']}–{g['through_cursor']}"
+        )
+        print(f"{g['grant_id']}  {g['kind']:<8} {what}")
+    for r in result["reads"][-10:]:
+        print(f"read {r['at']}  {r['tool']}  {r['bytes']} bytes  {r['content_hash'][:19]}")
+
+
 def cmd_hooks(args: argparse.Namespace) -> None:
     """Opt-in, observe-only hooks (TR-076). Shows exactly what changes and writes only on confirmation."""
     from robin.hooks import install as hooks
@@ -666,6 +697,13 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--confirm", help="deliver: the payload hash you reviewed")
     p.add_argument("--wait", type=float, default=10)
     p.set_defaults(func=cmd_context)
+
+    p = sub.add_parser("grant", parents=[common], help="let a session read shared findings or excerpts")
+    p.add_argument("--session", help="the session that may read")
+    p.add_argument("--findings", help="finding IDs, comma-separated (pinned to their current version)")
+    p.add_argument("--excerpt", action="append", help="SESSION:AFTER:THROUGH event cursors")
+    p.add_argument("--revoke", metavar="GRANT_ID")
+    p.set_defaults(func=cmd_grant)
 
     p = sub.add_parser("hooks", parents=[common], help="opt-in hooks for sessions started outside Robin")
     p.add_argument("action", choices=["status", "install", "uninstall"])

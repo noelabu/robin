@@ -118,6 +118,9 @@ async def run_codex(args: argparse.Namespace) -> None:
         config.setdefault("mcp_servers", {})["robin"] = {
             "command": sys.executable,
             "args": ["-m", "robin.findings.mcp_server"],
+            # Codex starts MCP servers with a clean environment; pass the session's credential through by
+            # name so the token never lands in Codex's own config or history.
+            "env_vars": ["ROBIN_AGENT_TOKEN", "ROBIN_SERVICE_URL"],
         }
     resume = os.environ.get("ROBIN_RESUME_NATIVE_ID")
     reply = await (

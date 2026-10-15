@@ -14,7 +14,7 @@ import os
 import uuid
 from typing import Any
 
-from robin import __version__
+from robin import __version__, agent_client
 from robin.adapters.claude.translate import translate
 from robin.findings import schema
 from robin.runtime.host import Approvals, emit, emit_message_findings, runtime, stdin_commands
@@ -64,13 +64,27 @@ async def run_claude(args: argparse.Namespace) -> None:
         return {"content": [{"type": "text", "text": text}]}
 
     publish_tool = "tool" in os.environ.get("ROBIN_FINDINGS", "")
+
+    def retrieval_tool(name: str) -> Any:
+        spec = agent_client.TOOLS[name]
+
+        @tool(name, spec["description"], spec["schema"])
+        async def handler(args: dict[str, Any]) -> dict[str, Any]:
+            text = await asyncio.to_thread(agent_client.call, name, args)
+            return {"content": [{"type": "text", "text": text}]}
+
+        return handler
+
+    tools = [finding_publish]
+    if agent_client.available():  # task- and session-scoped by this session's credential (TR-066)
+        tools += [retrieval_tool(name) for name in agent_client.TOOLS]
     mcp: dict[str, Any] = {}
     if publish_tool:
-        mcp["robin"] = create_sdk_mcp_server(name="robin", version=__version__, tools=[finding_publish])
+        mcp["robin"] = create_sdk_mcp_server(name="robin", version=__version__, tools=tools)
     deny = os.environ.get("ROBIN_DENY_READ")
     options = ClaudeAgentOptions(
         mcp_servers=mcp,
-        allowed_tools=[f"mcp__robin__{schema.TOOL_NAME}"] if publish_tool else [],
+        allowed_tools=[f"mcp__robin__{t.name}" for t in tools] if publish_tool else [],
         cwd=args.cwd,
         setting_sources=["user", "project", "local"],
         permission_mode="default",

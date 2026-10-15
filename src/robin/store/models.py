@@ -63,6 +63,7 @@ PUBLICATION_PATHS = ("tool", "message", "user")
 SUBMISSION_STATES = ("accepted", "rejected")
 LINEAGE_RELATIONS = ("parent", "input")
 PACKET_STATES = ("previewed", "confirmed", "invalidated", "delivered")
+GRANT_KINDS = ("artifact", "excerpt")
 
 
 class Meta(Base):
@@ -526,3 +527,51 @@ class ContextDelivery(Base):
     action_id: Mapped[str] = mapped_column(ForeignKey("control_action.action_id"), unique=True)
     target_session_id: Mapped[str] = mapped_column(ForeignKey("session.session_id"))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class AgentCredential(Base):
+    """The credential a managed session's tools use to call Robin (TR-066). Only its hash is stored. It
+    identifies the session; it grants nothing beyond that session's retrieval grants and own artifacts."""
+
+    __tablename__ = "agent_credential"
+    session_id: Mapped[str] = mapped_column(ForeignKey("session.session_id"), primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String, unique=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class RetrievalGrant(Base):
+    """What one session may read (TR-068): an exact artifact version or an exact excerpt range, approved by
+    the user. Grants never widen to newer versions or wider ranges, and can be revoked."""
+
+    __tablename__ = "retrieval_grant"
+    __table_args__ = (
+        CheckConstraint(_in("kind", GRANT_KINDS), name="kind"),
+        Index("ix_retrieval_grant_session", "session_id", "revoked_at"),
+    )
+    grant_id: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("session.session_id"))
+    task_id: Mapped[str] = mapped_column(ForeignKey("task.task_id"))
+    kind: Mapped[str] = mapped_column(String)
+    artifact_id: Mapped[str | None] = mapped_column(ForeignKey("artifact.artifact_id"))
+    version: Mapped[int | None] = mapped_column(Integer)
+    excerpt_session_id: Mapped[str | None] = mapped_column(ForeignKey("session.session_id"))
+    after_cursor: Mapped[int | None] = mapped_column(Integer)
+    through_cursor: Mapped[int | None] = mapped_column(Integer)
+    approved_by: Mapped[str] = mapped_column(ForeignKey("audit_entry.audit_id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class RetrievalRead(Base):
+    """One read by an agent through Robin's tools: what it asked for and the exact content it got."""
+
+    __tablename__ = "retrieval_read"
+    __table_args__ = (Index("ix_retrieval_read_session", "session_id", "at"),)
+    read_id: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("session.session_id"))
+    tool: Mapped[str] = mapped_column(String)
+    request: Mapped[str] = mapped_column(Text)  # JSON
+    grant_ids: Mapped[str] = mapped_column(Text)  # JSON list; empty for the session's own artifacts
+    content_blob: Mapped[str] = mapped_column(ForeignKey("blob.sha256"))
+    size: Mapped[int] = mapped_column(Integer)
+    at: Mapped[datetime] = mapped_column(UTCDateTime)

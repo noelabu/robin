@@ -117,9 +117,9 @@ async def run_fake(args: argparse.Namespace) -> None:
             "type": "session_started",
             "native_session_id": os.environ.get("ROBIN_RESUME_NATIVE_ID") or uuid.uuid4().hex,
             "launch_token": os.environ.get("ROBIN_LAUNCH_TOKEN"),
-            "deny_read": os.environ.get(
-                "ROBIN_DENY_READ"
-            ),  # lets tests see what a real adapter would enforce
+            # What a real adapter would enforce or offer, so tests can see the launch env took effect.
+            "deny_read": os.environ.get("ROBIN_DENY_READ"),
+            "agent_tools": bool(os.environ.get("ROBIN_AGENT_TOKEN") and os.environ.get("ROBIN_SERVICE_URL")),
         }
     )
     turn: asyncio.Task[None] | None = None

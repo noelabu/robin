@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import Connection, func, select
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from robin import retrieval
 from robin.events.ingest import ensure_session, read_events, read_payload_json
 from robin.paths import ExecutionCwd, secure_mkdir
 from robin.runtime.capabilities import RUNTIME_CAPABILITIES, capabilities_for
@@ -377,6 +378,9 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         env: dict[str, str] = {}
         if body.task_id:
             env["ROBIN_FINDINGS"] = "tool,message" if body.finding_tool else "message"
+        if body.task_id:  # the session's tools reach Robin with their own, session-scoped credential
+            env["ROBIN_AGENT_TOKEN"] = await asyncio.to_thread(retrieval.mint, store, sid)
+            env["ROBIN_SERVICE_URL"] = f"http://127.0.0.1:{auth.port}"
         if body.independent:
             independence = runtime.manager.independence_env(body.runtime, env)
             await asyncio.to_thread(ws.set_independence, store, sid, independence)
@@ -627,12 +631,19 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
     async def health(_: str = Authed) -> dict[str, Any]:
         return {"service": "ready", "supervisor_connected": runtime.supervisor_connected, "pid": os.getpid()}
 
-    from robin.service import routes_attention, routes_context, routes_findings, routes_workspace
+    from robin.service import (
+        routes_agent,
+        routes_attention,
+        routes_context,
+        routes_findings,
+        routes_workspace,
+    )
 
     routes_workspace.register(app, store, Authed, API)
     routes_attention.register(app, runtime, Authed, API, _error)
     routes_findings.register(app, runtime, Authed, API, _error)
     routes_context.register(app, runtime, Authed, API, _error)
+    routes_agent.register(app, runtime, Authed, API, _error)
 
     # -- web client (mounted last: it matches every path) ----------------------
 

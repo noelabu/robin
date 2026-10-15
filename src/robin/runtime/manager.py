@@ -211,6 +211,12 @@ class RuntimeManager:
         env = {"ROBIN_RESUME_NATIVE_ID": (row["native_session_id"] or "") if row else ""}
         if row and row["current_task_id"]:
             env["ROBIN_FINDINGS"] = "tool,message"
+            url = _service_url(self.store)
+            if url:  # a new host gets a new credential; the old one stops working
+                from robin import retrieval
+
+                env["ROBIN_AGENT_TOKEN"] = await asyncio.to_thread(retrieval.mint, self.store, session_id)
+                env["ROBIN_SERVICE_URL"] = url
         if row and row["independence"] == "enforced":  # a reviewer stays a reviewer after a handoff
             self.independence_env(row["runtime"], env)
         msg = {
@@ -552,3 +558,10 @@ def _pending(conn: Connection, session_id: str, action_type: str) -> list[str]:
             )
         ).scalars()
     )
+
+
+def _service_url(store: Store) -> str | None:
+    try:
+        return str(json.loads((store.data_dir / "service.json").read_text())["url"])
+    except (OSError, ValueError, KeyError):
+        return None
