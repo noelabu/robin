@@ -293,3 +293,57 @@ def test_reloaded_page_recovers_csrf_from_cookie(service):
     assert b.get("/api/v1/auth/session").json()["csrf_token"] == b.headers[CSRF_HEADER]
     with httpx.Client(base_url=base(port), timeout=5) as anon:
         assert anon.get("/api/v1/auth/session").status_code == 401
+
+
+def test_phase1_exit_session_survives_a_full_service_restart(supervised):
+    """Launch, stop the whole HTTP service, start a new one: the session is still running and controllable."""
+
+    def start(store):
+        port = free_port()
+        server, auth = build(store, port)
+        thread = threading.Thread(target=lambda: asyncio.run(server.serve()), daemon=True)
+        thread.start()
+        while not server.started:
+            time.sleep(0.02)
+        return server, thread, port, auth
+
+    store = supervised
+    server, thread, port, auth = start(store)
+    c = cli(port, auth)
+    r = c.post(
+        "/api/v1/sessions/launch",
+        json={"runtime": "fake", "cwd": work(store), "prompt": "go", "action_id": aid()},
+    )
+    sid = r.json()["session_id"]
+    wait_session(c, sid, lambda s: s["runtime_state"] == "running")
+    server.should_exit = True
+    thread.join(10)
+
+    server2, thread2, port2, auth2 = start(store)  # a new service process
+    try:
+        c2 = cli(port2, auth2)
+        s = wait_session(
+            c2,
+            sid,
+            lambda s: (
+                s["connection_state"] == "connected"
+                and s["runtime_state"] in ("running", "waiting_for_input")
+            ),
+        )
+        assert s["controls"]["interrupt"]["enabled"]
+        intr = aid()
+        c2.post(f"/api/v1/sessions/{sid}/actions", json={"type": "interrupt", "action_id": intr})
+        deadline = time.time() + 10
+        while c2.get(f"/api/v1/actions/{intr}").json()["state"] != "acknowledged" and time.time() < deadline:
+            time.sleep(0.05)
+        assert c2.get(f"/api/v1/actions/{intr}").json()["state"] == "acknowledged"
+        launches = [
+            e
+            for e in c2.get("/api/v1/events?limit=500").json()["events"]
+            if e["session_id"] == sid and e["event_type"] == "connection.connected"
+        ]
+        assert len(launches) == 1  # never relaunched
+        c2.post(f"/api/v1/sessions/{sid}/actions", json={"type": "stop", "action_id": aid()})
+    finally:
+        server2.should_exit = True
+        thread2.join(10)

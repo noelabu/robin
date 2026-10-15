@@ -62,4 +62,5 @@ def serve(data_dir: Path | None = None, port: int = DEFAULT_PORT, open_browser: 
             webbrowser.open(url)
         asyncio.run(server.serve())
     finally:
+        (store.data_dir / "service.json").unlink(missing_ok=True)
         store.close()

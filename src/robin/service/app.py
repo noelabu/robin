@@ -325,6 +325,22 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
             raise ApiError(status, exc.code, str(exc), "reload_state") from exc
         return result
 
+    class ShutdownBody(BaseModel):
+        confirm_sessions: list[str]
+
+    @app.post(f"{API}/supervisor/shutdown")
+    async def supervisor_shutdown(body: ShutdownBody, _: str = Authed) -> dict[str, Any]:
+        """Stopping the supervisor ends its sessions, so the request names exactly those (TR-072)."""
+        client = runtime.manager.client
+        if client is None:
+            raise ApiError(503, "supervisor_unavailable", "no supervisor connection", "retry_later")
+        reply = await client.request({"type": "shutdown", "confirm_sessions": body.confirm_sessions})
+        if not reply.get("ok"):
+            raise ApiError(
+                409, str(reply.get("error")), f"would end: {reply.get('would_end')}", "fix_request"
+            )
+        return {"ending": reply.get("ending", [])}
+
     @app.get(f"{API}/actions/{{action_id}}")
     async def get_action(action_id: str, _: str = Authed) -> dict[str, Any]:
         action = await runtime.manager.get_action(action_id)

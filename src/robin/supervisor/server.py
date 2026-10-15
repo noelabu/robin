@@ -160,6 +160,11 @@ class Supervisor:
             hello = decode(await reader.readline())
         except ValueError:
             return
+        if hello.get("type") == "probe":  # read-only status for diagnostics: never becomes the service
+            writer.write(encode({"type": "probe_ok", "protocol": PROTOCOL_VERSION, "generation": self.generation,
+                                 "sessions": self.summary(), "head": self.spool.seq, "acked": self.spool.acked}))
+            await writer.drain()
+            return
         if hello.get("type") != "hello" or hello.get("protocol") != PROTOCOL_VERSION:
             writer.write(encode({"type": "hello_rejected", "protocol": PROTOCOL_VERSION}))
             await writer.drain()

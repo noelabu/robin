@@ -1,6 +1,7 @@
 """The supervisor's wire protocol (TR-006): one JSON object per line over a user-only Unix socket.
 
 Service -> supervisor: hello, ack, launch, command, status, shutdown.
+Diagnostics -> supervisor: probe (read-only status; never replaces the service's connection).
 Supervisor -> service: hello_ok / hello_rejected, event, reply.
 Runtime host <-> supervisor: events on the host's stdout, commands on its stdin, same framing.
 
