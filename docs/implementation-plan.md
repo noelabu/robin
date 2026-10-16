@@ -366,12 +366,12 @@ A minimal detached process holding one runtime child over a Unix socket. Kill an
 
 TR-091: P1 must not delay the first complete P0 vertical slice.
 
-| Item | Requirement | Builds on |
-|---|---|---|
-| Lineage-based loop exclusion by default | FR-025, TR-065 | Lineage edges from WP-3.6 |
-| Notifications | FR-033 | Attention and run events |
-| Richer Git context (base commit, working-tree state, changed files per run) | FR-050, TR-075 | WP-2.1 Git reader |
-| Optional task worktrees | FR-051, TR-070, TR-072 | Owner decision 2026-10-15: not needed for the first accepted workflow; stays P1 |
+| Item | Requirement | Builds on | State |
+|---|---|---|---|
+| Lineage-based loop exclusion by default | FR-025, TR-065 | Lineage edges from WP-3.6 | **Done** `1394bd2` |
+| Notifications | FR-033 | Attention and run events | **Done** `b1c3e50` (macOS, opt-in) |
+| Richer Git context (base commit, working-tree state, changed files per run) | FR-050, TR-075 | WP-2.1 Git reader | **Done** `3a2dccc` |
+| Optional task worktrees | FR-051, TR-070, TR-072 | Owner decision 2026-10-15: not needed for the first accepted workflow; stays P1 | **Done** `2293577` |
 
 ---
 
