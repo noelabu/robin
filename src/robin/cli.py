@@ -470,6 +470,8 @@ def _print_packet(p: dict[str, Any]) -> None:
         print(f"  redacted: {hits}")
     for f in p["flags"]:
         print(f"  note: {f}")
+    for x in p.get("excluded", []):
+        print(f"  left out: {x['label']} ({x['reason']}); add --allow-loop {x['id']} to include it")
     print(f"  {p['bytes']:,} bytes, ~{p['approx_tokens']:,} tokens (approximate)")
     print(f"  payload {p['payload_hash']}")
     for d in p["deliveries"]:
@@ -492,6 +494,7 @@ def cmd_context(args: argparse.Namespace) -> None:
                     {"session_id": sid, "after": int(a), "through": int(t) if t else None}
                     for sid, a, t in ((x.split(":", 2) + ["", ""])[:3] for x in args.excerpt or [])
                 ],
+                "allow_loops": getattr(args, "allow_loop", None) or [],
             }
             p = call(c, "POST", "/context/preview", body)
             if args.show:
@@ -542,6 +545,7 @@ def cmd_grant(args: argparse.Namespace) -> None:
                     {"session_id": sid, "after": int(a), "through": int(t)}
                     for sid, a, t in ((x.split(":", 2) + ["", ""])[:3] for x in args.excerpt or [])
                 ],
+                "allow_loops": args.allow_loop or [],
             }
             call(c, "POST", "/grants", body)
         result = call(c, "GET", f"/grants?session_id={args.session}")
@@ -997,6 +1001,12 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--show", action="store_true", help="print the exact payload")
     p.add_argument("--confirm", help="deliver: the payload hash you reviewed")
     p.add_argument("--cursor", type=int, help="save: which reply (default: the latest since delivery)")
+    p.add_argument(
+        "--allow-loop",
+        action="append",
+        metavar="ID",
+        help="include this source although it is the recipient's own output (repeatable)",
+    )
     p.add_argument("--wait", type=float, default=10)
     p.set_defaults(func=cmd_context)
 
@@ -1010,6 +1020,12 @@ def parser() -> argparse.ArgumentParser:
     ):
         p.add_argument(flag, **kw)  # type: ignore[arg-type]
     p.add_argument("--show", action="store_true")
+    p.add_argument(
+        "--allow-loop",
+        action="append",
+        metavar="ID",
+        help="include this source although it is the recipient's own output (repeatable)",
+    )
     p.set_defaults(func=cmd_context, action="preview", packet=None, confirm=None, cursor=None, wait=10)
 
     p = sub.add_parser("compare", parents=[common], help="a task's findings side by side")
@@ -1022,12 +1038,24 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--findings", required=True, help="finding IDs, comma-separated")
     p.add_argument("--question", help="instead of the default synthesis request")
     p.add_argument("--show", action="store_true")
+    p.add_argument(
+        "--allow-loop",
+        action="append",
+        metavar="ID",
+        help="include this source although it is the recipient's own output (repeatable)",
+    )
     p.set_defaults(func=cmd_synthesize, confirm=None, cursor=None, wait=10)
 
     p = sub.add_parser("grant", parents=[common], help="let a session read shared findings or excerpts")
     p.add_argument("--session", help="the session that may read")
     p.add_argument("--findings", help="finding IDs, comma-separated (pinned to their current version)")
     p.add_argument("--excerpt", action="append", help="SESSION:AFTER:THROUGH event cursors")
+    p.add_argument(
+        "--allow-loop",
+        action="append",
+        metavar="ID",
+        help="include this source although it is the recipient's own output (repeatable)",
+    )
     p.add_argument("--revoke", metavar="GRANT_ID")
     p.set_defaults(func=cmd_grant)
 

@@ -20,6 +20,7 @@ from typing import Any
 
 from sqlalchemy import Connection, insert, select, update
 
+from robin.context import lineage
 from robin.events.ingest import read_payload_json
 from robin.findings.store import _put
 from robin.ids import new_id, utc_now
@@ -74,6 +75,9 @@ class Selection:
     excerpts: tuple[tuple[str, int, int | None], ...] = ()  # (session id, after cursor, through cursor)
     attachments: tuple[str, ...] = ()
     include_objective: bool = True
+    # Sources (finding IDs, or session IDs for excerpts) to include even though they come from the
+    # recipient's own output (FR-025). Everything else that does is left out.
+    allow_loops: tuple[str, ...] = ()
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -84,6 +88,7 @@ class Selection:
             "excerpts": [list(e) for e in self.excerpts],
             "attachments": list(self.attachments),
             "include_objective": self.include_objective,
+            "allow_loops": list(self.allow_loops),
         }
 
     @classmethod
@@ -99,6 +104,7 @@ class Selection:
             excerpts=tuple((e[0], int(e[1]), e[2]) for e in d.get("excerpts", [])),
             attachments=tuple(d.get("attachments", [])),
             include_objective=bool(d.get("include_objective", True)),
+            allow_loops=tuple(d.get("allow_loops", [])),
         )
 
 
@@ -108,6 +114,7 @@ class Built:
     sources: list[dict[str, Any]] = field(default_factory=list)
     redactions: list[dict[str, Any]] = field(default_factory=list)
     target: dict[str, Any] = field(default_factory=dict)
+    excluded: list[dict[str, Any]] = field(default_factory=list)  # left out as context loops (FR-025)
 
     @property
     def payload_hash(self) -> str:
@@ -123,6 +130,19 @@ def build(store: Store, sel: Selection) -> Built:
         raise ContextError("invalid_request", "say what you want the recipient to do with this context")
     rules = for_data_dir(store.data_dir)
     sections: list[tuple[dict[str, Any], str]] = []  # (source record, raw text)
+    excluded: list[dict[str, Any]] = []
+
+    def loop(source: dict[str, Any], why: str | None) -> bool:
+        """True when the source is left out because it is the recipient's own output."""
+        if why is None:
+            return False
+        if source["id"] in sel.allow_loops:
+            source.setdefault("flags", []).append(f"recipient's own output ({why}); included by you")
+            source["label"] += " · the recipient's own output, included by you"
+            return False
+        excluded.append({"kind": source["kind"], "id": source["id"], "label": source["label"], "reason": why})
+        return True
+
     with store.reader.connect() as conn:
         task = conn.execute(select(Task).where(Task.task_id == sel.task_id)).mappings().first()
         if task is None:
@@ -146,9 +166,14 @@ def build(store: Store, sel: Selection) -> Built:
         for att_id in sel.attachments:
             sections.append(_attachment(store, conn, sel.task_id, att_id))
         for fid, version, claims in sel.findings:
-            sections.append(_finding(store, conn, sel.task_id, fid, version, claims))
+            source, raw = _finding(store, conn, sel.task_id, fid, version, claims)
+            found = lineage.own_output(conn, fid, source["version"], sel.target_session_id)
+            if not loop(source, lineage.reason(found) if found else None):
+                sections.append((source, raw))
         for sid, after, through in sel.excerpts:
-            sections.append(_excerpt(store, conn, sid, after, through))
+            source, raw = _excerpt(store, conn, sid, after, through)
+            if not loop(source, "the recipient's own transcript" if sid == sel.target_session_id else None):
+                sections.append((source, raw))
 
     parts = [f'<robin-context task="{sel.task_id}">', FRAMING, ""]
     redactions: list[dict[str, Any]] = []
@@ -199,7 +224,7 @@ def build(store: Store, sel: Selection) -> Built:
         "control_owner": target["control_owner"],
         "independence": target["independence"],
     }
-    return Built(text=text, sources=sources, redactions=redactions, target=tgt)
+    return Built(text=text, sources=sources, redactions=redactions, target=tgt, excluded=excluded)
 
 
 def _attachment(store: Store, conn: Connection, task_id: str, att_id: str) -> tuple[dict[str, Any], str]:
@@ -349,6 +374,7 @@ def preview(store: Store, sel: Selection) -> dict[str, Any]:
         "sources": built.sources,
         "redactions": built.redactions,
         "target": built.target,
+        "excluded": built.excluded,
     }
 
     def work(conn: Connection) -> None:
@@ -585,6 +611,7 @@ def get(store: Store, packet_id: str, include_text: bool = True) -> dict[str, An
         "question": manifest["selection"]["question"],
         "sources": manifest["sources"],
         "redactions": manifest["redactions"],
+        "excluded": manifest.get("excluded", []),
         "flags": flags,
         "bytes": p["size"],
         "approx_tokens": round(p["size"] / 4),  # explicitly approximate (TR-061)

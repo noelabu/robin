@@ -169,7 +169,7 @@ export function FindingsCompare(props: {
   );
 }
 
-function SharePanel(props: {
+export function SharePanel(props: {
   taskId: string;
   picks: { id: string; version: number; claims: number[] | null }[];
   sessions: Session[];
@@ -190,7 +190,8 @@ function SharePanel(props: {
     }
   }
 
-  const preview = () =>
+  const [allowLoops, setAllowLoops] = useState<string[]>([]);
+  const preview = (allow = allowLoops) =>
     run("Preview", async () =>
       setPacket(
         await api.previewContext({
@@ -199,9 +200,15 @@ function SharePanel(props: {
           question,
           findings: props.picks,
           include_objective: true,
+          allow_loops: allow,
         }),
       ),
     );
+  const includeAnyway = (id: string) => {
+    const allow = [...allowLoops, id];
+    setAllowLoops(allow);
+    void preview(allow);
+  };
   const send = () =>
     run("Send", async () => {
       if (!packet) return;
@@ -259,6 +266,18 @@ function SharePanel(props: {
               <li key={s.n}>{s.label}</li>
             ))}
           </ol>
+          {packet.excluded.length > 0 && (
+            <ul className="excluded" aria-label="Left out">
+              {packet.excluded.map((x) => (
+                <li key={x.id} className="hint warn">
+                  Left out: {x.label} ({x.reason}).{" "}
+                  {packet.state === "previewed" && (
+                    <button onClick={() => includeAnyway(x.id)}>Include anyway</button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
           {packet.redactions.length > 0 && (
             <p className="hint warn">
               Redacted: {packet.redactions.map((r) => `${r.rule_id} (source ${r.source})`).join(", ")}

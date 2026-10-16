@@ -175,3 +175,23 @@ def test_a_sessions_credential_dies_with_its_host(api):
     wait(lambda: c.get(f"/sessions/{sid}").json()["connection_state"] == "disconnected")
     assert wait(lambda: a.get("/agent/task").status_code == 401)
     assert a.post("/agent/artifacts", json={"title": "t", "text": "x", "inputs": []}).status_code == 401
+
+
+def test_a_grant_of_a_sessions_own_work_back_needs_an_explicit_allow(api):
+    """FR-025 on the retrieval path: a finding built on the session's own output isn't granted by default."""
+    _, c, task_id, _ = api
+    writer = launch(c, task_id)
+    say(c, writer, block(GOOD))
+    (own,) = wait(lambda: c.get(f"/findings?task_id={task_id}").json()["findings"])
+    derived = c.post(
+        "/findings",
+        json={
+            **{k: GOOD[k] for k in ("summary", "claims")},
+            "task_id": task_id,
+            "parents": [own["finding_id"]],
+        },
+    ).json()
+    body = {"session_id": writer, "artifacts": [{"id": derived["finding_id"]}]}
+    r = c.post("/grants", json=body)
+    assert r.status_code == 409 and r.json()["error"]["code"] == "context_loop"
+    assert c.post("/grants", json={**body, "allow_loops": [derived["finding_id"]]}).status_code == 201

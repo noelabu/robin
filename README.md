@@ -74,7 +74,7 @@ robin synthesize --task <task> --to <session> --findings <id>,<id>
 robin search "token refresh"
 ```
 
-Nothing reaches another agent until you confirm the exact payload hash. Secrets are redacted before anything is stored, indexed or shared. Reviewers launched with `--independent` cannot read other agents' findings unless you grant them.
+Nothing reaches another agent until you confirm the exact payload hash. Secrets are redacted before anything is stored, indexed or shared. Reviewers launched with `--independent` cannot read other agents' findings unless you grant them. A session is never handed its own output back, directly or through a finding built on it, unless you include it with `--allow-loop`.
 
 ### Backup and restore
 

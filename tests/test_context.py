@@ -309,3 +309,35 @@ def test_cli_excerpt_with_a_through_bound(api, capsys, monkeypatch):
     )
     out = capsys.readouterr().out
     assert "one" in out and "two" in out and "three" not in out and "(2 messages)" in out
+
+
+def test_a_recipients_own_output_is_left_out_unless_included(api):
+    """FR-025: a session never gets its own work back by default, directly or through a derived finding."""
+    store, c, task_id, _ = api
+    target, other = launch(c, task_id), launch(c, task_id)
+    say(c, target, block(GOOD))
+    (own,) = wait(lambda: c.get(f"/findings?task_id={task_id}").json()["findings"])
+    derived = publish_user(c, task_id, summary="Restated", parents=[own["finding_id"]])
+    independent = publish_user(c, task_id, summary="Separate review")
+    wait(lambda: [e for e in read_events(store, session_id=target) if e.event_type == "message.completed"])
+    after = min(e.global_cursor for e in read_events(store, session_id=target)) - 1
+    picks = [{"id": f["finding_id"]} for f in (own, derived, independent)]
+
+    p = preview(c, task_id, target, findings=picks, excerpts=[{"session_id": target, "after": after}]).json()
+    assert [s["id"] for s in p["sources"]] == [task_id, independent["finding_id"]]
+    left = {x["id"]: x["reason"] for x in p["excluded"]}
+    assert left == {
+        own["finding_id"]: "the recipient wrote this",
+        derived["finding_id"]: f"built on the recipient's own finding {own['finding_id'][:8]}",
+        target: "the recipient's own transcript",
+    }
+    assert "Restated" not in p["text"] and GOOD["summary"] not in p["text"]
+    ok = c.post(f"/context/{p['packet_id']}/confirm", json={"payload_hash": p["payload_hash"]})
+    assert ok.status_code == 200  # the rebuild leaves out the same sources
+
+    p = preview(c, task_id, target, findings=picks[1:], allow_loops=[derived["finding_id"]]).json()
+    assert [s["id"] for s in p["sources"]][1] == derived["finding_id"] and "Restated" in p["text"]
+    assert any("included by you" in f for f in p["flags"])
+
+    p = preview(c, task_id, other, findings=picks).json()  # another session gets all of it
+    assert p["excluded"] == [] and len(p["sources"]) == 4

@@ -111,6 +111,7 @@ export type Packet = {
   question: string;
   sources: { n: number; kind: string; id: string; label: string; content_hash: string; flags?: string[] }[];
   redactions: { source: number | string; rule_id: string }[];
+  excluded: { kind: string; id: string; label: string; reason: string }[];
   flags: string[];
   bytes: number;
   approx_tokens: number;
@@ -302,6 +303,7 @@ export const api = {
     question: string;
     findings: { id: string; version: number; claims: number[] | null }[];
     include_objective: boolean;
+    allow_loops?: string[];
   }) => request<Packet>("POST", "/context/preview", body),
   getContext: (id: string) => request<Packet>("GET", `/context/${id}`),
   confirmContext: (id: string, hash: string) =>

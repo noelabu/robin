@@ -31,6 +31,7 @@ class GrantBody(BaseModel):
     session_id: str
     artifacts: list[ArtifactRef] = []
     excerpts: list[ExcerptRange] = []
+    allow_loops: list[str] = []  # sources to grant although they are the session's own output
 
 
 class SearchBody(BaseModel):
@@ -111,6 +112,7 @@ def register(app: FastAPI, runtime: ServiceRuntime, authed: Any, api: str, error
                 body.session_id,
                 artifacts=tuple((a.id, a.version) for a in body.artifacts),
                 excerpts=tuple((e.session_id, e.after, e.through) for e in body.excerpts),
+                allow_loops=tuple(body.allow_loops),
             )
         )
         return {"grants": grants}

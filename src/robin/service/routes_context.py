@@ -32,6 +32,7 @@ class PreviewBody(BaseModel):
     excerpts: list[ExcerptRef] = []
     attachments: list[str] = []
     include_objective: bool = True
+    allow_loops: list[str] = []  # sources to include although they are the recipient's own output
 
 
 class ConfirmBody(BaseModel):
@@ -74,6 +75,7 @@ def register(app: FastAPI, runtime: ServiceRuntime, authed: Any, api: str, error
             excerpts=tuple((e.session_id, e.after, e.through) for e in body.excerpts),
             attachments=tuple(body.attachments),
             include_objective=body.include_objective,
+            allow_loops=tuple(body.allow_loops),
         )
         return dict(await asyncio.to_thread(packets.preview, store, sel))
 

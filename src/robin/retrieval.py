@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import Connection, insert, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from robin.context import lineage
 from robin.context.packets import EXCERPT_LIMIT, EXCERPT_TYPES, _event_text
 from robin.events.ingest import read_payload_json
 from robin.findings.store import _put, canonical
@@ -86,8 +87,14 @@ def grant(
     *,
     artifacts: tuple[tuple[str, int | None], ...] = (),
     excerpts: tuple[tuple[str, int, int], ...] = (),
+    allow_loops: tuple[str, ...] = (),
 ) -> list[dict[str, Any]]:
-    """Let one session read exact artifact versions and excerpt ranges of its task. An audited user action."""
+    """Let one session read exact artifact versions and excerpt ranges of its task. An audited user action.
+
+    A source built on the session's own output, or its own transcript, is refused unless named in
+    `allow_loops` (FR-025): handing an agent its own work back reads to it as independent confirmation.
+    The session's own artifacts themselves need no grant; it can already read them.
+    """
     now = utc_now()
 
     def work(conn: Connection) -> list[str]:
@@ -113,6 +120,14 @@ def grant(
                 is None
             ):
                 raise RetrievalError("not_found", f"artifact {aid} has no version {v}", 404)
+            found = lineage.own_output(conn, aid, v, session_id)
+            if found and not found["direct"] and aid not in allow_loops:
+                raise RetrievalError(
+                    "context_loop",
+                    f"artifact {aid} is {lineage.reason(found).replace('the recipient', 'this session')}; "
+                    "allow it explicitly if you want the session to read it anyway",
+                    409,
+                )
             rows.append({"kind": "artifact", "artifact_id": aid, "version": v})
         for sid, after, through in excerpts:
             if through <= after:
@@ -122,6 +137,10 @@ def grant(
                 is None
             ):
                 raise RetrievalError("not_found", f"no session {sid}", 404)
+            if sid == session_id and sid not in allow_loops:
+                raise RetrievalError(
+                    "context_loop", "that excerpt is this session's own transcript; allow it explicitly", 409
+                )
             rows.append(
                 {
                     "kind": "excerpt",
