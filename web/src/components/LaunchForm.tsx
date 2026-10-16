@@ -20,6 +20,7 @@ export function LaunchForm(props: {
   const [cwd, setCwd] = useState(props.defaultCwd);
   const [prompt, setPrompt] = useState("");
   const [independent, setIndependent] = useState(false);
+  const [worktree, setWorktree] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const first = useRef<HTMLSelectElement>(null);
@@ -47,6 +48,7 @@ export function LaunchForm(props: {
             prompt.trim() || null,
             props.task?.task_id ?? null,
             independent,
+            worktree,
           );
           props.onLaunched(r.session_id, r.warnings);
         } catch (err) {
@@ -72,12 +74,16 @@ export function LaunchForm(props: {
         required={!props.task}
         disabled={!!props.task}
       />
-      {sharing.length > 0 && (
+      {sharing.length > 0 && !worktree && (
         <p className="hint warn" role="status">
           {sharing.length === 1 ? "A session" : `${sharing.length} sessions`} may already be editing this folder (
           {sharing.map((s) => s.runtime).join(", ")}). Changes can collide.
         </p>
       )}
+      <label className="inline check">
+        <input type="checkbox" checked={worktree} onChange={(e) => setWorktree(e.target.checked)} /> Run in a new Git
+        worktree on its own branch (keeps it apart from other sessions in this repository)
+      </label>
       <label className="inline check">
         <input type="checkbox" checked={independent} onChange={(e) => setIndependent(e.target.checked)} /> Independent
         review: this session can&apos;t read other agents&apos; findings

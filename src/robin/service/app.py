@@ -33,7 +33,7 @@ from robin.service.auth import COOKIE, CSRF_HEADER, Auth
 from robin.service.runtime import ServiceRuntime
 from robin.store.models import Event
 from robin.store.models import Session as SessionRow
-from robin.workspace import folders
+from robin.workspace import folders, worktrees
 from robin.workspace import tasks as ws
 
 API = "/api/v1"
@@ -78,6 +78,7 @@ class LaunchBody(BaseModel):
     action_id: str = Field(min_length=8, max_length=128)
     finding_tool: bool = True  # False: publish by final-message block only (MCP stays optional, TR-066)
     independent: bool = False  # a reviewer that can't read other agents' findings (FR-032, TR-064)
+    worktree: bool = False  # run in a new Git worktree on its own branch (FR-051)
 
 
 class ActionBody(BaseModel):
@@ -102,6 +103,10 @@ class WatchBody(BaseModel):
 class NotificationsBody(BaseModel):
     enabled: bool
     kinds: list[Literal["input", "failed", "finished"]] | None = None  # None: all of them
+
+
+class RemoveWorktreeBody(BaseModel):
+    discard_changes: bool = False  # remove even with uncommitted files (they are lost; the branch stays)
 
 
 class PresenceBody(BaseModel):
@@ -425,6 +430,32 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
 
     # -- controls --------------------------------------------------------------
 
+    @app.get(f"{API}/worktrees")
+    async def worktree_list(
+        _: str = Authed, session_id: str | None = None, task_id: str | None = None
+    ) -> dict[str, Any]:
+        return {"worktrees": await asyncio.to_thread(worktrees.list_worktrees, store, session_id, task_id)}
+
+    @app.get(f"{API}/worktrees/{{worktree_id}}")
+    async def worktree_status(worktree_id: str, _: str = Authed) -> dict[str, Any]:
+        """The worktree and what removing it would lose: uncommitted files, commits not on its origin."""
+        try:
+            return await asyncio.to_thread(worktrees.status, store, worktree_id)
+        except worktrees.WorktreeError as exc:
+            raise ApiError(exc.status, exc.code, str(exc)) from exc
+
+    @app.post(f"{API}/worktrees/{{worktree_id}}/remove")
+    async def worktree_remove(worktree_id: str, body: RemoveWorktreeBody, _: str = Authed) -> Any:
+        """Remove the worktree folder (TR-072). Its branch and commits are kept."""
+        try:
+            result = await asyncio.to_thread(
+                lambda: worktrees.remove(store, worktree_id, discard_changes=body.discard_changes)
+            )
+        except worktrees.WorktreeError as exc:
+            return _error(exc.status, exc.code, str(exc), "fix_request", exc.detail or None)
+        await runtime.notify()
+        return result
+
     @app.get(f"{API}/sessions/{{session_id}}/runs")
     async def session_runs(session_id: str, _: str = Authed, limit: int = Query(20, ge=1, le=200)) -> Any:
         """The session's latest runs with their Git context (FR-050)."""
@@ -463,14 +494,33 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         ok, reason = caps.allows("launch")
         if not ok:
             raise ApiError(409, "unsupported", reason or "unsupported")
-        if project is None:
-            pid = ws.project_for(str(checked.path), await asyncio.to_thread(ws.project_paths, store))
-            project = {"project_id": pid} if pid else None
-        with store.reader.connect() as conn:
-            shared = folders.shared_with(_writers(conn), str(checked.path))
-        sid = await asyncio.to_thread(
-            ensure_session, store, runtime=body.runtime, mode="managed", execution_cwd=str(checked.path)
-        )
+        worktree = None
+        if body.worktree:
+            label = task["title"] if task else body.runtime
+            try:
+                worktree = await asyncio.to_thread(worktrees.create, checked.path, label, store.data_dir)
+            except worktrees.WorktreeError as exc:
+                raise ApiError(exc.status, exc.code, str(exc), "fix_request") from exc
+        try:
+            if worktree is not None:
+                try:
+                    checked = ExecutionCwd.checked(Path(worktree["run_in"]), store.artifacts)
+                except ValueError as exc:
+                    raise ApiError(422, "invalid_cwd", str(exc), "fix_request") from exc
+            if project is None:
+                pid = ws.project_for(str(checked.path), await asyncio.to_thread(ws.project_paths, store))
+                project = {"project_id": pid} if pid else None
+            with store.reader.connect() as conn:
+                shared = folders.shared_with(_writers(conn), str(checked.path))
+            sid = await asyncio.to_thread(
+                ensure_session, store, runtime=body.runtime, mode="managed", execution_cwd=str(checked.path)
+            )
+            if worktree is not None:
+                await asyncio.to_thread(worktrees.record, store, worktree, sid, body.task_id)
+        except BaseException:
+            if worktree is not None:  # not recorded yet, so Robin couldn't list or remove it later
+                await asyncio.to_thread(worktrees.discard, worktree)
+            raise
         env: dict[str, str] = {}
         if body.task_id:
             env["ROBIN_FINDINGS"] = "tool,message" if body.finding_tool else "message"

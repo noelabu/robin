@@ -617,3 +617,20 @@ class RunGit(Base):
     shared_folder: Mapped[int] = mapped_column(Integer, server_default=text("0"))  # others wrote there too
     truncated: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     end_captured_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class Worktree(Base):
+    """A Git worktree Robin created for a session (FR-051, TR-072). Removing it is a separate confirmed
+    action that never deletes its branch or commits; the row stays as the record."""
+
+    __tablename__ = "worktree"
+    worktree_id: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("session.session_id"))
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("task.task_id"))
+    repo_root: Mapped[str] = mapped_column(String)
+    path: Mapped[str] = mapped_column(String)
+    branch: Mapped[str] = mapped_column(String)
+    from_branch: Mapped[str | None] = mapped_column(String)  # what the repository had checked out
+    base_commit: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    removed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)

@@ -103,6 +103,17 @@ export type Finding = {
   content_hash: string;
 };
 
+export type Worktree = {
+  worktree_id: string;
+  session_id: string;
+  path: string;
+  branch: string;
+  from_branch: string | null;
+  base_commit: string;
+  removed_at: string | null;
+};
+export type WorktreeStatus = Worktree & { exists: boolean; uncommitted: string[]; unmerged_commits: number | null };
+
 export type RunGit = {
   repo_root: string;
   branch: string | null;
@@ -257,6 +268,7 @@ export const api = {
     prompt: string | null,
     taskId: string | null = null,
     independent = false,
+    worktree = false,
   ) =>
     request<{ action: Action; session_id: string; warnings: string[] }>("POST", "/sessions/launch", {
       runtime,
@@ -264,6 +276,7 @@ export const api = {
       prompt: prompt || null,
       task_id: taskId,
       independent,
+      worktree,
       action_id: newActionId(),
     }),
   history: (scope: { session_id?: string; task_id?: string; project_id?: string }, limit = 200) =>
@@ -305,6 +318,13 @@ export const api = {
   notifications: () => request<NotificationSettings>("GET", "/settings/notifications"),
   setNotifications: (body: NotificationSettings) =>
     request<NotificationSettings>("PUT", "/settings/notifications", body),
+  worktrees: (sessionId: string) =>
+    request<{ worktrees: Worktree[] }>("GET", `/worktrees?${new URLSearchParams({ session_id: sessionId })}`),
+  worktree: (id: string) => request<WorktreeStatus>("GET", `/worktrees/${id}`),
+  removeWorktree: (id: string, discardChanges: boolean) =>
+    request<WorktreeStatus & { branch_kept: string }>("POST", `/worktrees/${id}/remove`, {
+      discard_changes: discardChanges,
+    }),
   runs: (sessionId: string) => request<{ runs: Run[] }>("GET", `/sessions/${sessionId}/runs`),
   presence: (session_id: string | null) => request<{ ok: boolean }>("PUT", "/presence", { session_id }),
   search: (q: string) =>

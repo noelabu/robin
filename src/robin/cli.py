@@ -173,9 +173,13 @@ def cmd_run(args: argparse.Namespace) -> None:
                 "action_id": aid,
                 "task_id": args.task,
                 "independent": args.independent,
+                "worktree": args.worktree,
             },
         )
         print(f"session {r['session_id']}")
+        if args.worktree:
+            (w,) = call(c, "GET", f"/worktrees?session_id={r['session_id']}")["worktrees"]
+            print(f"worktree {w['worktree_id']}: {w['path']} on branch {w['branch']}")
         if args.independent:
             s = call(c, "GET", f"/sessions/{r['session_id']}")
             label = {
@@ -659,6 +663,30 @@ def cmd_runs(args: argparse.Namespace) -> None:
             print("  note: another session worked in this folder; some changes may be theirs")
 
 
+def cmd_worktrees(args: argparse.Namespace) -> None:
+    """Worktrees Robin made for sessions, and removing one (FR-051). Removal keeps the branch."""
+    with client(args.data) as c:
+        if args.action == "list":
+            q = f"?task_id={args.task}" if args.task else ""
+            for w in call(c, "GET", f"/worktrees{q}")["worktrees"]:
+                state = f"removed {w['removed_at'][:10]}" if w["removed_at"] else "present"
+                print(f"{w['worktree_id']}  {w['branch']:<40} {state}  {w['path']}")
+            return
+        if not args.worktree:
+            raise CliError("robin worktree remove WORKTREE_ID [--discard-changes]")
+        s = call(c, "GET", f"/worktrees/{args.worktree}")
+        print(f"{s['path']} (branch {s['branch']}, from {s['from_branch'] or 'a detached HEAD'})")
+        if s["uncommitted"]:
+            print(f"  {len(s['uncommitted'])} uncommitted file(s): {', '.join(s['uncommitted'][:10])}")
+        if s["unmerged_commits"]:
+            print(f"  {s['unmerged_commits']} commit(s) not on {s['from_branch']}; the branch keeps them")
+        if not args.yes and (not sys.stdin.isatty() or input("Remove this worktree? [y/N] ").lower() != "y"):
+            print("not removed")
+            return
+        r = call(c, "POST", f"/worktrees/{args.worktree}/remove", {"discard_changes": args.discard_changes})
+    print(f"removed {r['path']}; branch {r['branch_kept']} kept")
+
+
 def cmd_notify(args: argparse.Namespace) -> None:
     """Opt-in macOS notifications when a session needs input, fails or finishes (FR-033)."""
     with client(args.data) as c:
@@ -1124,6 +1152,14 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("state", choices=["on", "off", "status"])
     p.set_defaults(func=cmd_watch)
 
+    p = sub.add_parser("worktree", parents=[common], help="worktrees Robin made for sessions")
+    p.add_argument("action", choices=["list", "remove"])
+    p.add_argument("worktree", nargs="?", help="remove: the worktree ID")
+    p.add_argument("--task")
+    p.add_argument("--discard-changes", action="store_true", help="remove even with uncommitted files")
+    p.add_argument("--yes", action="store_true", help="don't ask (after reviewing what it would lose)")
+    p.set_defaults(func=cmd_worktrees)
+
     p = sub.add_parser("runs", parents=[common], help="a session's runs with their Git context")
     p.add_argument("session")
     p.add_argument("--limit", type=int, default=10)
@@ -1186,6 +1222,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--independent", action="store_true", help="a reviewer that can't read other agents' findings"
     )
+    p.add_argument("--worktree", action="store_true", help="run in a new Git worktree on its own branch")
     p.set_defaults(func=cmd_run)
 
     for control, help_text in (
