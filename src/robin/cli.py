@@ -626,6 +626,22 @@ def cmd_watch(args: argparse.Namespace) -> None:
         print("not watching history (run `robin scan` to index it once, or `robin watch on`)")
 
 
+def cmd_notify(args: argparse.Namespace) -> None:
+    """Opt-in macOS notifications when a session needs input, fails or finishes (FR-033)."""
+    with client(args.data) as c:
+        if args.state == "status":
+            s = call(c, "GET", "/settings/notifications")
+        else:
+            body: dict[str, Any] = {"enabled": args.state == "on"}
+            if args.kinds:
+                body["kinds"] = [k.strip() for k in args.kinds.split(",") if k.strip()]
+            s = call(c, "PUT", "/settings/notifications", body)
+    if s["enabled"]:
+        print(f"notifications on for: {', '.join(s['kinds']) or 'nothing'}")
+    else:
+        print("notifications off")
+
+
 def _gb(n: int) -> str:
     return f"{n / 1024**3:.2f} GB"
 
@@ -1074,6 +1090,11 @@ def parser() -> argparse.ArgumentParser:
     p = sub.add_parser("watch", parents=[common], help="follow native session history as it grows (opt-in)")
     p.add_argument("state", choices=["on", "off", "status"])
     p.set_defaults(func=cmd_watch)
+
+    p = sub.add_parser("notify", parents=[common], help="notifications when sessions need you (opt-in)")
+    p.add_argument("state", choices=["on", "off", "status"])
+    p.add_argument("--kinds", help="input, failed, finished (comma-separated; default: all)")
+    p.set_defaults(func=cmd_notify)
 
     p = sub.add_parser(
         "storage", parents=[common], help="storage use, and pruning the oldest copied activity"

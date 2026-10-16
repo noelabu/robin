@@ -99,6 +99,15 @@ class WatchBody(BaseModel):
     enabled: bool
 
 
+class NotificationsBody(BaseModel):
+    enabled: bool
+    kinds: list[Literal["input", "failed", "finished"]] | None = None  # None: all of them
+
+
+class PresenceBody(BaseModel):
+    session_id: str | None = None  # the session a visible dashboard is showing; None when hidden
+
+
 class ExchangeBody(BaseModel):
     secret: str
 
@@ -620,6 +629,28 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         await asyncio.to_thread(watch.set_enabled, store, body.enabled)
         await runtime.notify()
         return {"enabled": body.enabled}
+
+    @app.get(f"{API}/settings/notifications")
+    async def notifications_get(_: str = Authed) -> dict[str, Any]:
+        from robin import notifications
+
+        return await asyncio.to_thread(notifications.settings, store)
+
+    @app.put(f"{API}/settings/notifications")
+    async def notifications_put(body: NotificationsBody, _: str = Authed) -> dict[str, Any]:
+        """Opt-in notifications when a session needs input, fails or finishes (FR-033)."""
+        from robin import notifications
+
+        kinds = [str(k) for k in body.kinds] if body.kinds is not None else None
+        result = await asyncio.to_thread(notifications.set_settings, store, body.enabled, kinds)
+        await runtime.notify()
+        return result
+
+    @app.put(f"{API}/presence")
+    async def presence(body: PresenceBody, _: str = Authed) -> dict[str, Any]:
+        """Which session a visible dashboard shows, so its notifications stay quiet."""
+        runtime.viewed(body.session_id)
+        return {"ok": True}
 
     @app.get(f"{API}/storage")
     async def storage(_: str = Authed) -> dict[str, Any]:

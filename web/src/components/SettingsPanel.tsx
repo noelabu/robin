@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { api, ApiError, type PrunePlan, type StorageUsage } from "../api";
+import { api, ApiError, type NotificationKind, type NotificationSettings, type PrunePlan, type StorageUsage } from "../api";
+
+const NOTIFY: [NotificationKind, string][] = [
+  ["input", "A session needs your input"],
+  ["failed", "A run fails"],
+  ["finished", "A run finishes"],
+];
 
 const gb = (n: number) => `${(n / 1024 ** 3).toFixed(2)} GB`;
 
@@ -8,11 +14,13 @@ export function SettingsPanel(props: { onClose: () => void; onChanged: () => voi
   const [usage, setUsage] = useState<StorageUsage | null>(null);
   const [plan, setPlan] = useState<PrunePlan | null>(null);
   const [watching, setWatching] = useState<boolean | null>(null);
+  const [notify, setNotify] = useState<NotificationSettings | null>(null);
   const [status, setStatus] = useState<string | null>(null);
 
   const load = () => {
     void api.storage().then(setUsage);
     void api.watch().then((w) => setWatching(w.enabled));
+    void api.notifications().then(setNotify);
   };
   useEffect(load, []);
 
@@ -99,6 +107,42 @@ export function SettingsPanel(props: { onClose: () => void; onChanged: () => voi
         />{" "}
         Follow Claude Code, Codex and Pi history as it grows (Robin reads their transcripts continuously)
       </label>
+      <h3>Notifications</h3>
+      {notify && (
+        <fieldset className="notify">
+          <legend className="sr-only">Notifications</legend>
+          <label className="inline check">
+            <input
+              type="checkbox"
+              checked={notify.enabled}
+              onChange={(e) =>
+                void run("Saving", async () => {
+                  await api.setNotifications({ ...notify, enabled: e.target.checked });
+                })
+              }
+            />{" "}
+            Show macOS notifications when Robin's sessions need you (never for the session on screen)
+          </label>
+          {NOTIFY.map(([kind, label]) => (
+            <label key={kind} className="inline check">
+              <input
+                type="checkbox"
+                disabled={!notify.enabled}
+                checked={notify.kinds.includes(kind)}
+                onChange={(e) =>
+                  void run("Saving", async () => {
+                    const kinds = e.target.checked
+                      ? [...notify.kinds, kind]
+                      : notify.kinds.filter((k) => k !== kind);
+                    await api.setNotifications({ enabled: notify.enabled, kinds });
+                  })
+                }
+              />{" "}
+              {label}
+            </label>
+          ))}
+        </fieldset>
+      )}
       <div className="actions">
         <button onClick={props.onClose}>Close</button>
       </div>

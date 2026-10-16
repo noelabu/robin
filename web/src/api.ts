@@ -103,6 +103,9 @@ export type Finding = {
   content_hash: string;
 };
 
+export type NotificationKind = "input" | "failed" | "finished";
+export type NotificationSettings = { enabled: boolean; kinds: NotificationKind[] };
+
 export type Packet = {
   packet_id: string;
   state: "previewed" | "confirmed" | "invalidated" | "delivered";
@@ -278,6 +281,10 @@ export const api = {
   prune: () => request<PrunePlan & { pruned_events: number }>("POST", "/storage/prune", { dry_run: false }),
   watch: () => request<{ enabled: boolean }>("GET", "/settings/watch"),
   setWatch: (enabled: boolean) => request<{ enabled: boolean }>("PUT", "/settings/watch", { enabled }),
+  notifications: () => request<NotificationSettings>("GET", "/settings/notifications"),
+  setNotifications: (body: NotificationSettings) =>
+    request<NotificationSettings>("PUT", "/settings/notifications", body),
+  presence: (session_id: string | null) => request<{ ok: boolean }>("PUT", "/presence", { session_id }),
   search: (q: string) =>
     request<{ results: SearchResult[]; more: boolean; pending_events: number }>(
       "GET",

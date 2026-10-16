@@ -93,6 +93,7 @@ robin doctor                         # health of runtimes, storage, port and sup
 robin storage                        # copied activity against the 20 GB cap; `robin storage prune`
 robin supervisor restart             # upgrade the supervisor; refuses while turns run (or --drain)
 robin diagnostics                    # a redacted bundle, previewed before it's written
+robin notify on                      # macOS notifications when a session needs input, fails or finishes
 ```
 
 Logs are in `<data dir>/logs/robin.log` and never contain prompts, messages or secrets.

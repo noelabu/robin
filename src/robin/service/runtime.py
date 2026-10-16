@@ -11,6 +11,7 @@ import threading
 from contextlib import suppress
 from typing import Any
 
+from robin import notifications
 from robin.events.supervisor_source import SupervisorRecord
 from robin.ids import utc_now
 from robin.runtime.manager import RuntimeManager
@@ -25,6 +26,7 @@ from robin.supervisor.client import (
 
 log = logging.getLogger(__name__)
 CAP_CHECK_S = 600.0
+PRESENCE_S = 45.0  # the dashboard repeats its presence every 20 s while visible
 
 
 class ServiceRuntime:
@@ -38,6 +40,9 @@ class ServiceRuntime:
         self._task: asyncio.Task[None] | None = None
         self._indexer: asyncio.Task[None] | None = None
         self._watcher: asyncio.Task[None] | None = None
+        self._notifier: asyncio.Task[None] | None = None
+        # session id -> loop time until which a visible dashboard is showing it (FR-033: stay quiet there)
+        self.viewing: dict[str, float] = {}
         self._watch_stop = threading.Event()
         self.index_error: dict[str, Any] | None = None  # a retryable indexing failure, reported once
         self._client: SupervisorClient | None = None
@@ -47,10 +52,11 @@ class ServiceRuntime:
         self._task = asyncio.create_task(self._link())
         self._indexer = asyncio.create_task(self._index())
         self._watcher = asyncio.create_task(self._watch())
+        self._notifier = asyncio.create_task(self._notify_user())
 
     async def stop(self) -> None:
         self._watch_stop.set()
-        for task in (self._task, self._indexer, self._watcher):
+        for task in (self._task, self._indexer, self._watcher, self._notifier):
             if task:
                 task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -99,6 +105,34 @@ class ServiceRuntime:
                 except Exception:
                     log.exception("storage cap check failed")
             seen = await self.wait_change(seen, 5.0)
+
+    def viewed(self, session_id: str | None, for_s: float = PRESENCE_S) -> None:
+        """A dashboard showing this session is visible (or, with None, none is)."""
+        now = asyncio.get_running_loop().time()
+        if session_id is None:  # the dashboard was hidden or closed
+            self.viewing = {}
+            return
+        self.viewing = {sid: t for sid, t in self.viewing.items() if t > now}
+        self.viewing[session_id] = now + for_s
+
+    async def _notify_user(self) -> None:
+        """Opt-in notifications (FR-033), from committed events past a durable cursor."""
+        seen = -1
+        while True:
+            seen = await self.wait_change(seen, 5.0)
+            try:
+                if not (await asyncio.to_thread(notifications.settings, self.store))["enabled"]:
+                    continue
+                notes, cursor = await asyncio.to_thread(notifications.pending, self.store)
+                # the cursor moves first: a crash can drop a notification, never repeat one
+                await asyncio.to_thread(notifications.advance, self.store, cursor)
+                now = asyncio.get_running_loop().time()
+                quiet = {sid for sid, t in self.viewing.items() if t > now}
+                for note in notifications.condense([n for n in notes if n.session_id not in quiet]):
+                    await asyncio.to_thread(notifications.send, note)
+            except Exception:
+                log.exception("notifications failed; retrying")
+                await asyncio.sleep(5)
 
     async def _watch(self) -> None:
         """Follow native history while the user has it turned on (`robin watch on`)."""

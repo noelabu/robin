@@ -74,6 +74,20 @@ export function App() {
       ? undefined
       : sessions[0];
 
+  // The session on screen, so the service keeps its notifications quiet while the dashboard is visible.
+  const shown = auth === "ok" ? (current?.session_id ?? null) : null;
+  useEffect(() => {
+    if (auth !== "ok") return;
+    const report = () => void api.presence(document.visibilityState === "visible" ? shown : null).catch(() => {});
+    report();
+    const timer = window.setInterval(report, 20_000);
+    document.addEventListener("visibilitychange", report);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", report);
+    };
+  }, [auth, shown]);
+
   const choose = (next: Scope) => {
     setScope(next);
     setSelected(null);
