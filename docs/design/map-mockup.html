@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Robin Map mockup</title>
+<style>
+:root {
+  --bg: #0d0d0c;
+  --canvas: #111110;
+  --dot: #262523;
+  --panel: #171716;
+  --card: #1b1b1a;
+  --card-hi: #202020;
+  --line: #2c2b29;
+  --line-hi: #3a3936;
+  --ink: #ecebe6;
+  --muted: #8f8c85;
+  --faint: #5f5d58;
+  --amber: #e9a23b;
+  --ok: #5fbf7a;
+  --warn: #e0b45c;
+  --bad: #ef7d7d;
+  --wait: #79b8ff;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  --sans: -apple-system, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 13px/1.4 var(--sans); overflow: hidden; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--wait); outline-offset: 2px; }
+
+/* -- shell ---------------------------------------------------------------- */
+.shell { display: grid; grid-template-rows: 56px 1fr; grid-template-columns: 238px 1fr; height: 100vh; }
+.top { grid-column: 1 / -1; display: grid; grid-template-columns: 238px 1fr auto; align-items: center;
+  border-bottom: 1px solid var(--line); background: var(--bg); }
+.brand { display: flex; gap: 10px; align-items: center; padding: 0 18px; }
+.mark { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
+  background: conic-gradient(from 200deg, #e9a23b, #ef7d7d, #9a7cf0, #5fb0e0, #e9a23b); }
+.mark svg { width: 18px; height: 18px; }
+.brand b { display: block; font-size: 14px; letter-spacing: .01em; }
+.brand small { display: block; color: var(--muted); font-size: 11.5px; }
+.status { display: flex; gap: 10px; justify-content: center; align-items: center; }
+.pill { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px; border-radius: 7px;
+  font-size: 12px; color: var(--muted); }
+.pill.live { background: #16241a; border: 1px solid #24432c; color: #bfe5c8; }
+.pill.off { background: #2a1d12; border: 1px solid #4a3218; color: #f0cf9b; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px #5fbf7a22; }
+.pill.live .dot { animation: pulse 2s infinite; }
+.pill.off .dot { background: var(--warn); box-shadow: none; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 5px #5fbf7a00; } }
+.tabs { display: flex; gap: 2px; padding-right: 14px; }
+.tab { padding: 6px 12px; border-radius: 7px; color: var(--muted); font-size: 12.5px; }
+.tab[aria-selected="true"] { background: var(--card-hi); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-hi); }
+.tab:hover { color: var(--ink); }
+
+/* -- sidebar -------------------------------------------------------------- */
+.side { border-right: 1px solid var(--line); background: var(--bg); display: flex; flex-direction: column; min-height: 0; }
+.side h2 { margin: 18px 18px 10px; font: 600 11px/1 var(--sans); letter-spacing: .12em; color: var(--muted); text-transform: uppercase; }
+.folders { list-style: none; margin: 0; padding: 0 8px; overflow: auto; flex: 1; }
+.folder { display: grid; grid-template-columns: 12px 1fr auto; gap: 6px; align-items: center; width: 100%;
+  padding: 5px 10px; border-radius: 6px; text-align: left; font-size: 13px; color: #cfcdc6; }
+.folder:hover { background: #181817; }
+.folder[aria-current="true"] { background: #1c1b19; }
+.folder .chev { color: var(--faint); font-size: 9px; }
+.folder .age { font: 11px var(--mono); color: var(--faint); }
+.folder.hot .name, .folder.hot .age { color: var(--amber); }
+.sess { display: grid; grid-template-columns: 1fr auto; gap: 6px; width: 100%; padding: 4px 10px 4px 36px;
+  border-radius: 6px; text-align: left; color: var(--muted); font-size: 12.5px; }
+.sess:hover { background: #181817; color: var(--ink); }
+.sess .age { font: 11px var(--mono); color: var(--faint); }
+.sess.hot, .sess.hot .age { color: var(--amber); }
+.sess .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.legend { border-top: 1px solid var(--line); padding: 12px 18px; font-size: 11.5px; color: var(--muted); display: flex; gap: 8px; align-items: center; }
+.legend i { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); }
+
+/* -- canvas --------------------------------------------------------------- */
+.stage { position: relative; overflow: hidden; background-color: var(--canvas);
+  background-image: radial-gradient(var(--dot) 1px, transparent 1.2px); background-size: 22px 22px; cursor: grab; }
+.stage.dragging { cursor: grabbing; }
+.world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.world > svg { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.cluster { position: absolute; border: 1px dashed #2a2927; border-radius: 14px; }
+.cluster > .label { position: absolute; top: -10px; left: 14px; padding: 0 8px; background: var(--canvas);
+  font: 11px var(--mono); color: var(--muted); }
+.cluster > .label b { color: var(--ink); font-weight: 500; }
+
+.card { position: absolute; width: 226px; padding: 10px 11px 0; border-radius: 7px; background: var(--card);
+  border: 1px solid var(--line-hi); box-shadow: 0 6px 18px #0006; text-align: left; transition: border-color .15s, transform .15s;
+  animation: rise .45s both; }
+.card:hover { border-color: #55534e; transform: translateY(-1px); }
+.card.sub { width: 196px; background: #181817; }
+.card.running { border-color: #8a6326; box-shadow: 0 0 0 1px #e9a23b33, 0 8px 22px #0008; }
+.card[aria-pressed="true"] { border-color: var(--amber); }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+.card .meta { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
+.card .rt { font: 10px var(--mono); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip { display: inline-flex; align-items: center; gap: 5px; font: 600 10px var(--sans); white-space: nowrap; }
+.chip.running { color: var(--amber); }
+.chip.waiting_for_input { color: var(--wait); }
+.chip.idle { color: var(--muted); }
+.chip.failed { color: var(--bad); }
+.chip.stopped { color: var(--faint); }
+.tick { width: 14px; height: 14px; border-radius: 50%; display: grid; place-items: center; background: #2c6e3e; }
+.tick svg { width: 9px; height: 9px; }
+.spin { width: 13px; height: 13px; border-radius: 50%; border: 2px solid #e9a23b44; border-top-color: var(--amber); animation: spin .9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.card h3 { margin: 0 0 3px; font-size: 12.5px; font-weight: 650; line-height: 1.3;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.card .sub-l { display: flex; justify-content: space-between; gap: 8px; font-size: 10.5px; color: var(--muted); }
+.card .sub-l > span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.card .files { font: 10px var(--mono); color: var(--amber); white-space: nowrap; }
+.bar { height: 3px; margin: 8px 0 0; border-radius: 2px; background: #2d2c2a; overflow: hidden; }
+.bar > i { display: block; height: 100%; background: #d8d6cf; border-radius: 2px; }
+.card.running .bar > i { background: var(--amber); }
+.bar.unknown > i { background: repeating-linear-gradient(90deg, #4a4844 0 4px, transparent 4px 8px); width: 100% !important; }
+.card .foot { margin: 8px -11px 0; padding: 6px 11px; border-top: 1px solid #262523;
+  font: 600 9px var(--mono); letter-spacing: .1em; color: var(--faint); text-transform: uppercase; }
+
+/* -- zoom + now card ------------------------------------------------------ */
+.zoom { position: absolute; top: 22px; left: 22px; display: flex; align-items: center; gap: 4px; padding: 6px;
+  background: #151514ee; border: 1px solid var(--line-hi); border-radius: 10px; z-index: 5; }
+.zoom button { width: 30px; height: 28px; border-radius: 6px; color: var(--muted); font-size: 16px; }
+.zoom button:hover { background: #222; color: var(--ink); }
+.zoom output { width: 52px; text-align: center; font: 11.5px var(--mono); color: var(--muted); }
+.zoom .sep { width: 1px; height: 18px; background: var(--line-hi); margin: 0 4px; }
+
+.now { position: absolute; top: 22px; right: 22px; width: 300px; padding: 14px 16px; z-index: 5;
+  background: #161615f2; border: 1px solid var(--line-hi); border-radius: 12px; box-shadow: 0 12px 30px #000a;
+  backdrop-filter: blur(6px); text-align: left; }
+.now:hover { border-color: #55534e; }
+.now .hd { display: flex; align-items: center; gap: 8px; }
+.now .hd b { font-size: 14px; }
+.now .hd .live { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+.now .hd .ctx { margin-left: auto; font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+.now p { margin: 10px 0 8px; font-size: 13px; }
+.now .act { display: flex; justify-content: space-between; font: 12px var(--mono); }
+.now .act span:first-child { color: var(--amber); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+.now .act span:last-child { color: var(--muted); }
+.rt-icon { width: 18px; height: 18px; flex: none; }
+
+.hints { position: absolute; left: 22px; bottom: 18px; display: flex; gap: 22px; z-index: 5; font-size: 12px; color: var(--muted); }
+.hints kbd { font: 11px var(--mono); padding: 3px 7px; margin-right: 8px; border-radius: 5px; border: 1px solid var(--line-hi); background: #161615; color: #cfcdc6; }
+
+/* -- drawer --------------------------------------------------------------- */
+.drawer { position: absolute; top: 0; right: 0; bottom: 0; width: 360px; z-index: 8; background: var(--panel);
+  border-left: 1px solid var(--line-hi); box-shadow: -18px 0 40px #0009; transform: translateX(102%);
+  transition: transform .22s ease; display: flex; flex-direction: column; }
+.drawer.open { transform: none; }
+.drawer header { padding: 16px 18px 12px; border-bottom: 1px solid var(--line); }
+.drawer header .row { display: flex; align-items: center; gap: 8px; }
+.drawer header .x { margin-left: auto; width: 26px; height: 26px; border-radius: 6px; color: var(--muted); font-size: 16px; }
+.drawer header .x:hover { background: #242422; color: var(--ink); }
+.drawer h3 { margin: 10px 0 4px; font-size: 15px; line-height: 1.35; }
+.drawer .path { font: 11px var(--mono); color: var(--muted); }
+.drawer .body { overflow: auto; padding: 6px 18px 18px; flex: 1; }
+.drawer h4 { margin: 16px 0 8px; font: 600 10.5px var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; }
+.todo { display: grid; grid-template-columns: 16px 1fr; gap: 8px; padding: 4px 0; font-size: 12.5px; }
+.todo .box { width: 13px; height: 13px; margin-top: 2px; border-radius: 3px; border: 1.5px solid #55534e; }
+.todo.completed .box { background: #2c6e3e; border-color: #2c6e3e; }
+.todo.completed span { color: var(--muted); text-decoration: line-through; text-decoration-color: #55534e; }
+.todo.in_progress .box { border-color: var(--amber); background: #e9a23b33; }
+.file { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 4px 0; font: 12px var(--mono); }
+.file span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+.file span:last-child { color: var(--faint); }
+.file.hot span { color: var(--amber); }
+.empty-note { color: var(--faint); font-size: 12px; padding: 4px 0; }
+.drawer footer { padding: 12px 18px; border-top: 1px solid var(--line); display: flex; gap: 8px; }
+.btn { padding: 7px 12px; border-radius: 7px; border: 1px solid var(--line-hi); font-size: 12.5px; }
+.btn:hover { background: #222; }
+.btn.primary { background: var(--ink); color: #111; border-color: var(--ink); }
+
+/* -- states --------------------------------------------------------------- */
+.empty { position: absolute; inset: 0; display: grid; place-items: center; z-index: 4; }
+.empty[hidden] { display: none; }
+.empty div { text-align: center; max-width: 360px; color: var(--muted); }
+.empty b { display: block; color: var(--ink); font-size: 15px; margin-bottom: 6px; }
+.empty code { font: 12px var(--mono); color: var(--amber); }
+.mock-switch { position: fixed; bottom: 14px; right: 14px; z-index: 20; display: flex; gap: 4px; padding: 4px;
+  background: #000c; border: 1px solid #333; border-radius: 8px; font-size: 11px; }
+.mock-switch button { padding: 4px 8px; border-radius: 5px; color: #999; }
+.mock-switch button[aria-pressed="true"] { background: #333; color: #fff; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header class="top">
+    <div class="brand">
+      <div class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#111" stroke-width="2.4" stroke-linecap="round"><path d="M5 19 12 5l7 14M8.5 13h7"/></svg></div>
+      <div><b>robin</b><small id="crumb">all folders · 9 sessions</small></div>
+    </div>
+    <div class="status" id="status">
+      <span class="pill live" role="status"><span class="dot"></span>Working · <span id="ago">5s</span> ago</span>
+      <span class="pill" role="status"><span class="dot"></span>watching</span>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab" role="tab" aria-selected="true">Map</button>
+      <button class="tab" role="tab" aria-selected="false">Sessions</button>
+    </nav>
+  </header>
+
+  <aside class="side" aria-label="Folders">
+    <h2>Folders</h2>
+    <ul class="folders" id="folders"></ul>
+    <div class="legend"><i></i>most recent activity · time since last event</div>
+  </aside>
+
+  <main class="stage" id="stage" aria-label="Session map">
+    <div class="zoom" aria-label="Zoom">
+      <button id="zout" aria-label="Zoom out">−</button>
+      <output id="zlevel">61%</output>
+      <button id="zin" aria-label="Zoom in">+</button>
+      <span class="sep"></span>
+      <button id="zfit" aria-label="Fit to screen">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 5V1h4M9 1h4v4M13 9v4H9M5 13H1V9"/></svg>
+      </button>
+    </div>
+    <button class="now" id="now"></button>
+    <div class="world" id="world"><svg id="wires"></svg></div>
+    <div class="hints">
+      <span><kbd>click</kbd>Open session</span>
+      <span><kbd>drag</kbd>Move canvas</span>
+      <span><kbd>⌘</kbd>Scroll to zoom</span>
+    </div>
+    <div class="empty" id="empty" hidden><div><b>No sessions yet</b>Robin hasn't indexed any sessions. Run <code>robin scan</code>, or start Claude Code or Codex — new sessions appear here within a few seconds.</div></div>
+    <aside class="drawer" id="drawer" aria-label="Session detail"></aside>
+  </main>
+</div>
+
+<div class="mock-switch" aria-label="Mockup state">
+  <button aria-pressed="true" data-state="live">Populated</button>
+  <button aria-pressed="false" data-state="empty">Empty</button>
+  <button aria-pressed="false" data-state="offline">Updates paused</button>
+</div>
+
+<script>
+const ICON = {
+  claude: '<svg class="rt-icon" viewBox="0 0 24 24"><g stroke="#d97757" stroke-width="2.2" stroke-linecap="round">' +
+    [0,30,60,90,120,150].map(a => `<line x1="12" y1="3" x2="12" y2="21" transform="rotate(${a} 12 12)"/>`).join("") + '</g></svg>',
+  codex: '<svg class="rt-icon" viewBox="0 0 24 24" fill="none" stroke="#cfcdc6" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 10l2.5 2-2.5 2M13 14.5h3" stroke-linecap="round"/></svg>',
+  pi: '<svg class="rt-icon" viewBox="0 0 24 24" fill="none" stroke="#9a7cf0" stroke-width="2" stroke-linecap="round"><path d="M5 8h14M9 8v10M15 8v8.5c0 1 .6 1.5 1.5 1.5"/></svg>',
+};
+const STATE = { running: "Working", waiting_for_input: "Needs input", idle: "Idle", failed: "Failed", stopped: "Stopped" };
+
+const folders = [
+  { id: "robin", path: "~/Documents/Personal/robin", age: "5s", hot: true },
+  { id: "app", path: "~/code/app", age: "14m" },
+  { id: "lantern", path: "~/code/lantern-api", age: "3h" },
+];
+const sessions = [
+  { id: "s1", folder: "robin", runtime: "claude", state: "running", title: "Add a Map view to Robin's dashboard",
+    tool: "Edit", target: "web/src/components/MapView.tsx", elapsed: "56s", age: "5s", branch: "main",
+    todos: [["Map the codebase", "completed"], ["Draft API contract", "completed"], ["Build MapView canvas", "in_progress"], ["Wire live updates", "pending"], ["Tests", "pending"]],
+    files: [["web/src/components/MapView.tsx", "5s"], ["web/src/api.ts", "2m"], ["src/robin/activity.py", "6m"], ["src/robin/service/app.py", "9m"]] },
+  { id: "s1a", folder: "robin", parent: "s1", runtime: "claude", state: "stopped", sub: true, title: "Plan the Map view", age: "11m",
+    todos: [], files: [] },
+  { id: "s1b", folder: "robin", parent: "s1", runtime: "claude", state: "running", sub: true, title: "Explore event ingest", age: "40s",
+    tool: "Grep", target: "payload_ref", todos: [], files: [] },
+  { id: "s2", folder: "robin", runtime: "codex", state: "waiting_for_input", title: "Review threat model for the new endpoint", age: "3m",
+    tool: "shell", target: "rg -n redact src/robin", todos: [["Read threat-model.md", "completed"], ["Check loopback rules", "completed"], ["Write findings", "pending"]],
+    files: [["docs/threat-model.md", "3m"]] },
+  { id: "s3", folder: "app", runtime: "claude", state: "idle", title: "Fix flaky checkout test", age: "14m",
+    todos: [["Reproduce", "completed"], ["Fix race in cart store", "completed"], ["Run suite", "completed"]],
+    files: [["src/cart/store.ts", "16m"], ["tests/checkout.spec.ts", "15m"]] },
+  { id: "s4", folder: "app", runtime: "codex", state: "failed", title: "Upgrade Vite to 6", age: "1h",
+    todos: [["Bump deps", "completed"], ["Fix config", "in_progress"], ["Build", "pending"]], files: [["package.json", "1h"], ["vite.config.ts", "1h"]] },
+  { id: "s5", folder: "app", runtime: "pi", state: "idle", title: "Summarize open issues", age: "2h", todos: null, files: null },
+  { id: "s6", folder: "lantern", runtime: "claude", state: "stopped", title: "Paginate /invoices endpoint", age: "3h",
+    todos: [["Add cursor param", "completed"], ["Update OpenAPI", "completed"], ["Tests", "completed"], ["Docs", "completed"]],
+    files: [["app/routes/invoices.py", "3h"], ["openapi.yaml", "3h"], ["tests/test_invoices.py", "3h"]] },
+  { id: "s6a", folder: "lantern", parent: "s6", runtime: "claude", state: "stopped", sub: true, title: "Review pagination diff", age: "3h", todos: [], files: [] },
+];
+
+const world = document.getElementById("world"), wires = document.getElementById("wires"), stage = document.getElementById("stage");
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+// Layout: clusters stacked vertically; top-level sessions in column 0, subagents in column 1 beside their parent.
+const CW = 226, CH = 118, SW = 196, GX = 86, GY = 22, PAD = 28;
+const pos = {}, clusterBox = {};
+const SHELF = 1500;
+function layout() {
+  let x = 40, y = 40, shelfH = 0;
+  for (const f of folders) {
+    const tops = sessions.filter(s => s.folder === f.id && !s.parent);
+    const hasKids = tops.some(s => sessions.some(k => k.parent === s.id));
+    const w = PAD * 2 + CW + (hasKids ? GX + SW : 0);
+    if (x > 40 && x + w > SHELF) { x = 40; y += shelfH + 56; shelfH = 0; }
+    let row = y + PAD;
+    for (const s of tops) {
+      const kids = sessions.filter(k => k.parent === s.id);
+      pos[s.id] = { x: x + PAD, y: row, w: CW };
+      kids.forEach((k, i) => (pos[k.id] = { x: x + PAD + CW + GX, y: row + i * (CH - 16 + GY), w: SW }));
+      row += Math.max(CH, kids.length * (CH - 16 + GY) - GY) + GY;
+    }
+    clusterBox[f.id] = { x, y, w, h: row - y + PAD - GY };
+    shelfH = Math.max(shelfH, clusterBox[f.id].h);
+    x += w + 56;
+  }
+}
+
+function progress(s) {
+  if (!s.todos || !s.todos.length) return null;
+  return { done: s.todos.filter(t => t[1] === "completed").length, total: s.todos.length };
+}
+function chip(s) {
+  const p = progress(s);
+  const icon = s.state === "running" ? '<span class="spin"></span>'
+    : p && p.done === p.total ? '<span class="tick"><svg viewBox="0 0 10 10" fill="none" stroke="#fff" stroke-width="1.8"><path d="M2 5.2 4.2 7.4 8 3"/></svg></span>' : "";
+  return `<span class="chip ${s.state}">${STATE[s.state]}${icon}</span>`;
+}
+
+function render() {
+  layout();
+  world.querySelectorAll(".cluster,.card").forEach(n => n.remove());
+  for (const f of folders) {
+    const b = clusterBox[f.id], n = sessions.filter(s => s.folder === f.id).length;
+    const el = document.createElement("div");
+    el.className = "cluster"; el.id = "cl-" + f.id;
+    Object.assign(el.style, { left: b.x + "px", top: b.y + "px", width: b.w + "px", height: b.h + "px" });
+    el.innerHTML = `<span class="label"><b>${esc(f.path)}</b> · ${n} sessions</span>`;
+    world.appendChild(el);
+  }
+  sessions.forEach((s, i) => {
+    const p = pos[s.id], pr = progress(s);
+    const el = document.createElement("button");
+    el.className = `card ${s.sub ? "sub" : ""} ${s.state}`;
+    el.style.left = p.x + "px"; el.style.top = p.y + "px"; el.style.animationDelay = i * 40 + "ms";
+    el.setAttribute("aria-pressed", "false"); el.dataset.id = s.id;
+    const files = s.files && s.files.length ? `<span class="files">${esc(s.files[0][0].split("/").pop())}${s.files.length > 1 ? " +" + (s.files.length - 1) : ""} · ${s.files[0][1]}</span>` : "";
+    const sub = pr ? `${pr.done} of ${pr.total} tasks · ${pr.done === pr.total ? "Complete" : "In progress"}`
+      : s.todos === null ? "No detail for this runtime" : s.sub ? "subagent" : "No task list";
+    el.innerHTML = `
+      <div class="meta"><span class="rt">${s.runtime}${s.branch ? " · " + esc(s.branch) : ""} · ${s.age} ago</span>${chip(s)}</div>
+      <h3>${esc(s.title)}</h3>
+      <div class="sub-l"><span>${sub}</span>${files}</div>
+      <div class="bar ${pr ? "" : "unknown"}"><i style="width:${pr ? (pr.done / pr.total) * 100 : 0}%"></i></div>
+      ${s.sub ? "" : '<div class="foot">Show detail ›</div>'}`;
+    el.addEventListener("click", e => { e.stopPropagation(); openDrawer(s.id); });
+    world.appendChild(el);
+  });
+  // Wires: parent right edge → subagent left edge.
+  let d = "";
+  for (const s of sessions.filter(s => s.parent)) {
+    const a = pos[s.parent], b = pos[s.id];
+    const x1 = a.x + a.w, y1 = a.y + 44, x2 = b.x, y2 = b.y + 38, mx = (x1 + x2) / 2;
+    const dash = s.state === "running" ? 'stroke="#e9a23b" stroke-dasharray="5 5"' : 'stroke="#55534e"';
+    d += `<path d="M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2 - 6} ${y2}" fill="none" stroke-width="1.4" ${dash}/>` +
+         `<path d="M${x2 - 7} ${y2 - 4} L${x2} ${y2} L${x2 - 7} ${y2 + 4}z" fill="${s.state === "running" ? "#e9a23b" : "#55534e"}"/>`;
+  }
+  wires.innerHTML = d;
+}
+
+function renderSide() {
+  document.getElementById("folders").innerHTML = folders.map(f => {
+    const list = sessions.filter(s => s.folder === f.id && !s.parent);
+    return `<li><button class="folder open ${f.hot ? "hot" : ""}" data-f="${f.id}"><span class="chev">▾</span><span class="name">${esc(f.path.split("/").pop())}</span><span class="age">${f.age}</span></button>
+      ${list.map(s => `<button class="sess ${s.state === "running" ? "hot" : ""}" data-s="${s.id}"><span class="t">${esc(s.title)}</span><span class="age">${s.age}</span></button>`).join("")}</li>`;
+  }).join("");
+  document.querySelectorAll(".folder").forEach(b => b.addEventListener("click", () => {
+    document.querySelectorAll(".folder").forEach(x => x.removeAttribute("aria-current"));
+    b.setAttribute("aria-current", "true");
+    const c = clusterBox[b.dataset.f]; panTo(c.x + c.w / 2, c.y + c.h / 2);
+  }));
+  document.querySelectorAll(".sess").forEach(b => b.addEventListener("click", () => {
+    const p = pos[b.dataset.s]; panTo(p.x + p.w / 2, p.y + 50); openDrawer(b.dataset.s);
+  }));
+}
+
+function renderNow() {
+  const s = sessions.find(s => s.state === "running" && !s.sub);
+  const f = folders.find(f => f.id === s.folder);
+  document.getElementById("now").innerHTML = `
+    <div class="hd">${ICON[s.runtime]}<b>${s.runtime}</b><span class="live"></span><span class="ctx">${s.age} · in ${esc(f.path.split("/").pop())}</span></div>
+    <p>${esc(s.title)}</p>
+    <div class="act"><span>${s.tool} ${esc(s.target.split("/").pop())}</span><span>${s.elapsed}</span></div>`;
+  document.getElementById("now").onclick = () => { const p = pos[s.id]; panTo(p.x + p.w / 2, p.y + 50); openDrawer(s.id); };
+}
+
+function openDrawer(id) {
+  const s = sessions.find(x => x.id === id), f = folders.find(x => x.id === s.folder), pr = progress(s);
+  document.querySelectorAll(".card").forEach(c => c.setAttribute("aria-pressed", String(c.dataset.id === id)));
+  const kids = sessions.filter(k => k.parent === id);
+  const todos = s.todos === null ? '<div class="empty-note">Robin doesn\'t read task lists for this runtime yet.</div>'
+    : s.todos.length ? s.todos.map(([t, st]) => `<div class="todo ${st}"><span class="box"></span><span>${esc(t)}</span></div>`).join("")
+    : '<div class="empty-note">This session hasn\'t reported a task list.</div>';
+  const files = s.files === null ? '<div class="empty-note">Robin doesn\'t read file edits for this runtime yet.</div>'
+    : s.files.length ? s.files.map(([p, a], i) => `<div class="file ${i === 0 && s.state === "running" ? "hot" : ""}"><span>${esc(p)}</span><span>${a}</span></div>`).join("")
+    : '<div class="empty-note">No file edits.</div>';
+  const dr = document.getElementById("drawer");
+  dr.innerHTML = `
+    <header>
+      <div class="row">${ICON[s.runtime]}<b>${s.runtime}</b>${chip(s)}<button class="x" aria-label="Close">×</button></div>
+      <h3>${esc(s.title)}</h3>
+      <div class="path">${esc(f.path)}${s.branch ? " · " + esc(s.branch) : ""} · last event ${s.age} ago</div>
+    </header>
+    <div class="body">
+      ${s.tool ? `<h4>Now</h4><div class="file hot"><span>${s.tool} ${esc(s.target)}</span><span>${s.elapsed || ""}</span></div>` : ""}
+      <h4><span>Tasks</span><span>${pr ? pr.done + " / " + pr.total : ""}</span></h4>${todos}
+      <h4><span>Files changed</span><span>${s.files && s.files.length ? s.files.length : ""}</span></h4>${files}
+      ${kids.length ? `<h4>Subagents</h4>` + kids.map(k => `<div class="file"><span style="direction:ltr">${esc(k.title)}</span><span>${STATE[k.state]}</span></div>`).join("") : ""}
+    </div>
+    <footer><button class="btn primary">Open in Sessions</button><button class="btn x2">Close</button></footer>`;
+  dr.classList.add("open");
+  dr.querySelectorAll(".x,.x2").forEach(b => b.addEventListener("click", closeDrawer));
+}
+function closeDrawer() {
+  document.getElementById("drawer").classList.remove("open");
+  document.querySelectorAll(".card").forEach(c => c.setAttribute("aria-pressed", "false"));
+}
+
+// Pan / zoom with a CSS transform.
+let view = { x: 40, y: 20, k: 0.92 };
+const apply = () => {
+  world.style.transform = `translate(${view.x}px,${view.y}px) scale(${view.k})`;
+  stage.style.backgroundPosition = `${view.x}px ${view.y}px`;
+  stage.style.backgroundSize = `${22 * view.k}px ${22 * view.k}px`;
+  document.getElementById("zlevel").textContent = Math.round(view.k * 100) + "%";
+};
+function zoomAt(k, cx, cy) {
+  k = Math.min(2, Math.max(0.3, k));
+  view.x = cx - (cx - view.x) * (k / view.k); view.y = cy - (cy - view.y) * (k / view.k); view.k = k; apply();
+}
+function panTo(wx, wy) {
+  const r = stage.getBoundingClientRect();
+  world.style.transition = "transform .35s ease";
+  view.x = r.width / 2 - wx * view.k; view.y = r.height / 2 - wy * view.k; apply();
+  setTimeout(() => (world.style.transition = ""), 360);
+}
+function fit() {
+  const r = stage.getBoundingClientRect(), boxes = Object.values(clusterBox);
+  const w = Math.max(...boxes.map(b => b.x + b.w)) + 40, h = Math.max(...boxes.map(b => b.y + b.h)) + 40;
+  const k = Math.min(1.1, Math.min((r.width - 40) / w, (r.height - 200) / h));
+  view = { k, x: Math.max(20, (r.width - w * k) / 2), y: Math.max(130, (r.height - h * k) / 2) }; apply();
+}
+document.getElementById("zin").onclick = () => { const r = stage.getBoundingClientRect(); zoomAt(view.k * 1.2, r.width / 2, r.height / 2); };
+document.getElementById("zout").onclick = () => { const r = stage.getBoundingClientRect(); zoomAt(view.k / 1.2, r.width / 2, r.height / 2); };
+document.getElementById("zfit").onclick = fit;
+stage.addEventListener("wheel", e => {
+  e.preventDefault();
+  const r = stage.getBoundingClientRect();
+  if (e.metaKey || e.ctrlKey) zoomAt(view.k * Math.exp(-e.deltaY / 300), e.clientX - r.left, e.clientY - r.top);
+  else { view.x -= e.deltaX; view.y -= e.deltaY; apply(); }
+}, { passive: false });
+let drag = null;
+stage.addEventListener("pointerdown", e => {
+  if (e.target.closest(".card,.zoom,.now,.drawer,.hints")) return;
+  drag = { x: e.clientX - view.x, y: e.clientY - view.y, moved: false }; stage.classList.add("dragging");
+});
+addEventListener("pointermove", e => { if (!drag) return; drag.moved = true; view.x = e.clientX - drag.x; view.y = e.clientY - drag.y; apply(); });
+addEventListener("pointerup", e => { if (drag && !drag.moved && !e.target.closest(".drawer")) closeDrawer(); drag = null; stage.classList.remove("dragging"); });
+addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
+
+// Mockup-only: "Working · Ns ago" ticks, and a state switcher.
+let ago = 5; setInterval(() => (document.getElementById("ago").textContent = (ago = ago >= 9 ? 1 : ago + 1) + "s"), 1000);
+document.querySelectorAll(".mock-switch button").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll(".mock-switch button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+  const st = b.dataset.state, empty = st === "empty";
+  document.getElementById("empty").hidden = !empty;
+  world.style.display = document.getElementById("now").style.display = empty ? "none" : "";
+  document.getElementById("folders").style.display = empty ? "none" : "";
+  document.getElementById("crumb").textContent = empty ? "no sessions" : "all folders · 9 sessions";
+  document.getElementById("status").innerHTML = st === "offline"
+    ? '<span class="pill off" role="status"><span class="dot"></span>Updates paused · reconnecting</span><span class="pill" role="status">last event 2m ago</span>'
+    : empty ? '<span class="pill" role="status"><span class="dot"></span>watching · nothing yet</span>'
+    : '<span class="pill live" role="status"><span class="dot"></span>Working · <span id="ago">5s</span> ago</span><span class="pill" role="status"><span class="dot"></span>watching</span>';
+}));
+
+render(); renderSide(); renderNow(); fit();
+</script>
+</body>
+</html>

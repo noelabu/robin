@@ -23,6 +23,12 @@ def launch_browser(p):
         return p.chromium.launch()
 
 
+def sessions_view(page):
+    """These tests drive the Sessions view; the dashboard remembers it, the way a returning user has it."""
+    page.add_init_script("try { localStorage.setItem('robin.view', 'sessions') } catch (e) {}")
+    return page
+
+
 @pytest.fixture
 def running(supervised):
     store = supervised
@@ -48,7 +54,7 @@ def test_sign_in_watch_and_control_a_session(running):
     )
     with sync_playwright() as p:
         browser = launch_browser(p)
-        page = browser.new_page()
+        page = sessions_view(browser.new_page())
         page.on("dialog", lambda d: d.accept())
         page.goto(f"http://127.0.0.1:{port}/#bootstrap={auth.new_bootstrap()}")
         expect(page.get_by_text("Supervisor connected")).to_be_visible(timeout=10_000)
@@ -94,7 +100,7 @@ def test_reused_sign_in_link_is_refused(running):
     link = f"http://127.0.0.1:{port}/#bootstrap={auth.new_bootstrap()}"
     with sync_playwright() as p:
         browser = launch_browser(p)
-        first = browser.new_context().new_page()
+        first = sessions_view(browser.new_context().new_page())
         first.goto(link)
         expect(first.get_by_text("Supervisor connected")).to_be_visible(timeout=10_000)
         second = browser.new_context().new_page()  # someone else replays the same link
@@ -114,7 +120,7 @@ def test_approve_from_the_attention_panel(running):
     )
     with sync_playwright() as p:
         browser = launch_browser(p)
-        page = browser.new_page()
+        page = sessions_view(browser.new_page())
         page.goto(f"http://127.0.0.1:{port}/#bootstrap={auth.new_bootstrap()}")
         expect(page.get_by_text("Supervisor connected")).to_be_visible(timeout=10_000)
         cli.post(
@@ -159,9 +165,10 @@ def test_reach_a_task_session_in_three_clicks_and_see_shared_folder_warnings(run
     )
     with sync_playwright() as p:
         browser = launch_browser(p)
-        page = browser.new_page()
+        page = sessions_view(browser.new_page())
         page.goto(f"http://127.0.0.1:{port}/#bootstrap={auth.new_bootstrap()}")
         expect(page.get_by_text("Supervisor connected")).to_be_visible(timeout=10_000)
+        # counted from the Sessions view; from the Map a session is its card, then "Open in Sessions"
         page.get_by_role("button", name="navproj").click()  # 1
         page.get_by_role("button", name="Fix login").click()  # 2
         expect(page.get_by_role("heading", name="Fix login")).to_be_visible()
@@ -208,7 +215,7 @@ def test_compare_select_claims_send_and_save_a_synthesis(running):
     )
     with sync_playwright() as p:
         browser = launch_browser(p)
-        page = browser.new_page()
+        page = sessions_view(browser.new_page())
         page.goto(f"http://127.0.0.1:{port}/#bootstrap={auth.new_bootstrap()}")
         expect(page.get_by_text("Supervisor connected")).to_be_visible(timeout=10_000)
         page.get_by_role("button", name="cmp").click()
@@ -245,7 +252,7 @@ def test_keyboard_only_reaches_every_session_and_keeps_focus(running):
         ensure_session(store, runtime="claude", mode="observed", execution_cwd=f"/w/app{i}")
     with sync_playwright() as p:
         browser = launch_browser(p)
-        page = browser.new_page()
+        page = sessions_view(browser.new_page())
         page.goto(f"http://127.0.0.1:{port}/#bootstrap={auth.new_bootstrap()}")
         expect(page.locator(".session-item").first).to_contain_text("app59", timeout=10_000)
 
@@ -292,7 +299,7 @@ def test_load_older_pages_in_every_observed_session(running, monkeypatch):
         ensure_session(store, runtime="claude", mode="observed", execution_cwd=f"/w/app{i}")
     with sync_playwright() as p:
         browser = launch_browser(p)
-        page = browser.new_page()
+        page = sessions_view(browser.new_page())
         page.goto(f"http://127.0.0.1:{port}/#bootstrap={auth.new_bootstrap()}")
         expect(page.get_by_label("Sessions, 20")).to_be_visible(timeout=10_000)
         more = page.get_by_role("button", name="load older")
@@ -330,7 +337,7 @@ def test_refreshing_or_closing_the_browser_leaves_running_work_alone(running):
 
     with sync_playwright() as p:
         browser = launch_browser(p)
-        page = browser.new_page()
+        page = sessions_view(browser.new_page())
         page.goto(f"http://127.0.0.1:{port}/#bootstrap={auth.new_bootstrap()}")
         expect(page.locator(".session-item").first).to_be_visible(timeout=10_000)
         page.locator(".session-item").first.click()
@@ -348,7 +355,7 @@ def test_refreshing_or_closing_the_browser_leaves_running_work_alone(running):
 
     with sync_playwright() as p:
         browser = launch_browser(p)
-        page = browser.new_page()
+        page = sessions_view(browser.new_page())
         page.goto(f"http://127.0.0.1:{port}/#bootstrap={auth.new_bootstrap()}")
         expect(page.locator(".session-item").first).to_contain_text(
             re.compile("Running|Needs input"), timeout=10_000
@@ -356,3 +363,50 @@ def test_refreshing_or_closing_the_browser_leaves_running_work_alone(running):
         browser.close()
     assert len(spawned()) == 1
     cli.post(f"/sessions/{sid}/actions", json={"type": "stop", "action_id": f"e2e-{uuid.uuid4().hex}"})
+
+
+def test_the_map_shows_sessions_and_opens_one_in_sessions(running):
+    from playwright.sync_api import expect, sync_playwright
+
+    from test_context import observed_session_with
+
+    store, port, auth = running
+    sid = observed_session_with(
+        store,
+        [
+            ("message.user", {"type": "user_message", "text": "Draw the map"}),
+            (
+                "tool.started",
+                {"type": "tool_started", "tool": "Edit", "input": {"file_path": "/w/app/App.tsx"}},
+            ),
+        ],
+    )
+    with sync_playwright() as p:
+        browser = launch_browser(p)
+        page = browser.new_page()
+        page.goto(f"http://127.0.0.1:{port}/#bootstrap={auth.new_bootstrap()}")
+        expect(page.get_by_role("tab", name="Map")).to_have_attribute("aria-selected", "true", timeout=10_000)
+        card = page.locator(f"[data-card='{sid}']")
+        expect(card).to_contain_text("Draw the map", timeout=10_000)
+        expect(page.get_by_role("button", name="Now: claude Edit")).to_be_visible()
+        try:
+            page.add_script_tag(url="https://cdn.jsdelivr.net/npm/axe-core@4.10.2/axe.min.js")
+            axe = True
+        except Exception:
+            axe = False  # offline: the axe pass needs the network
+        if axe:
+            violations = page.evaluate(
+                "axe.run(document, {runOnly: ['wcag2a', 'wcag2aa', 'wcag21aa']})"
+                ".then(r => r.violations.map(v => v.id + ': ' + v.nodes.map(n => n.target).join(' ')))"
+            )
+            assert violations == []
+        card.click()  # 1
+        drawer = page.get_by_role("complementary")
+        expect(drawer.get_by_role("list", name="Files changed")).to_contain_text("App.tsx")
+        page.keyboard.press("Escape")
+        expect(card).to_be_focused()
+        card.click()
+        drawer.get_by_role("button", name="Open in Sessions").click()  # 2
+        expect(page.get_by_role("tab", name="Sessions")).to_have_attribute("aria-selected", "true")
+        expect(page.locator(".detail")).to_be_visible()
+        browser.close()

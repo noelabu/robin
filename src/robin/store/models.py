@@ -634,3 +634,26 @@ class Worktree(Base):
     base_commit: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
     removed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class SessionActivity(Base):
+    """What a session is doing, derived from its events for the Map and rebuilt when the extractor or the
+    redaction rules change. One row per lane: the main transcript (lane '') or one Claude subagent. Every
+    string is redacted and truncated before it's stored."""
+
+    __tablename__ = "session_activity"
+    session_id: Mapped[str] = mapped_column(ForeignKey("session.session_id"), primary_key=True)
+    lane: Mapped[str] = mapped_column(String, primary_key=True)
+    title: Mapped[str | None] = mapped_column(Text)
+    label: Mapped[str | None] = mapped_column(String)  # a subagent's type, e.g. "Explore"
+    tool: Mapped[str | None] = mapped_column(String)
+    target: Mapped[str | None] = mapped_column(Text)
+    action_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    turn_started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    last_activity_at: Mapped[datetime | None] = mapped_column(UTCDateTime, index=True)
+    todos: Mapped[str] = mapped_column(Text)  # JSON [{id, text, status}]
+    todo_done: Mapped[int] = mapped_column(Integer)
+    todo_total: Mapped[int] = mapped_column(Integer)
+    files: Mapped[str] = mapped_column(Text)  # JSON [{path, op, at}], most recent first
+    files_count: Mapped[int] = mapped_column(Integer)
+    scratch: Mapped[str] = mapped_column(Text)  # JSON: TaskCreate calls waiting for their task id

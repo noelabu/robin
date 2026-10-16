@@ -35,7 +35,16 @@ class EventFamily(StrEnum):
 KNOWN_EVENT_TYPES: dict[str, EventFamily] = {
     **{
         f"session.{n}": EventFamily.SESSION
-        for n in ("started", "idle", "failed", "stopped", "resumed", "turn_started", "turn_completed")
+        for n in (
+            "started",
+            "idle",
+            "failed",
+            "stopped",
+            "resumed",
+            "turn_started",
+            "turn_completed",
+            "plan_updated",
+        )
     },
     **{f"message.{n}": EventFamily.MESSAGE for n in ("user", "delta", "completed")},
     **{f"tool.{n}": EventFamily.TOOL for n in ("started", "output", "result", "error")},

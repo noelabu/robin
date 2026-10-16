@@ -36,6 +36,12 @@ robin open                   # a fresh sign-in link for the dashboard
 
 Robin's data lives in `~/Library/Application Support/Robin` (override with `--data` or `ROBIN_DATA_DIR`).
 
+### Map
+
+The dashboard opens on the Map: every session at once, one card per session, grouped by repository (a subfolder or worktree counts as its repository). A card shows the title (the first prompt), whether it's working, the todo list's progress and the files it changed; Claude subagents get their own cards, linked to their parent. The floating card in the corner is the latest action anywhere. Click a card for its todos and changed files, then **Open in Sessions** to control it. No projects or tasks are needed: `robin scan` and `robin watch on` are enough.
+
+Tools, todos and file edits are read for Claude Code and Codex; Pi sessions show without them. For sessions started outside Robin, "Working" is inferred from activity in the last minute unless hooks are installed (`robin hooks install claude`). Large folders show their 50 newest sessions, with the rest one click away.
+
 ### Sessions
 
 ```bash

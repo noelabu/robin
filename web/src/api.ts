@@ -198,6 +198,74 @@ export type Workspace = {
   supervisor: { connected: boolean };
 };
 
+export type MapState = "running" | "waiting_for_input" | "idle" | "failed" | "stopped";
+
+export type MapCard = {
+  id: string;
+  session_id: string;
+  parent: string | null;
+  cluster: string;
+  runtime: string;
+  mode: "managed" | "observed";
+  label: string | null;
+  title: string | null;
+  state: MapState;
+  state_evidence: "reported" | "inferred";
+  detail: boolean; // Robin reads tools, todos and files for this runtime
+  todos: { done: number; total: number } | null;
+  files: number;
+  last_file: string | null;
+  tool: string | null;
+  target: string | null;
+  action_at: string | null;
+  turn_started_at: string | null;
+  last_activity_at: string | null;
+  created_at: string | null;
+  subagents_hidden: number;
+};
+
+export type MapCluster = {
+  key: string;
+  label: string;
+  path: string;
+  sessions: number;
+  shown: number;
+  running: number;
+  waiting: number;
+  last_activity_at: string | null;
+};
+
+export type MapNow = {
+  card_id: string;
+  session_id: string;
+  runtime: string;
+  title: string | null;
+  tool: string;
+  target: string | null;
+  action_at: string | null;
+  turn_started_at: string | null;
+  cluster: string;
+};
+
+export type MapSnapshot = { now: MapNow | null; clusters: MapCluster[]; cards: MapCard[]; pending_events: number };
+
+export type Todo = { id: string; text: string; status: "pending" | "in_progress" | "completed" };
+
+export type SessionActivity = {
+  session_id: string;
+  cluster: string;
+  lanes: {
+    lane: string;
+    title: string | null;
+    label: string | null;
+    current: { tool: string; target: string | null; at: string | null } | null;
+    todos: Todo[];
+    files: { path: string; op: string; at: string }[];
+    files_count: number;
+    last_activity_at: string | null;
+  }[];
+};
+
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string, public retry: string) {
     super(message);
@@ -247,6 +315,15 @@ export const newActionId = () => `ui-${crypto.randomUUID()}`;
 
 export const api = {
   workspace: () => request<Workspace>("GET", "/workspace"),
+  map: (cluster?: string) =>
+    request<MapSnapshot>("GET", `/map${cluster ? `?${new URLSearchParams({ cluster })}` : ""}`),
+  mapCards: (sessionIds: string[]) =>
+    request<Omit<MapSnapshot, "clusters">>(
+      "GET",
+      `/map/cards?${new URLSearchParams({ session_ids: sessionIds.join(",") })}`,
+    ),
+  session: (sessionId: string) => request<Session>("GET", `/sessions/${sessionId}`),
+  sessionActivity: (sessionId: string) => request<SessionActivity>("GET", `/sessions/${sessionId}/activity`),
   /** Observed sessions older than `before` (as the client last saw it), newest first. */
   olderSessions: (before: { updated_at: string; session_id: string }, limit = 200) =>
     request<{

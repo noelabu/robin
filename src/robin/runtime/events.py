@@ -25,6 +25,7 @@ HOST_EVENTS: dict[str, tuple[str, EvidenceKind]] = {
     "tool_result": ("tool.result", EvidenceKind.REPORTED),
     "tool_error": ("tool.error", EvidenceKind.REPORTED),
     "file_changed": ("file.change", EvidenceKind.REPORTED),
+    "plan_updated": ("session.plan_updated", EvidenceKind.REPORTED),
     "approval_request": ("attention.approval_requested", EvidenceKind.REPORTED),
     "question": ("attention.question", EvidenceKind.REPORTED),
     "approval_expired": ("attention.expired", EvidenceKind.OBSERVED),

@@ -40,17 +40,18 @@ it (`runtime/manager.py`); that limit is also listed in the release record.
 | Notification text running as AppleScript | The title and body reach `osascript` only as `argv`, never inside the script; notifications carry runtime, session and task names, never prompt or message text | `notifications.py` | `test_notifications.py::test_text_reaches_osascript_only_as_arguments`, `…without_message_text` |
 | An agent fed its own output as independent confirmation | Lineage is walked for every packet source and grant; the recipient's own work, or work built on it, is left out unless the user includes it explicitly | `context/lineage.py`, `context/packets.py`, `retrieval.py` | `test_context.py::test_a_recipients_own_output_is_left_out_unless_included`, `test_retrieval.py::test_a_grant_of_a_sessions_own_work_back_needs_an_explicit_allow` |
 | Worktree removal destroying work | Removal is a separate confirmed action: it shows uncommitted files and unmerged commits, refuses while the session is connected, discards uncommitted files only when told to, never deletes the branch, and is audited. Worktrees never sit inside the data directory or the repository | `workspace/worktrees.py` | `test_worktrees.py` |
+| Secrets in what the Map shows (titles, tool targets, todos, file paths) | Each string is secret-scanned before it is truncated and stored, at derivation time; the table is rebuilt from the events when the redaction rules or the extractor change. The Map reads only that table, never raw payloads | `activity.py` | `test_activity.py::test_secrets_never_reach_the_table`, `…rebuilt_when_rules_change` |
 | Robin contending with an agent for Git's index lock | Git context is read with `GIT_OPTIONAL_LOCKS=0`, off the request path | `gitctx.py` | `test_rungit.py` |
 
 ## Accessibility (NFR-08)
 
 | Requirement | How | Test |
 |---|---|---|
-| Keyboard-only use of the full scenario | Every control is a native element. The session list is one Tab stop: arrow keys, Page Up/Down, Home and End reach every session, and the focused row is always rendered. Closing a panel returns focus to whatever opened it. Opening a session moves focus to its heading | `components.test.tsx`, `tests/e2e/test_web.py::test_keyboard_only_reaches_every_session_and_keeps_focus` |
+| Keyboard-only use of the full scenario | Every control is a native element. On the Map, every card is a button in the Tab order and focusing one pans it into view; Esc closes the detail drawer and returns focus to the card; `+`, `-` and `0` zoom. The session list is one Tab stop: arrow keys, Page Up/Down, Home and End reach every session, and the focused row is always rendered. Closing a panel returns focus to whatever opened it. Opening a session moves focus to its heading | `components.test.tsx`, `tests/e2e/test_web.py::test_keyboard_only_reaches_every_session_and_keeps_focus` |
 | Contrast | Text tokens are at least 4.5:1 and focus rings and field borders at least 3:1, in light and dark themes | `contrast.test.ts`; axe in the e2e test when the network is available |
-| State not shown by colour alone | Every state has a text label (`StateBadge`, status pills, evidence kinds); reasons a control is disabled are shown as text | `components.test.tsx` |
+| State not shown by colour alone | Every state has a text label (`StateBadge`, Map state chips, status pills, evidence kinds); reasons a control is disabled are shown as text | `components.test.tsx` |
 | Announced state changes | Status regions for session state, attention count, search result count and action results | `components.test.tsx::a session state change is announced` |
-| Reduced motion | The global `prefers-reduced-motion` rule; the app has no animations | — |
+| Reduced motion | The global `prefers-reduced-motion` rule turns off the Map's spinners and pan easing | — |
 
 ## Known limits
 

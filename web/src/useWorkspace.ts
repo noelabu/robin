@@ -22,6 +22,7 @@ type State = {
 type Msg =
   | { kind: "snapshot"; ws: Workspace }
   | { kind: "older"; sessions: Session[]; done: boolean }
+  | { kind: "session"; session: Session }
   | { kind: "event"; event: RobinEvent; session: Session; preview: string | null }
   | { kind: "stream"; state: State["streamState"] };
 
@@ -61,6 +62,8 @@ function reducer(s: State, m: Msg): State {
     }
     case "stream":
       return { ...s, streamState: m.state };
+    case "session":
+      return { ...s, sessions: { ...s.sessions, [m.session.session_id]: m.session } };
     case "older":
       return {
         ...s,
@@ -145,5 +148,11 @@ export function useWorkspace(enabled: boolean) {
     dispatch({ kind: "older", sessions: page.sessions, done: page.next_before === null });
   }, []);
 
-  return { ...state, reload, loadOlder };
+  /** Make sure one session is loaded, e.g. an older one opened from the Map. */
+  const ensure = useCallback(async (sessionId: string) => {
+    if (sessions.current[sessionId]) return;
+    dispatch({ kind: "session", session: await api.session(sessionId) });
+  }, []);
+
+  return { ...state, reload, loadOlder, ensure };
 }

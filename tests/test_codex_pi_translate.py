@@ -55,6 +55,10 @@ def test_codex_items():
         }
     ]  # reasoning content isn't kept
     assert types(codex("account/rateLimits/updated", {})) == ["codex_notification"]
+    plan = [{"step": "Bump deps", "status": "inProgress"}]
+    assert codex("turn/plan/updated", {"turnId": "t", "plan": plan}) == [
+        {"type": "plan_updated", "plan": plan, "native_method": "turn/plan/updated"}
+    ]
 
 
 def test_pi_records():

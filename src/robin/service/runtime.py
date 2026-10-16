@@ -42,6 +42,7 @@ class ServiceRuntime:
         self._watcher: asyncio.Task[None] | None = None
         self._notifier: asyncio.Task[None] | None = None
         self._git: asyncio.Task[None] | None = None
+        self._projector: asyncio.Task[None] | None = None
         # session id -> loop time until which a visible dashboard is showing it (FR-033: stay quiet there)
         self.viewing: dict[str, float] = {}
         self._watch_stop = threading.Event()
@@ -55,10 +56,11 @@ class ServiceRuntime:
         self._watcher = asyncio.create_task(self._watch())
         self._notifier = asyncio.create_task(self._notify_user())
         self._git = asyncio.create_task(self._git_context())
+        self._projector = asyncio.create_task(self._activity())
 
     async def stop(self) -> None:
         self._watch_stop.set()
-        for task in (self._task, self._indexer, self._watcher, self._notifier, self._git):
+        for task in (self._task, self._indexer, self._watcher, self._notifier, self._git, self._projector):
             if task:
                 task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -106,6 +108,20 @@ class ServiceRuntime:
                         await self.notify()
                 except Exception:
                     log.exception("storage cap check failed")
+            seen = await self.wait_change(seen, 5.0)
+
+    async def _activity(self) -> None:
+        """Keep the Map's activity caught up, in its own loop: a slow search backfill doesn't hold it up."""
+        from robin import activity
+
+        seen = -1
+        while True:
+            try:
+                if await asyncio.to_thread(activity.catch_up, self.store):
+                    await self.notify()
+            except Exception:
+                log.exception("activity projection failed; retrying")
+                await asyncio.sleep(5)
             seen = await self.wait_change(seen, 5.0)
 
     def viewed(self, session_id: str | None, for_s: float = PRESENCE_S) -> None:

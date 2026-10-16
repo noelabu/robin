@@ -10,13 +10,46 @@ import { SessionDetail } from "./components/SessionDetail";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { SessionList } from "./components/SessionList";
 import { TaskDetail } from "./components/TaskDetail";
+import { MapView } from "./map/MapView";
 import { inScope, type Scope } from "./scope";
 import { useWorkspace } from "./useWorkspace";
 
 const ACTIVE_FIRST = (a: Session, b: Session) => b.updated_at.localeCompare(a.updated_at);
+const VIEW_KEY = "robin.view";
+
+type View = "map" | "sessions";
+
+function savedView(): View {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "sessions" ? "sessions" : "map";
+  } catch {
+    return "map";
+  }
+}
+
+function ViewTabs({ view, onView }: { view: View; onView: (v: View) => void }) {
+  return (
+    <div className="view-tabs" role="tablist" aria-label="View">
+      {(["map", "sessions"] as const).map((v) => (
+        <button key={v} role="tab" aria-selected={view === v} onClick={() => onView(v)}>
+          {v === "map" ? "Map" : "Sessions"}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export function App() {
   const [auth, setAuth] = useState<"checking" | "ok" | "signed_out">("checking");
+  const [view, setViewState] = useState<View>(savedView);
+  const setView = (v: View) => {
+    setViewState(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      /* the choice just isn't remembered */
+    }
+  };
   const [scope, setScope] = useState<Scope>({ kind: "all" });
   const [selected, setSelected] = useState<string | null>(null);
   const [panel, setPanel] = useState<"none" | "launch" | "task" | "settings">("none");
@@ -75,7 +108,7 @@ export function App() {
       : sessions[0];
 
   // The session on screen, so the service keeps its notifications quiet while the dashboard is visible.
-  const shown = auth === "ok" ? (current?.session_id ?? null) : null;
+  const shown = auth === "ok" && view === "sessions" ? (current?.session_id ?? null) : null;
   useEffect(() => {
     if (auth !== "ok") return;
     const report = () => void api.presence(document.visibilityState === "visible" ? shown : null).catch(() => {});
@@ -113,10 +146,28 @@ export function App() {
       </main>
     );
 
+  const tabs = <ViewTabs view={view} onView={setView} />;
+  if (view === "map")
+    return (
+      <MapView
+        ws={ws}
+        tabs={tabs}
+        onOpenSession={(id) => {
+          setView("sessions");
+          setScope({ kind: "all" });
+          setPanel("none");
+          openSession(id);
+          void ws.ensure(id).catch(() => setNotice("That session couldn't be loaded."));
+        }}
+        onOpenAttention={() => setView("sessions")}
+      />
+    );
+
   return (
     <div className="shell">
       <header className="topbar">
         <h1 className="brand">Robin</h1>
+        {tabs}
         <SearchBox
           onOpenSession={(id) => {
             setPanel("none");

@@ -372,6 +372,7 @@ TR-091: P1 must not delay the first complete P0 vertical slice.
 | Notifications | FR-033 | Attention and run events | **Done** `b1c3e50` (macOS, opt-in) |
 | Richer Git context (base commit, working-tree state, changed files per run) | FR-050, TR-075 | WP-2.1 Git reader | **Done** `3a2dccc` |
 | Optional task worktrees | FR-051, TR-070, TR-072 | Owner decision 2026-10-15: not needed for the first accepted workflow; stays P1 | **Done** `2293577` |
+| Map view (owner request 2026-10-17): every session on one canvas, clustered by repository, with todos, changed files and subagents; the dashboard's home | FR-010, FR-011, TR-070 | Discovery, history tailing, redaction | **Done** |
 
 ---
 

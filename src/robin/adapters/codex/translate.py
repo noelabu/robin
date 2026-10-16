@@ -47,6 +47,9 @@ def translate(method: str, params: dict[str, Any]) -> list[dict[str, Any]]:
             }
         ]
 
+    if method == "turn/plan/updated":
+        return [{"type": "plan_updated", "plan": params.get("plan"), **native}]
+
     if method == "item/agentMessage/delta":
         return [
             {

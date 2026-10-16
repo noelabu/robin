@@ -892,6 +892,7 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         routes_attention,
         routes_context,
         routes_findings,
+        routes_map,
         routes_workspace,
     )
 
@@ -900,6 +901,7 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
     routes_findings.register(app, runtime, Authed, API, _error)
     routes_context.register(app, runtime, Authed, API, _error)
     routes_agent.register(app, runtime, Authed, API, _error)
+    routes_map.register(app, runtime, Authed, API)
 
     # -- web client (mounted last: it matches every path) ----------------------
 
