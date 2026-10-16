@@ -41,6 +41,7 @@ class ServiceRuntime:
         self._indexer: asyncio.Task[None] | None = None
         self._watcher: asyncio.Task[None] | None = None
         self._notifier: asyncio.Task[None] | None = None
+        self._git: asyncio.Task[None] | None = None
         # session id -> loop time until which a visible dashboard is showing it (FR-033: stay quiet there)
         self.viewing: dict[str, float] = {}
         self._watch_stop = threading.Event()
@@ -53,10 +54,11 @@ class ServiceRuntime:
         self._indexer = asyncio.create_task(self._index())
         self._watcher = asyncio.create_task(self._watch())
         self._notifier = asyncio.create_task(self._notify_user())
+        self._git = asyncio.create_task(self._git_context())
 
     async def stop(self) -> None:
         self._watch_stop.set()
-        for task in (self._task, self._indexer, self._watcher, self._notifier):
+        for task in (self._task, self._indexer, self._watcher, self._notifier, self._git):
             if task:
                 task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -132,6 +134,20 @@ class ServiceRuntime:
                     await asyncio.to_thread(notifications.send, note)
             except Exception:
                 log.exception("notifications failed; retrying")
+                await asyncio.sleep(5)
+
+    async def _git_context(self) -> None:
+        """Git context for runs as they start and end (FR-050, TR-075), off the request path."""
+        from robin.workspace import rungit
+
+        seen = -1
+        while True:
+            seen = await self.wait_change(seen, 10.0)
+            try:
+                if await asyncio.to_thread(rungit.capture, self.store):
+                    await self.notify()
+            except Exception:
+                log.exception("reading Git context failed; retrying")
                 await asyncio.sleep(5)
 
     async def _watch(self) -> None:

@@ -425,6 +425,13 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
 
     # -- controls --------------------------------------------------------------
 
+    @app.get(f"{API}/sessions/{{session_id}}/runs")
+    async def session_runs(session_id: str, _: str = Authed, limit: int = Query(20, ge=1, le=200)) -> Any:
+        """The session's latest runs with their Git context (FR-050)."""
+        from robin.workspace import rungit
+
+        return {"runs": await asyncio.to_thread(rungit.for_session, store, session_id, limit)}
+
     @app.post(f"{API}/sessions/launch", status_code=202)
     async def launch(body: LaunchBody, _: str = Authed) -> dict[str, Any]:
         existing = await runtime.manager.get_action(body.action_id)

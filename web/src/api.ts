@@ -103,6 +103,27 @@ export type Finding = {
   content_hash: string;
 };
 
+export type RunGit = {
+  repo_root: string;
+  branch: string | null;
+  base_commit: string | null;
+  dirty_at_start: number | null;
+  dirty_at_end: number | null;
+  end_commit: string | null;
+  changed_files: { path: string; change: "added" | "modified" | "deleted" }[] | null;
+  truncated: boolean;
+  start_late: boolean;
+  shared_folder: boolean;
+};
+export type Run = {
+  run_id: string;
+  started_at: string;
+  ended_at: string | null;
+  outcome: string | null;
+  task_id: string | null;
+  git: RunGit | null;
+};
+
 export type NotificationKind = "input" | "failed" | "finished";
 export type NotificationSettings = { enabled: boolean; kinds: NotificationKind[] };
 
@@ -284,6 +305,7 @@ export const api = {
   notifications: () => request<NotificationSettings>("GET", "/settings/notifications"),
   setNotifications: (body: NotificationSettings) =>
     request<NotificationSettings>("PUT", "/settings/notifications", body),
+  runs: (sessionId: string) => request<{ runs: Run[] }>("GET", `/sessions/${sessionId}/runs`),
   presence: (session_id: string | null) => request<{ ok: boolean }>("PUT", "/presence", { session_id }),
   search: (q: string) =>
     request<{ results: SearchResult[]; more: boolean; pending_events: number }>(

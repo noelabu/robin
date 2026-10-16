@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, ApiError, type Session } from "../api";
+import { Runs } from "./Runs";
 import { LABEL, StateBadge } from "./StateBadge";
 
 function ago(iso: string | null): string {
@@ -224,6 +225,7 @@ export function SessionDetail({ session, onChanged }: { session: Session; onChan
           {status}
         </p>
       </form>
+      {session.mode === "managed" && <Runs sessionId={session.session_id} updatedAt={session.updated_at} />}
     </section>
   );
 }

@@ -50,6 +50,7 @@ robin approve <attention-id> # or: robin deny <attention-id>
 robin open <session>         # continue the session in this terminal; Robin hands over control
 robin reclaim <session>      # take it back
 robin stop <session>
+robin runs <session>         # each run's branch, base commit, working-tree state and the files it changed
 ```
 
 Managed sessions are ones Robin launched; it can control them. Observed sessions are ones you started elsewhere; Robin reads their history and never changes them.

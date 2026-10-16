@@ -626,6 +626,39 @@ def cmd_watch(args: argparse.Namespace) -> None:
         print("not watching history (run `robin scan` to index it once, or `robin watch on`)")
 
 
+def cmd_runs(args: argparse.Namespace) -> None:
+    """A session's latest runs with their Git context (FR-050)."""
+    with client(args.data) as c:
+        runs = call(c, "GET", f"/sessions/{args.session}/runs?limit={args.limit}")["runs"]
+    if not runs:
+        print("no runs yet")
+    for r in runs:
+        state = (r["outcome"] or "ended") if r["ended_at"] else "running"
+        print(f"{r['started_at']}  {state}")
+        g = r["git"]
+        if g is None:
+            print("  not in a Git repository")
+            continue
+        if g["dirty_at_start"] is None:
+            start = "start state unknown"
+        else:
+            start = f"at {(g['base_commit'] or 'no commits yet')[:12]}, {g['dirty_at_start']} dirty at start"
+        print(f"  {g['repo_root']}  {g['branch'] or 'detached'} {start}")
+        if g["changed_files"] is None:
+            print("  changed files: " + ("unknown" if r["ended_at"] else "listed when it ends"))
+        else:
+            for f in g["changed_files"]:
+                print(f"  {f['change']:<9} {f['path']}")
+            if not g["changed_files"]:
+                print("  no files changed")
+        if g["truncated"]:
+            print("  (only the first 1,000 files)")
+        if g["start_late"] and g["changed_files"] is not None:
+            print("  note: start state read late; earlier changes may be missing")
+        if g["shared_folder"]:
+            print("  note: another session worked in this folder; some changes may be theirs")
+
+
 def cmd_notify(args: argparse.Namespace) -> None:
     """Opt-in macOS notifications when a session needs input, fails or finishes (FR-033)."""
     with client(args.data) as c:
@@ -1090,6 +1123,11 @@ def parser() -> argparse.ArgumentParser:
     p = sub.add_parser("watch", parents=[common], help="follow native session history as it grows (opt-in)")
     p.add_argument("state", choices=["on", "off", "status"])
     p.set_defaults(func=cmd_watch)
+
+    p = sub.add_parser("runs", parents=[common], help="a session's runs with their Git context")
+    p.add_argument("session")
+    p.add_argument("--limit", type=int, default=10)
+    p.set_defaults(func=cmd_runs)
 
     p = sub.add_parser("notify", parents=[common], help="notifications when sessions need you (opt-in)")
     p.add_argument("state", choices=["on", "off", "status"])

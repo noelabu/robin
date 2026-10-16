@@ -596,3 +596,24 @@ class PrunedEvent(Base):
     global_cursor: Mapped[int] = mapped_column(ForeignKey("event.global_cursor"), primary_key=True)
     original_size: Mapped[int] = mapped_column(Integer)
     pruned_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class RunGit(Base):
+    """Git context of one run (FR-050, TR-075): the repository and base commit when it started, and what it
+    changed by the end. Read in the background; a folder that isn't a repository has no row fields set."""
+
+    __tablename__ = "run_git"
+    run_id: Mapped[str] = mapped_column(ForeignKey("run.run_id"), primary_key=True)
+    repo_root: Mapped[str | None] = mapped_column(String)
+    branch: Mapped[str | None] = mapped_column(String)
+    base_commit: Mapped[str | None] = mapped_column(String)
+    start_dirty: Mapped[int | None] = mapped_column(Integer)  # changed or untracked files at the start
+    start_snapshot: Mapped[str | None] = mapped_column(Text)  # JSON {path: blob hash or null}
+    start_late: Mapped[int] = mapped_column(Integer, server_default=text("0"))  # read after the run began
+    start_captured_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    end_commit: Mapped[str | None] = mapped_column(String)
+    end_dirty: Mapped[int | None] = mapped_column(Integer)
+    changed_files: Mapped[str | None] = mapped_column(Text)  # JSON [{path, change}]
+    shared_folder: Mapped[int] = mapped_column(Integer, server_default=text("0"))  # others wrote there too
+    truncated: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    end_captured_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
