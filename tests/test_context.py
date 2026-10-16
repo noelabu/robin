@@ -107,6 +107,23 @@ def test_confirm_locks_the_payload_and_delivery_happens_once(api):
     assert view["state"] == "delivered" and [d["state"] for d in view["deliveries"]] == ["acknowledged"]
 
 
+def test_a_failed_delivery_is_reported_and_never_shown_as_delivered(api):
+    store, c, task_id, _ = api
+    target = launch(c, task_id)
+    p = preview(c, task_id, target, findings=[{"id": publish_user(c, task_id)["finding_id"]}]).json()
+    c.post(f"/context/{p['packet_id']}/confirm", json={"payload_hash": p["payload_hash"]})
+    c.post(f"/sessions/{target}/actions", json={"type": "stop", "action_id": aid()})
+    wait(lambda: c.get(f"/sessions/{target}").json()["connection_state"] == "disconnected")
+
+    r = c.post(f"/context/{p['packet_id']}/deliver", json={"action_id": aid()})
+    assert r.status_code == 409, r.text
+    view = c.get(f"/context/{p['packet_id']}").json()
+    assert view["state"] == "confirmed"
+    assert [d["state"] for d in view["deliveries"]] == ["failed"]
+    turns = [e for e in read_events(store, session_id=target) if e.event_type == "session.turn_started"]
+    assert len(turns) <= 1  # only the launch turn, if any; the packet never reached the runtime
+
+
 def test_a_changed_source_or_target_invalidates_the_preview(api):
     store, c, task_id, _ = api
     target = launch(c, task_id)

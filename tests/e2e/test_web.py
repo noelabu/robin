@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import re
 import threading
 import time
 import uuid
@@ -304,3 +305,54 @@ def test_load_older_pages_in_every_observed_session(running, monkeypatch):
         expect(page.get_by_label("Sessions, 450")).to_be_visible()
         expect(more).to_have_count(0)  # nothing older left
         browser.close()
+
+
+def test_refreshing_or_closing_the_browser_leaves_running_work_alone(running):
+    from playwright.sync_api import expect, sync_playwright
+
+    store, port, auth = running
+    folder = store.data_dir.parent / "close-project"
+    folder.mkdir()
+    cli = httpx.Client(
+        base_url=f"http://127.0.0.1:{port}/api/v1", headers={"authorization": f"Bearer {auth.cli_token}"}
+    )
+    sid = cli.post(
+        "/sessions/launch",
+        json={"runtime": "fake", "cwd": str(folder), "prompt": "go", "action_id": f"e2e-{uuid.uuid4().hex}"},
+    ).json()["session_id"]
+
+    def spawned():
+        return [
+            e
+            for e in cli.get(f"/events?session_id={sid}&limit=500").json()["events"]
+            if e["event_type"] == "connection.connected"
+        ]
+
+    with sync_playwright() as p:
+        browser = launch_browser(p)
+        page = browser.new_page()
+        page.goto(f"http://127.0.0.1:{port}/#bootstrap={auth.new_bootstrap()}")
+        expect(page.locator(".session-item").first).to_be_visible(timeout=10_000)
+        page.locator(".session-item").first.click()
+        expect(page.locator(".feed-item").first).to_be_visible(timeout=10_000)
+        page.reload()
+        expect(page.get_by_text("Supervisor connected")).to_be_visible(timeout=10_000)
+        expect(page.locator(".session-item").first).to_be_visible(timeout=10_000)
+        browser.close()
+
+    time.sleep(1)
+    s = cli.get(f"/sessions/{sid}").json()
+    assert s["connection_state"] == "connected"
+    assert s["runtime_state"] in ("running", "waiting_for_input")
+    assert len(spawned()) == 1  # never relaunched
+
+    with sync_playwright() as p:
+        browser = launch_browser(p)
+        page = browser.new_page()
+        page.goto(f"http://127.0.0.1:{port}/#bootstrap={auth.new_bootstrap()}")
+        expect(page.locator(".session-item").first).to_contain_text(
+            re.compile("Running|Needs input"), timeout=10_000
+        )
+        browser.close()
+    assert len(spawned()) == 1
+    cli.post(f"/sessions/{sid}/actions", json={"type": "stop", "action_id": f"e2e-{uuid.uuid4().hex}"})

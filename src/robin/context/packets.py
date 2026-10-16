@@ -573,10 +573,13 @@ def get(store: Store, packet_id: str, include_text: bool = True) -> dict[str, An
             )
         ]
     flags = sorted({f for s in manifest["sources"] for f in s.get("flags", [])})
+    state = p["state"]
+    if state == "delivered" and all(d["state"] == "failed" for d in deliveries):
+        state = "confirmed"  # every send failed: nothing reached the target, and it can be sent again
     view = {
         "packet_id": p["packet_id"],
         "task_id": p["task_id"],
-        "state": p["state"],
+        "state": state,
         "invalid_reason": p["invalid_reason"],
         "recipient": manifest["target"],
         "question": manifest["selection"]["question"],

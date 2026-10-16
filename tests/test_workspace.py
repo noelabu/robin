@@ -131,6 +131,22 @@ def test_archive_session_hides_without_deleting(store):
         ws.archive_session(store, "nope", True)
 
 
+def test_an_ended_turn_never_completes_the_task(store, project_dir):
+    p = ws.register_project(store, str(project_dir))
+    t = ws.create_task(store, project_id=p["project_id"], title="A", objective="a")["task_id"]
+    sid = ensure_session(store, runtime="fake", mode="managed")
+    ws.bind_new_session(store, sid, task_id=t, project_id=p["project_id"])
+    store.writer.call(lambda c: state.apply(c, sid, 1, T, {"type": "turn_started"}))
+    store.writer.call(lambda c: state.apply(c, sid, 2, T, {"type": "turn_completed"}))
+    store.writer.call(lambda c: state.apply(c, sid, 3, T, {"type": "host_exited"}))
+    with store.reader.connect() as c:
+        (run,) = c.execute(select(Run).where(Run.session_id == sid)).mappings()
+    assert run["outcome"] == "completed"  # the turn ended...
+    task = ws.get_task(store, t)
+    assert task["status"] == "open"  # ...and the task is still the user's to close
+    assert [s["runtime_state"] for s in task["sessions"]] == ["stopped"]
+
+
 def test_attaching_back_to_the_current_task_cancels_a_pending_switch(store, project_dir):
     """Regression (R20261015-151650-I1): the latest choice wins; no stale pending task."""
     p = ws.register_project(store, str(project_dir))
