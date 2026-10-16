@@ -155,10 +155,10 @@ export const Canvas = forwardRef<
         <svg className="map-wires" width={layout.bounds.w} height={layout.bounds.h} aria-hidden="true">
           <defs>
             <marker id="map-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
-              <path d="M0 0L8 4L0 8z" fill="#5d5b56" stroke="none" />
+              <path d="M0 0L8 4L0 8z" fill="#5f5378" stroke="none" />
             </marker>
             <marker id="map-arrow-live" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
-              <path d="M0 0L8 4L0 8z" fill="#e9a23b" stroke="none" />
+              <path d="M0 0L8 4L0 8z" fill="#b197fc" stroke="none" />
             </marker>
           </defs>
           {layout.edges.map((e) => (
