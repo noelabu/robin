@@ -86,6 +86,14 @@ def _ingest_session(
         native_session_id=native.native_id,
         execution_cwd=native.cwd,
     )
+    if native.cwd:  # sessions indexed before their folder could be read get it on the next scan
+        store.writer.call(
+            lambda c: c.execute(
+                update(SessionRow)
+                .where(SessionRow.session_id == sid, SessionRow.execution_cwd.is_(None))
+                .values(execution_cwd=native.cwd, updated_at=utc_now())
+            )
+        )
     project_id = ws.project_for(native.cwd, projects)
     if project_id:
         store.writer.call(

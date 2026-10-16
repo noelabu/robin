@@ -219,3 +219,34 @@ def test_sessions_robin_launched_are_not_double_ingested(store, tmp_path):
     )
     reports = {x.runtime: x for x in scan(store, roots=r)}
     assert reports["codex"].skipped_managed == 1 and reports["codex"].events == 0
+
+
+def test_claude_folder_is_found_after_leading_metadata_records(store, tmp_path):
+    """Current transcripts open with metadata records that carry the session ID but no folder or version."""
+    sid = "99999999-2222-3333-4444-555555555555"
+    root = tmp_path / "claude"
+    meta = [
+        {"type": "last-prompt", "leafUuid": "x", "sessionId": sid},
+        {"type": "mode", "mode": "normal", "sessionId": sid},
+        {"type": "permission-mode", "permissionMode": "default", "sessionId": sid},
+    ]
+    snapshots = [{"type": "file-history-snapshot", "messageId": f"s{i}"} for i in range(22)]
+    first = {
+        "type": "user",
+        "sessionId": sid,
+        "cwd": "/Users/me/app",
+        "version": "2.1.300",
+        "uuid": "u1",
+        "timestamp": "2026-10-15T01:00:00.000Z",
+        "message": {"role": "user", "content": "hi"},
+    }
+    jl(root / "-Users-me-app" / f"{sid}.jsonl", *meta, *snapshots, first)
+    (c,) = claude_discover(root)
+    assert (c.native_id, c.cwd, c.version) == (sid, "/Users/me/app", "2.1.300")
+
+    # A session indexed before its folder could be read gets it on the next scan.
+    scan(store, runtimes=["claude"], roots={"claude": root})
+    store.writer.call(lambda conn: conn.execute(SessionRow.__table__.update().values(execution_cwd=None)))
+    scan(store, runtimes=["claude"], roots={"claude": root})
+    with store.reader.connect() as conn:
+        assert conn.execute(select(SessionRow.execution_cwd)).scalars().all() == ["/Users/me/app"]

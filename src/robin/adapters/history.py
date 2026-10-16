@@ -83,11 +83,14 @@ def claude_main(path: Path) -> Path:
 
 
 def claude_describe(path: Path) -> NativeSession:
-    recs = first_records(path)
-    meta = next((r for r in recs if r.get("sessionId")), {})
-    native = meta.get("sessionId") or path.stem
+    # Metadata records (last-prompt, mode, permission-mode) lead the file and carry the session ID but not
+    # the folder or version, so each field comes from the first record that has it.
+    recs = first_records(path, limit=200)
+    native = next((r["sessionId"] for r in recs if r.get("sessionId")), None) or path.stem
+    cwd = next((r["cwd"] for r in recs if r.get("cwd")), None)
+    version = next((r["version"] for r in recs if r.get("version")), None)
     subagents = tuple(sorted((path.parent / path.stem / "subagents").glob("*.jsonl")))
-    return NativeSession("claude", str(native), path, meta.get("cwd"), meta.get("version"), subagents)
+    return NativeSession("claude", str(native), path, cwd, version, subagents)
 
 
 def claude_discover(root: Path) -> Iterator[NativeSession]:
