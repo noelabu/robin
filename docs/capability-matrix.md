@@ -3,7 +3,7 @@
 Dated evidence for each runtime against the PRD §16 minimum capability floor (TR-090). A runtime ships with live control only if it passes every floor item; otherwise it ships observed-only.
 
 - **Last updated:** 2026-10-15
-- **Machine:** MacBook Pro M4 Pro, macOS 26.5 (development). The release record must come from the Mac mini M4.
+- **Machine:** MacBook Pro M4 Pro, macOS 26.5, the reference machine (owner decision 2026-10-16). Release results: `docs/release.md`.
 - **Tests:** `supervisor/test_isolation.py <runtime> [deny]`: can a reviewer read Robin's artifact store. `supervisor/test_continuity.py <runtime>`: steer mid-turn, resume after the host exits, continue from the native CLI. `supervisor/test_live.py <runtime>`: launch, approval held while the service is SIGKILLed, reconnect, approve, follow-up, interrupt, stop. `supervisor/test_publish.py <runtime> tool|message`: the agent reviews a PRD and publishes one finding; Robin checks schema, evidence and attribution. `supervisor/test_findings_unit.py`: offline validation, parsing, attribution and duplicate checks.
 
 ## Floor

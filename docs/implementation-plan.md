@@ -16,7 +16,7 @@ The plan follows the PRD §16 phases (0–4). Each phase ends on demonstrated be
 | Phase 1 starts before the Mac mini re-run | The capability matrix is complete on the development MacBook. The Mac mini re-run, corpus and copy-paste baseline continue alongside Phase 1. |
 | Claude, Codex and Pi all have accounts | All three are spiked in Phase 0 and classified live or observed-only against the floor. |
 | macOS only for the first release | Linux validation is dropped from Phase 0 and the release gate. **This differs from PRD v0.4 ("macOS and Linux") and needs a PRD/TRD revision.** |
-| Reference and development machine is a Mac mini M4 | It replaces the TRD's proposed 8-core/16 GB reference (TR-080). Exact core count and RAM to be recorded in WP-0.3. |
+| Reference and development machine is a Mac mini M4 | It replaces the TRD's proposed 8-core/16 GB reference (TR-080). Exact core count and RAM to be recorded in WP-0.3. **Superseded 2026-10-16:** the development MacBook (M4 Pro, 14 cores, 48 GB, macOS 26.5) is the reference machine; the release ran there (`docs/release.md`). |
 | Private project | No public license, no PyPI publishing. Fixtures stay anonymized, as the PRD launch checklist requires, but are not published. The name check only needs to avoid clashes on your own machine and in your package index. |
 | Worktrees not needed | FR-051 stays P1 (see P1 table). |
 | No remote access in v1 | Loopback only. Remote use goes through SSH port forwarding (`ssh -L`). Private-network access (UC-05, TR-052) moves after the MVP. |
@@ -31,11 +31,11 @@ The plan follows the PRD §16 phases (0–4). Each phase ends on demonstrated be
 
 | Phase | State | Commits |
 |---|---|---|
-| 0 Integration validation | Done on the development MacBook: all three runtimes live (`docs/capability-matrix.md`). Mac mini re-run and copy-paste baseline still to do. | `9b476fb`…`b9802eb` |
+| 0 Integration validation | Done on the development MacBook, now the reference machine: all three runtimes live (`docs/capability-matrix.md`). Copy-paste baseline and anonymized fixtures still to do. | `9b476fb`…`b9802eb` |
 | 1 One managed session | **Done.** Storage, ingestion, supervisor, runtime manager, Claude adapter, API + auth + SSE, web client, CLI. Exit tests pass, including a session surviving a full service restart. | `12d37e2`, `455ddbb`, `d45c554`, `598bcb1`, `34a2199`, `a8cb03f`, `6c00415`, `43623e4` |
 | 2 Shared workspace | **Done.** Projects and tasks, Codex and Pi adapters live, discovery and history for all three, attention queue, terminal handoff with a control lease, dashboard and task workspace, opt-in hook installers (Claude and Pi verified live; Codex shape matches its existing hooks file, not yet fired live). | `67b4c2e`, `68e21b2`, `8120936`, `8da8713`, `0be4f4e`, `eddbf93`, WP-2.6 |
 | 3 Findings and transfer | **Done.** Attributed findings by tool and by message, independent reviewers (enforced on Claude and Codex; Pi labelled not isolated), gitleaks-based redaction, context packets with preview, confirm and delivery, retrieval grants and agent tools, compare and synthesis. Exit run passes live (three reviews, one with MCP off; Codex + Pi findings to Claude; saved synthesis; independence holds after transfer). | `7971cb4`…`befe471`, WP-3.6 |
-| 4 History and hardening | In progress | |
+| 4 History and hardening | **Done.** Search and incremental indexing, backup/export/restore, packaging and operations, performance, security and accessibility audit, release. The PRD §15 scenario passes live through an installed `robin` (`docs/release.md`). | `4d38a0b`, `38e8e5c`, `ec56bc4`, `a2a7529`, `f91d964`, WP-4.6 |
 
 Durations are rough single-developer estimates. They are for sequencing, not commitments.
 
@@ -357,8 +357,8 @@ A minimal detached process holding one runtime child over a Unix socket. Kill an
 
 ### WP-4.6 Release (TR-090–091, PRD §20)
 
-- Run the full PRD §15 scenario and every "also verify" item on the Mac mini M4.
-- Release record: each runtime's live or observed-only level, builds, tested versions, test results, unresolved limits, recovery evidence and benchmark data.
+- Run the full PRD §15 scenario and every "also verify" item on the reference machine (`tests/live/test_release.py`).
+- Release record: each runtime's live or observed-only level, builds, tested versions, test results, unresolved limits, recovery evidence and benchmark data. Done: `docs/release.md`.
 
 ---
 
