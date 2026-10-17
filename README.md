@@ -14,29 +14,69 @@ Robin launches agent sessions under a supervisor that keeps them alive when the 
 ## Requirements
 
 - macOS, Python 3.13, [uv](https://docs.astral.sh/uv/)
+- Node.js, to build the dashboard
+- Xcode, for the menu bar app
 - Any of the runtimes, each signed in with its own login: `claude` (Claude Code), `codex`, `pi`. Robin never reads their credentials.
-- Node.js, only to rebuild the dashboard
 
-## Install
+## Run it
+
+### First time
 
 ```bash
-uv tool install .            # puts `robin` on your PATH, dashboard included
-robin doctor                 # runtimes, storage, port, supervisor
+make sync                    # dependencies into .venv
+make install                 # puts `robin` on your PATH (~/.local/bin), dashboard included
+robin doctor                 # checks runtimes, storage, port and supervisor; fix anything it flags
+make mac-run                 # builds the menu bar app and launches it; it starts the service for you
 ```
 
-For development, `uv sync` and prefix commands with `uv run`.
+Click the robin in the menu bar → **Open Dashboard**. For Launch at Login, copy `mac/build/Build/Products/Debug/Robin.app` to `/Applications` and turn it on in the menu.
 
-## Use
+To see sessions you already have, and follow them live:
+
+```bash
+robin scan                   # index existing Claude, Codex and Pi sessions (read-only)
+robin watch on               # keep following their history as it grows
+robin hooks install claude   # optional: live state and questions for sessions started in a terminal
+```
+
+### Every day
+
+Nothing to do: the menu bar app keeps the service running (the dot is green when it's up). Without the app:
 
 ```bash
 robin                        # start the service and open the dashboard (or open it if already running)
-robin serve --no-browser     # run the service only
+robin serve --no-browser     # run the service only, e.g. in its own terminal tab
 robin open                   # a fresh sign-in link for the dashboard
 ```
 
-Robin's data lives in `~/Library/Application Support/Robin` (override with `--data` or `ROBIN_DATA_DIR`).
+Every command except `serve` and `doctor` talks to the running service, so one of these must be running.
 
-Every command except `serve` and `doctor` talks to the running service, so start it first (`robin`, or `robin serve --no-browser` in another tab), or let the menu bar app run it.
+### After pulling or changing code
+
+```bash
+make update                  # rebuild the dashboard, reinstall robin, rebuild and relaunch the app
+```
+
+The service picks up database migrations when it starts, and the relaunch restarts it. Running agent sessions survive: the supervisor is a separate process (`robin supervisor restart` upgrades it, and refuses while turns run).
+
+### Start a session
+
+From the dashboard's launch form, or:
+
+```bash
+robin run claude --prompt "Fix the failing test"          # in the current folder
+robin run claude --worktree --prompt "..."                # in a new Git worktree on its own branch
+robin run claude --skip-permissions --prompt "..."        # run tools without asking (claude, codex)
+```
+
+### If something's wrong
+
+- `robin doctor` first. It names what's missing or down.
+- The menu bar dot: green running, yellow starting, red failing, hollow when `robin` isn't installed (`make install`).
+- Logs: `~/Library/Application Support/Robin/logs/robin.log`.
+- Changes not showing in the dashboard: `make update`, then reload the window.
+
+Robin's data lives in `~/Library/Application Support/Robin` (override with `--data` or `ROBIN_DATA_DIR`). For development without installing, prefix commands with `uv run` (`make run`, `make serve`); `make help` lists every target.
 
 ### Menu bar app (macOS)
 
