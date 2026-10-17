@@ -1,5 +1,6 @@
 import type { MapCard, MapState } from "../api";
 import type { Rect } from "./layout";
+import { hue } from "./hue";
 import { ago } from "./time";
 
 export const STATE_LABEL: Record<MapState, string> = {
@@ -54,7 +55,7 @@ export function Card(props: {
   return (
     <button
       className={`map-card ${sub ? "sub" : ""} ${state} ${props.selected ? "open" : ""}`}
-      style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
+      style={{ ...hue(card.cluster), left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
       aria-expanded={props.selected}
       data-card={card.id}
       onClick={(e) => {

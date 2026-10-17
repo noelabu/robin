@@ -1,29 +1,36 @@
 :root {
-  /* One always-dark phosphor palette for the whole app (Map and Sessions). */
-  --m-bg: #04070a;
-  --m-canvas: #050a0d;
-  --m-dot: rgba(64, 255, 178, 0.05);
-  --m-panel: #070d12;
-  --m-card: #08120f;
-  --m-card-sub: #070f0d;
-  --m-line: #103029;
-  --m-line-hi: #1c4a40;
-  --m-hover: #0a1814;
-  --m-select: #0c2019;
-  --m-ink: #dff5ea;
-  --m-ink-2: #b9e6d4;
-  --m-muted: #86b3a8;
-  --m-faint: #7aa79c;
-  --m-field: #3f8a78; /* form-field borders: 3:1 against bg, panel and card (WCAG 1.4.11) */
-  --m-accent: #7cffb2;
-  --m-accent-ink: #03110c;
+  /* One always-dark violet palette for the whole app (Map and Sessions); each folder adds its own hue. */
+  --m-bg: #07050c;
+  --m-canvas: #090611;
+  --m-dot: rgba(180, 140, 255, 0.06);
+  --m-panel: #0d0a16;
+  --m-card: #110d1c;
+  --m-card-sub: #0e0b17;
+  --m-line: #241a36;
+  --m-line-hi: #3a2b55;
+  --m-hover: #161025;
+  --m-select: #1d1530;
+  --m-ink: #ece6ff;
+  --m-ink-2: #d2c8ee;
+  --m-muted: #a99ec4;
+  --m-faint: #9289ad;
+  --m-field: #7a6a9e; /* form-field borders: 3:1 against bg, panel and card (WCAG 1.4.11) */
+  --m-accent: #b48cff;
+  --m-accent-ink: #12091f;
   --m-cta: #ffb454;
   --m-amber: #ffb454;
   --m-ok: #7cffb2;
   --m-wait: #5fb4ff;
-  --m-cyan: #3fe6d2;
   --m-bad: #ff6b81;
   --m-focus: #3fe6d2;
+  /* Folder hues, as in a system map: one per repository. */
+  --h-violet: #b48cff;
+  --h-cyan: #3fe6d2;
+  --h-green: #7cffb2;
+  --h-blue: #5fb4ff;
+  --h-amber: #ffb454;
+  --h-pink: #ff7ac6;
+  --hue: var(--m-accent);
   --bg: var(--m-bg);
   --canvas: var(--m-canvas);
   --panel: var(--m-panel);
@@ -46,6 +53,7 @@
   font: 13px/1.5 var(--mono);
 }
 
+
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--ink); }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
@@ -61,7 +69,7 @@ button {
 button:hover:not(:disabled) { background: var(--m-select); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
-button.primary:hover:not(:disabled) { background: #a6ffcb; }
+button.primary:hover:not(:disabled) { background: #c9adff; }
 button.danger { color: var(--bad); }
 input, select, textarea {
   width: 100%; border: 1px solid var(--field); background: var(--card); border-radius: 7px; padding: 7px 9px;
@@ -81,7 +89,7 @@ code { font-family: var(--mono); }
 .brand { display: flex; gap: 10px; align-items: center; font-size: 14px; margin: 0 8px 0 0; font-weight: 650; }
 .brand-mark {
   width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; flex: none;
-  background: transparent; border: 1px solid var(--m-accent); box-shadow: 0 0 14px #7cffb255, inset 0 0 10px #7cffb233;
+  background: transparent; border: 1px solid var(--m-accent); box-shadow: 0 0 14px #b48cff55, inset 0 0 10px #b48cff33;
 }
 .topbar .spacer { flex: 1; }
 .pill { font-size: 12px; padding: 4px 10px; border-radius: 7px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
@@ -294,8 +302,8 @@ button.primary {
 }
 button.primary:hover:not(:disabled) { background: var(--m-cta); filter: brightness(1.12); }
 .recency button { font-family: var(--disp); letter-spacing: .12em; text-transform: uppercase; font-size: 11px; }
-.recency button[aria-pressed="true"] { color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); text-shadow: 0 0 10px #7cffb266; }
-.detail, .feed, .launch, .attention { background: linear-gradient(180deg, #08110e, var(--panel)); }
+.recency button[aria-pressed="true"] { color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); text-shadow: 0 0 10px #b48cff66; }
+.detail, .feed, .launch, .attention { background: linear-gradient(180deg, #100b1b, var(--panel)); }
 body::after {
   content: ""; position: fixed; inset: 0; z-index: 40; pointer-events: none; opacity: .35;
   background: repeating-linear-gradient(0deg, #00000029 0, #00000029 1px, transparent 2px, transparent 3px);

@@ -6,6 +6,7 @@ import type { FeedItem } from "../useWorkspace";
 import { Canvas, type CanvasHandle } from "./Canvas";
 import { Card } from "./Card";
 import { layout, PANEL_GAP } from "./layout";
+import { hue } from "./hue";
 import { RuntimeIcon } from "./RuntimeIcon";
 import { TaskPanel } from "./TaskPanel";
 import { ago } from "./time";
@@ -155,7 +156,7 @@ export function MapView(props: {
               .sort((a, b) => (b.last_activity_at ?? "").localeCompare(a.last_activity_at ?? ""))
               .slice(0, SIDEBAR_SESSIONS);
             return (
-              <li key={cl.key}>
+              <li key={cl.key} style={hue(cl.key)}>
                 <button
                   className={`map-folder ${cl.running ? "hot" : ""}`}
                   title={cl.path}
@@ -262,7 +263,7 @@ export function MapView(props: {
             {lay.frames.filter(visible).map((f) => {
               const cl = clusters.find((c) => c.key === f.key);
               return (
-                <div key={f.key} className="map-frame" style={{ left: f.x, top: f.y, width: f.w, height: f.h }}>
+                <div key={f.key} className="map-frame" style={{ ...hue(f.key), left: f.x, top: f.y, width: f.w, height: f.h }}>
                   <span>
                     <b>{cl?.path}</b> · {cl?.sessions} session{cl?.sessions === 1 ? "" : "s"}
                   </span>

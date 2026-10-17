@@ -1,6 +1,7 @@
 import { type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "../api";
 import { ago } from "../map/time";
+import { hue } from "../map/hue";
 import { useTick } from "../map/useMap";
 import { StateBadge } from "./StateBadge";
 
@@ -126,7 +127,7 @@ export function SessionList(props: { sessions: Session[]; selected: string | nul
                 className="session-group"
                 aria-hidden="true"
                 title={e.key}
-                style={{ position: "absolute", top: e.top, left: 0, right: 0, height: GROUP }}
+                style={{ ...hue(e.key), position: "absolute", top: e.top, left: 0, right: 0, height: GROUP }}
               >
                 <span>{basename(e.key) || "(no folder)"}</span>
                 <span className="count">{e.count}</span>
