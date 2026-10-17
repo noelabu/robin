@@ -1,7 +1,7 @@
 import { type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "../api";
 import { ago } from "../map/time";
-import { hue } from "../map/hue";
+import { assignHues, hue } from "../map/hue";
 import { useTick } from "../map/useMap";
 import { StateBadge } from "./StateBadge";
 
@@ -63,6 +63,7 @@ export function SessionList(props: { sessions: Session[]; selected: string | nul
   const now = useTick(30_000);
   const { order, entries, offsets, height: total } = useMemo(() => grouped(props.sessions), [props.sessions]);
   const n = order.length;
+  assignHues(entries.flatMap((e) => (e.kind === "group" ? [e.key] : [])));
 
   const selectedIndex = order.findIndex((s) => s.session_id === props.selected);
   useEffect(() => {

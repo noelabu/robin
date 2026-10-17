@@ -7,7 +7,7 @@ import type { FeedItem } from "../useWorkspace";
 import { Canvas, type CanvasHandle } from "./Canvas";
 import { Card } from "./Card";
 import { layout, PANEL_GAP } from "./layout";
-import { hue } from "./hue";
+import { assignHues, hue } from "./hue";
 import { RuntimeIcon } from "./RuntimeIcon";
 import { TaskPanel } from "./TaskPanel";
 import { ago } from "./time";
@@ -80,6 +80,8 @@ export function MapView(props: {
     [map.order, clusters, cards, selected, panelH],
   );
   const working = mains.filter((c) => state(c).state === "running");
+  // Working folders claim distinct hues first, then the rest in sidebar order.
+  assignHues([...working.map((c) => c.cluster), ...clusters.map((c) => c.key)]);
   const workingAt = working.reduce<string | null>(
     (m, c) => (c.last_activity_at && (!m || c.last_activity_at > m) ? c.last_activity_at : m),
     null,

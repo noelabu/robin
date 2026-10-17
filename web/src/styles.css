@@ -30,6 +30,9 @@
   --h-blue: #5fb4ff;
   --h-amber: #ffb454;
   --h-pink: #ff7ac6;
+  --h-lime: #c8f56a;
+  --h-peach: #ff9f7a;
+  --h-yellow: #f5e46a;
   --hue: var(--m-accent);
   --bg: var(--m-bg);
   --canvas: var(--m-canvas);
