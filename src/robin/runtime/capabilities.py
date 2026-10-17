@@ -37,6 +37,7 @@ class Capabilities:
             "handoff": self.terminal_mode != "unavailable",
             "reclaim": self.terminal_mode != "unavailable",
             "resume": self.resume,
+            "takeover": self.launch and self.resume and self.new_turn,
         }.get(action_type, False)
         if self.level != "live":
             return (

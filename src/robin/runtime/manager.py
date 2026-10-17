@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -24,9 +25,13 @@ from robin.runtime import attention, ledger, state
 from robin.runtime.capabilities import capabilities_for
 from robin.runtime.ledger import Action, ActionRejected
 from robin.store import Store
-from robin.store.models import AgentCredential, AttentionItem, ControlAction, Event, Meta
+from robin.store.models import AgentCredential, AttentionItem, ControlAction, Event, Meta, SourceCheckpoint
 from robin.store.models import Session as SessionRow
 from robin.supervisor.client import SupervisorClient, SupervisorUnavailable
+
+# A transcript written this recently is taken to be open in a terminal, whatever pgrep finds.
+TERMINAL_QUIET_S = 120
+LAUNCH_TYPES = ("launch", "reclaim", "resume", "takeover")
 
 # Host events that acknowledge or reject the action whose id they carry.
 ACK_EVENTS = {"input_submitted", "interrupt_acknowledged", "approval_answered"}
@@ -251,6 +256,66 @@ class RuntimeManager:
             session_id, "resume", {}, action_id, msg, needs_connection=False, check=check
         )
 
+    async def takeover(self, session_id: str, text: str, *, action_id: str) -> Action:
+        """Continue a session started outside Robin: the same session becomes managed and a new runtime host
+        resumes its native session with `text` as the first turn. Refused, changing nothing, while a
+        terminal may still be writing it."""
+        from robin.runtime.terminal import holders
+
+        row = self._row(session_id)
+
+        def check(r: Any) -> None:
+            if r["mode"] != "observed":
+                raise ActionRejected("already_managed", "Robin already manages this session")
+            if not r["native_session_id"]:
+                raise ActionRejected("no_native_id", "the runtime never reported a session to resume")
+            if not r["execution_cwd"] or not os.path.isdir(r["execution_cwd"]):
+                raise ActionRejected("no_cwd", "the session's folder isn't available")
+            busy = holders(r["native_session_id"])
+            if busy:
+                raise ActionRejected(
+                    "terminal_still_open", f"close it in your terminal first (process {busy[0]})"
+                )
+            if _recently_written(self.store, session_id):
+                raise ActionRejected(
+                    "terminal_still_open",
+                    "it looks like it's still running in a terminal; close it there first",
+                )
+
+        async def flip() -> None:
+            await asyncio.to_thread(_catch_up, self.store, session_id, row["runtime"])
+            await self.store.writer.acall(lambda c: _take_over(c, session_id))
+
+        async def undo() -> None:
+            await self.store.writer.acall(lambda c: _give_back(c, session_id))
+
+        if await self.get_action(action_id) is not None:
+            # A repeat reports the stored outcome (or a conflict) without checking, minting or sending again.
+            return await self._control(session_id, "takeover", {"text": text}, action_id, {})
+        if row is not None:
+            check(row)  # before minting: a rejected request must not replace a live session's credential
+        env = await self._relaunch_env(session_id, row)
+        msg = {
+            "type": "launch",
+            "session": session_id,
+            "runtime": row["runtime"] if row else "",
+            "cwd": (row["execution_cwd"] if row else None),
+            "prompt": text,
+            "action_id": action_id,
+            "env": env,
+        }
+        return await self._control(
+            session_id,
+            "takeover",
+            {"text": text},
+            action_id,
+            msg,
+            needs_connection=False,
+            check=check,
+            before_dispatch=flip,
+            on_rejected=undo,
+        )
+
     async def _relaunch_env(self, session_id: str, row: Any) -> dict[str, str]:
         """What a new host for an existing session needs: native ID, finding tools, credential, isolation."""
         env = {"ROBIN_RESUME_NATIVE_ID": (row["native_session_id"] or "") if row else ""}
@@ -299,6 +364,8 @@ class RuntimeManager:
         check: Callable[[Any], None] | None = None,
         on_submitted: Callable[[], Awaitable[None]] | None = None,
         record: Callable[[Connection], None] | None = None,
+        before_dispatch: Callable[[], Awaitable[None]] | None = None,
+        on_rejected: Callable[[], Awaitable[None]] | None = None,
     ) -> Action:
         with self.store.reader.connect() as conn:
             known = conn.execute(
@@ -336,6 +403,12 @@ class RuntimeManager:
                     error_code="supervisor_unavailable",
                     error_message="no supervisor connection",
                 )
+            if before_dispatch is not None:
+                try:
+                    await before_dispatch()
+                except ActionRejected as exc:
+                    await self._move(action_id, "failed", error_code=exc.code, error_message=str(exc))
+                    raise
             try:
                 reply = await self.client.request(msg)
             except (SupervisorUnavailable, TimeoutError, ConnectionError) as exc:
@@ -350,6 +423,8 @@ class RuntimeManager:
                 if on_submitted is not None:
                     await on_submitted()  # still under the session lock: queued controls see the new owner
                 return await self._move(action_id, "submitted")
+            if on_rejected is not None:
+                await on_rejected()
             return await self._move(
                 action_id, "failed", error_code=str(reply.get("error", "rejected")), error_message=str(reply)
             )
@@ -368,7 +443,7 @@ class RuntimeManager:
             )
         if row is None:
             raise ActionRejected("unknown_session", f"no session {session_id}")
-        if row["mode"] != "managed":
+        if row["mode"] != "managed" and action_type != "takeover":
             raise ActionRejected("observed_session", "observed sessions are read-only in Robin")
         ok, reason = capabilities_for(row["runtime"]).allows(action_type)
         if not ok:
@@ -434,6 +509,74 @@ def _move_lease(conn: Connection, session_id: str, owner: str) -> None:
             .where(AttentionItem.session_id == session_id, AttentionItem.state.in_(("open", "acknowledged")))
             .values(state="handed_off", updated_at=now)
         )
+
+
+def _take_over(conn: Connection, session_id: str) -> None:
+    """The observed session becomes managed. Its state is reset: hooks may have left it "running", and only
+    the new host's events say what it's doing now."""
+    took = conn.execute(
+        update(SessionRow)
+        .where(SessionRow.session_id == session_id, SessionRow.mode == "observed")
+        .values(mode="managed", runtime_state="unknown", active_run_id=None, archived=0, updated_at=utc_now())
+    ).rowcount
+    if not took:
+        raise ActionRejected("already_managed", "Robin already manages this session")
+    _move_lease(conn, session_id, "robin")
+
+
+def _give_back(conn: Connection, session_id: str) -> None:
+    """Undo a takeover whose host never started: the session is observed (and continuable) again."""
+    conn.execute(
+        update(SessionRow)
+        .where(SessionRow.session_id == session_id, SessionRow.mode == "managed")
+        .values(mode="observed", control_owner=None, connection_state="disconnected", updated_at=utc_now())
+    )
+
+
+def _transcripts(store: Store, session_id: str) -> list[str]:
+    with store.reader.connect() as conn:
+        return [
+            p
+            for p in conn.execute(
+                select(SourceCheckpoint.path).where(
+                    SourceCheckpoint.session_id == session_id,
+                    SourceCheckpoint.kind == "jsonl_file",
+                    SourceCheckpoint.state == "active",
+                )
+            ).scalars()
+            if p
+        ]
+
+
+def _recently_written(store: Store, session_id: str) -> bool:
+    now = time.time()
+    for path in _transcripts(store, session_id):
+        try:
+            if now - os.stat(path).st_mtime < TERMINAL_QUIET_S:
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _catch_up(store: Store, session_id: str, runtime: str) -> None:
+    """Read what the transcripts gained since the last scan: once managed, nothing tails them again."""
+    from pathlib import Path
+
+    from robin.adapters.history import HISTORY
+    from robin.events.tailer import JsonlTailer
+
+    adapter = HISTORY.get(runtime)
+    if adapter is None:
+        return
+    for path in _transcripts(store, session_id):
+        if not os.path.exists(path):
+            continue
+        tailer = JsonlTailer(store, Path(path), session_id=session_id, runtime=runtime, mapper=adapter.mapper)
+        try:
+            tailer.poll_once()
+        finally:
+            tailer.close()
 
 
 def _project_batch(conn: Connection, store: Store, batch: int) -> int:
@@ -559,7 +702,7 @@ def _project_one(
             conn.execute(
                 select(ControlAction.action_id).where(
                     ControlAction.session_id == session_id,
-                    ControlAction.action_type.in_(("launch", "reclaim", "resume")),
+                    ControlAction.action_type.in_(LAUNCH_TYPES),
                     ControlAction.state.in_(("requested", "submitted", "outcome_unknown")),
                 )
             )
@@ -567,6 +710,9 @@ def _project_one(
             .all()
         )
         for launch_id in never_started:
+            failed = ledger.get(conn, launch_id)
+            if failed is not None and failed.action_type == "takeover":
+                _give_back(conn, session_id)  # still continuable, not a managed session with no host
             ledger.transition(
                 conn,
                 launch_id,
@@ -580,7 +726,7 @@ def _project_one(
             conn.execute(
                 select(ControlAction.action_id).where(
                     ControlAction.session_id == session_id,
-                    ControlAction.action_type.in_(("launch", "reclaim", "resume")),
+                    ControlAction.action_type.in_(LAUNCH_TYPES),
                     ControlAction.state.in_(("requested", "submitted", "outcome_unknown")),
                 )
             )

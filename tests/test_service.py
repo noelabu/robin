@@ -474,6 +474,36 @@ def test_handoff_and_reclaim_through_the_api(service):
     c.post(f"/api/v1/sessions/{sid}/actions", json={"type": "stop", "action_id": aid()})
 
 
+def test_a_session_started_outside_robin_is_continued_through_the_api(service):
+    from robin.events.ingest import ensure_session
+
+    store, port, auth = service
+    c = browser(port, auth)
+    sid = ensure_session(
+        store, runtime="fake", mode="observed", native_session_id="obs-api", execution_cwd=work(store)
+    )
+    s = c.get(f"/api/v1/sessions/{sid}").json()
+    assert s["controls"]["takeover"] == {"enabled": True, "reason": None}
+    assert s["controls"]["message"]["enabled"] is False
+    act = f"/api/v1/sessions/{sid}/actions"
+    assert c.post(act, json={"type": "takeover", "action_id": aid()}).status_code == 422  # no text
+    takeover = aid()
+    assert (
+        c.post(act, json={"type": "takeover", "action_id": takeover, "text": "keep going"}).status_code == 202
+    )
+    deadline = time.time() + 10
+    while c.get(f"/api/v1/actions/{takeover}").json()["state"] != "acknowledged" and time.time() < deadline:
+        time.sleep(0.05)
+    s = wait_session(c, sid, lambda s: s["connection_state"] == "connected")
+    assert s["mode"] == "managed" and s["controls"]["message"]["enabled"] is True
+    assert s["controls"]["takeover"] == {"enabled": False, "reason": "Robin already manages this session"}
+    repeat = c.post(act, json={"type": "takeover", "action_id": takeover, "text": "keep going"})
+    assert repeat.status_code == 202 and repeat.json()["action"]["state"] == "acknowledged"
+    again = c.post(act, json={"type": "takeover", "action_id": aid(), "text": "again"})
+    assert again.status_code == 409 and again.json()["error"]["code"] == "already_managed"
+    c.post(act, json={"type": "stop", "action_id": aid()})
+
+
 def test_launch_warns_when_sessions_share_a_folder_and_history_is_filtered(service):
     store, port, auth = service
     c = browser(port, auth)

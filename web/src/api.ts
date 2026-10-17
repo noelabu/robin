@@ -25,7 +25,7 @@ export type Session = {
   independence: "enforced" | "not_isolated" | null;
   created_at: string;
   updated_at: string;
-  controls: Record<"message" | "interrupt" | "stop" | "approval" | "handoff" | "reclaim", Control>;
+  controls: Record<"message" | "interrupt" | "stop" | "approval" | "handoff" | "reclaim" | "takeover", Control>;
   capabilities: { runtime: string; steer_mid_turn: boolean; tested_versions: string; level: string };
 };
 

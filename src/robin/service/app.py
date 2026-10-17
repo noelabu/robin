@@ -82,7 +82,7 @@ class LaunchBody(BaseModel):
 
 
 class ActionBody(BaseModel):
-    type: Literal["message", "interrupt", "stop", "approval", "handoff", "reclaim", "resume"]
+    type: Literal["message", "interrupt", "stop", "approval", "handoff", "reclaim", "resume", "takeover"]
     action_id: str = Field(min_length=8, max_length=128)
     text: str | None = None
     request_id: str | None = None
@@ -119,7 +119,7 @@ class ExchangeBody(BaseModel):
 
 # -- views --------------------------------------------------------------------
 
-CONTROL_TYPES = ("message", "interrupt", "stop", "approval", "handoff", "reclaim", "resume")
+CONTROL_TYPES = ("message", "interrupt", "stop", "approval", "handoff", "reclaim", "resume", "takeover")
 
 
 def _iso(value: Any) -> str | None:
@@ -131,6 +131,16 @@ def session_view(r: Any, shared: list[str] | None = None) -> dict[str, Any]:
     controls = {}
     for action in CONTROL_TYPES:
         ok, reason = caps.allows(action)
+        if action == "takeover":
+            # Whether a terminal still holds it is checked when it's sent, not for every row listed.
+            if ok and r["mode"] == "managed":
+                ok, reason = False, "Robin already manages this session"
+            elif ok and not r["native_session_id"]:
+                ok, reason = False, "the runtime never reported a session to resume"
+            elif ok and not r["execution_cwd"]:
+                ok, reason = False, "the session's folder isn't known"
+            controls[action] = {"enabled": ok, "reason": reason}
+            continue
         if ok and r["mode"] != "managed":
             ok, reason = False, "observed sessions are read-only in Robin"
         handed_off = r["control_owner"] == "terminal"
@@ -600,6 +610,10 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
             coro = m.reclaim(session_id, action_id=body.action_id)
         elif body.type == "resume":
             coro = m.resume(session_id, action_id=body.action_id)
+        elif body.type == "takeover":
+            if not body.text:
+                raise ApiError(422, "invalid_request", "takeover needs text", "fix_request")
+            coro = m.takeover(session_id, body.text, action_id=body.action_id)
         else:
             if not body.request_id or body.allow is None:
                 raise ApiError(422, "invalid_request", "approval needs request_id and allow", "fix_request")

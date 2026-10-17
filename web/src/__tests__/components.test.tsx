@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, vi } from "vitest";
-import type { Session } from "../api";
+import { api, ApiError, type Session } from "../api";
 import { ActivityFeed } from "../components/ActivityFeed";
 import { SessionDetail } from "../components/SessionDetail";
 import { GROUP, ROW, SessionList } from "../components/SessionList";
@@ -36,6 +36,7 @@ const session = (over: Partial<Session> = {}): Session => ({
     approval: { enabled: true, reason: null },
     handoff: { enabled: true, reason: null },
     reclaim: { enabled: false, reason: "Robin already controls this session" },
+    takeover: { enabled: false, reason: "Robin already manages this session" },
   },
   capabilities: { runtime: "claude", steer_mid_turn: false, tested_versions: "x", level: "live" },
   ...over,
@@ -58,7 +59,7 @@ test("agent text renders as text, never as markup", async () => {
 test("disabled controls say why", () => {
   const off = { enabled: false, reason: "session is disconnected" };
   render(<SessionDetail session={session({ connection_state: "disconnected",
-    controls: { message: off, interrupt: off, stop: off, approval: off, handoff: off, reclaim: off } })} />);
+    controls: { message: off, interrupt: off, stop: off, approval: off, handoff: off, reclaim: off, takeover: off } })} />);
   expect(screen.getByRole("button", { name: "Interrupt" })).toHaveProperty("disabled", true);
   expect(screen.getByText(/Controls unavailable: session is disconnected/)).toBeTruthy();
 });
@@ -80,7 +81,7 @@ test("a handed-off session shows the resume command and only Take back control",
   render(<SessionDetail session={session({ control_owner: "terminal", native_session_id: "abc-1",
     runtime_state: "idle", connection_state: "disconnected",
     controls: { message: off, interrupt: off, stop: off, approval: off, handoff: off,
-      reclaim: { enabled: true, reason: null } } })} />);
+      reclaim: { enabled: true, reason: null }, takeover: off } })} />);
   expect(screen.getByText("claude --resume abc-1")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Take back control" })).toHaveProperty("disabled", false);
   expect(screen.queryByRole("button", { name: "Hand off to terminal" })).toBeNull();
@@ -94,7 +95,7 @@ const feedItem = (over: Partial<FeedItem>): FeedItem => ({
 });
 
 beforeEach(() => {
-  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ events: [] }), { status: 200 })));
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ events: [], cards: [] }), { status: 200 })));
 });
 
 test("an empty feed says whether nothing happened or Robin couldn't see", async () => {
@@ -218,6 +219,47 @@ test("a session started outside Robin is read-only, with its resume command and 
   expect(screen.getByRole("button", { name: "Archive" })).toBeTruthy();
   expect(screen.queryByRole("textbox")).toBeNull();
   expect(screen.queryByRole("button", { name: "Interrupt" })).toBeNull();
+});
+
+const continuable = (s: Session): Session => ({
+  ...s,
+  controls: { ...s.controls, takeover: { enabled: true, reason: null } },
+});
+
+test("a session started outside Robin can be continued by sending it a message", async () => {
+  const send = vi.spyOn(api, "act").mockResolvedValue({
+    action: { action_id: "a1", session_id: "s1", type: "takeover", state: "submitted", error: null },
+  });
+  const onChanged = vi.fn();
+  render(<SessionDetail session={continuable(session({ mode: "observed", native_session_id: "abc-1" }))} onChanged={onChanged} />);
+  expect(screen.getByText("Sending continues this session in Robin.")).toBeTruthy();
+  expect(screen.queryByText(/Read-only here/)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Interrupt" })).toBeNull();
+  fireEvent.change(screen.getByRole("textbox"), { target: { value: "keep going" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByText("Send: submitted")).toBeTruthy();
+  expect(send).toHaveBeenCalledWith("s1", { type: "takeover", text: "keep going" });
+  expect(onChanged).toHaveBeenCalled();
+  expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("");
+});
+
+test("a refused takeover says why and keeps the message", async () => {
+  vi.spyOn(api, "act").mockRejectedValue(
+    new ApiError(409, "terminal_still_open", "close it in your terminal first (process 42)", "reload_state"),
+  );
+  render(<SessionDetail session={continuable(session({ mode: "observed", native_session_id: "abc-1" }))} />);
+  fireEvent.change(screen.getByRole("textbox"), { target: { value: "keep going" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByText("Send not sent: close it in your terminal first (process 42)")).toBeTruthy();
+  expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("keep going");
+});
+
+test("a session that can't be continued stays read-only and says why", () => {
+  const s = session({ mode: "observed", native_session_id: "abc-1", runtime: "mystery" });
+  render(<SessionDetail session={{ ...s, controls: { ...s.controls, takeover: { enabled: false, reason: "no Robin adapter for mystery" } } }} />);
+  expect(screen.getByText(/Read-only here/)).toBeTruthy();
+  expect(screen.getByText(/Can't continue it here: no Robin adapter for mystery/)).toBeTruthy();
+  expect(screen.queryByRole("textbox")).toBeNull();
 });
 
 test("a managed session that can't take messages hides the box but keeps its controls", () => {

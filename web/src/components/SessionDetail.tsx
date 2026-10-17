@@ -28,14 +28,15 @@ function resumeCommand(runtime: string, id: string): string | null {
 export function SessionDetail({ session, onChanged }: { session: Session; onChanged?: () => void }) {
   const [text, setText] = useState("");
   const [status, setStatus] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
   const c = session.controls;
 
   async function act(body: { type: string; text?: string; interrupt_running?: boolean }, label: string) {
     setStatus(`${label}…`);
     try {
       const { action } = await api.act(session.session_id, body);
-      setStatus(`${label}: ${action.state}`);
-      if (body.type === "message") setText("");
+      setStatus(action.state === "failed" && action.error ? `${label} not sent: ${action.error.message}` : `${label}: ${action.state}`);
+      if ((body.type === "message" || body.type === "takeover") && action.state !== "failed") setText("");
       return action;
     } catch (e) {
       setStatus(e instanceof ApiError ? `${label} not sent: ${e.message}` : `${label} failed`);
@@ -149,7 +150,45 @@ export function SessionDetail({ session, onChanged }: { session: Session; onChan
 
       <SessionFlow session={session} onChanged={onChanged} />
 
-      {session.mode === "observed" && (
+      {session.mode === "observed" && c.takeover?.enabled && (
+        <form
+          className="compose"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (!text.trim() || sending) return;
+            setSending(true);
+            await act({ type: "takeover", text }, "Send");
+            setSending(false);
+            onChanged?.();
+          }}
+        >
+          <label htmlFor="compose">Message</label>
+          <textarea
+            id="compose"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={3}
+            placeholder="Message this session…  ⌘⏎ to send"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) e.currentTarget.form?.requestSubmit();
+            }}
+          />
+          <p className="hint">Sending continues this session in Robin.</p>
+          <div className="actions">
+            <button type="submit" className="primary" disabled={!text.trim() || sending}>
+              Send
+            </button>
+            <button type="button" onClick={() => void archive()}>
+              {session.archived ? "Restore" : "Archive"}
+            </button>
+          </div>
+          <p className="status" role="status" aria-live="polite">
+            {status}
+          </p>
+        </form>
+      )}
+
+      {session.mode === "observed" && !c.takeover?.enabled && (
         <div className="readonly-note">
           <p>
             Read-only here: Robin follows this session from its transcript and can&apos;t control it.
@@ -160,6 +199,7 @@ export function SessionDetail({ session, onChanged }: { session: Session; onChan
               </>
             )}
           </p>
+          {c.takeover?.reason && <p className="hint">Can&apos;t continue it here: {c.takeover.reason}</p>}
           <button type="button" onClick={() => void archive()}>
             {session.archived ? "Restore" : "Archive"}
           </button>
