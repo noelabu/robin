@@ -2,6 +2,8 @@
 
 A local workspace for running, observing and coordinating coding agents: Claude Code, Codex and Pi.
 
+Named after Nico Robin of One Piece, the archaeologist who reads the history no one else can; the menu bar flower is her Hana Hana no Mi.
+
 Robin launches agent sessions under a supervisor that keeps them alive when the service restarts, indexes the sessions you already have, and lets agents working on the same task exchange findings. You choose exactly what gets shared, and preview it before it is sent. Everything runs on your machine; the dashboard listens on loopback only.
 
 - Product requirements: `docs/Robin_PRD.docx` (v0.5)
@@ -88,7 +90,7 @@ make mac-test                # its unit tests
 make update                  # after any change: rebuild the dashboard, reinstall robin, rebuild and relaunch the app
 ```
 
-- It lives in the menu bar: a dot (green running, yellow starting, red failing, hollow when `robin` isn't installed) and the number of items waiting on you. It has no Dock icon until the dashboard window is open.
+- It lives in the menu bar: a flower, a dot (green running, yellow starting, red failing, hollow when `robin` isn't installed) and the number of items waiting on you. It has no Dock icon until the dashboard window is open.
 - It uses the installed `robin` (`~/.local/bin`, then Homebrew), so run `uv tool install --reinstall .` after changing Robin. It uses a service that's already running, otherwise starts `robin serve --no-browser`, and restarts it if it exits (after 1, 2, 4… up to 30 seconds).
 - **Open Dashboard** shows the same web dashboard, signed in for you. **Restart Service**, **Notifications** (the same setting as `robin notify`) and **Launch at Login** are in the menu.
 - **Quit** stops the service only if the app started it; one you started in a terminal keeps running. Agent sessions survive either way, because the supervisor is a separate process.

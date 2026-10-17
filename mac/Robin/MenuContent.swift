@@ -12,7 +12,7 @@ struct MenuLabel: View {
 
     var body: some View {
         HStack(spacing: 3) {
-            Image(nsImage: RobinIcon.bird())
+            Image(nsImage: RobinIcon.flower())
             Image(nsImage: StatusDot.image(color: StatusDot.color(controller)))
             if controller.isRunning && controller.attentionCount > 0 {
                 Text("\(controller.attentionCount)")
