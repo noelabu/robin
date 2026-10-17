@@ -5,6 +5,7 @@ import { Card } from "../map/Card";
 import { layout, stableOrder } from "../map/layout";
 import { MapView } from "../map/MapView";
 import { liveState } from "../map/useMap";
+import { Wire } from "../map/Wire";
 
 const H = '<img src=x onerror="alert(1)"><script>alert(2)</script>';
 const NOW = Date.parse("2026-10-17T10:00:00Z");
@@ -129,6 +130,24 @@ describe("card", () => {
   test("says when a runtime has no detail", () => {
     show(card({ runtime: "pi", detail: false, todos: null, files: 0, last_file: null }));
     expect(screen.getByText("No detail for this runtime")).toBeTruthy();
+  });
+
+  test("a new action floats its label above the card, then goes", () => {
+    const { container, rerender } = show(card({ action_at: "2026-10-17T09:59:59Z" }));
+    expect(container.querySelector(".map-ping")?.textContent).toBe("› Edit App.tsx");
+    rerender(
+      <Card card={card({ action_at: "2026-10-17T09:59:50Z" })} rect={{ x: 0, y: 0, w: 248, h: 128 }} state="running" inferred now={NOW} selected={false} onOpen={() => {}} onFocus={() => {}} />,
+    );
+    expect(container.querySelector(".map-ping")).toBeNull();
+  });
+
+  test("packets run along a wire only while its subagent works", () => {
+    const edge = { from: "s1", to: "s1:agent-a", d: "M0 0 C10 0 10 10 20 10", live: true, cluster: "/r/app" };
+    const { container, rerender } = render(<svg><Wire edge={edge} /></svg>);
+    expect(container.querySelectorAll(".map-packet")).toHaveLength(3);
+    expect(container.querySelector("mpath")?.getAttribute("href")).toBe("#wire-s1_agent-a");
+    rerender(<svg><Wire edge={{ ...edge, live: false }} /></svg>);
+    expect(container.querySelectorAll(".map-packet")).toHaveLength(0);
   });
 
   test("hostile titles render as text", () => {

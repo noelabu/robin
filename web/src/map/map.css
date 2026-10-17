@@ -356,3 +356,29 @@ button.map-pill.need { background: #2a1d12; border: 1px solid #4a3218; color: #f
 }
 .view-tabs button[aria-selected="true"], .topbar .view-tabs button[aria-selected="true"] { color: var(--m-accent); }
 .session-group > span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+/* -- live flow: packets on working wires, a label for each new action, a scan over working cards ----- */
+.map-wires path { stroke: color-mix(in srgb, var(--hue) 35%, var(--m-line-hi)); }
+.map-wires path.live { stroke: var(--hue); filter: drop-shadow(0 0 3px var(--hue)); }
+.map-packet { fill: var(--hue); filter: drop-shadow(0 0 4px var(--hue)); }
+.map-ping {
+  position: absolute; left: 10px; bottom: 100%; margin-bottom: 4px; max-width: 100%; pointer-events: none;
+  font: 600 10.5px var(--mono); color: var(--hue); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  text-shadow: 0 0 10px color-mix(in srgb, var(--hue) 60%, transparent);
+  animation: map-ping 4s ease-out forwards;
+}
+@keyframes map-ping {
+  0% { opacity: 0; transform: translateY(6px); }
+  10% { opacity: 1; transform: none; }
+  75% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-4px); }
+}
+.map-card { overflow: visible; }
+.map-card.running::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
+  background: linear-gradient(180deg, transparent 40%, color-mix(in srgb, var(--hue) 14%, transparent) 50%, transparent 60%)
+    0 0 / 100% 300% no-repeat;
+  animation: map-scan 2.6s linear infinite;
+}
+@keyframes map-scan { from { background-position: 0 100%; } to { background-position: 0 0; } }
+@media (prefers-reduced-motion: reduce) { .map-ping { animation: none; } .map-card.running::after { display: none; } }

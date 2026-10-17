@@ -12,6 +12,7 @@ export const STATE_LABEL: Record<MapState, string> = {
 };
 
 const basename = (p: string) => p.split("/").pop() || p;
+const PING_MS = 4000; // how long a new action's label floats above the card
 
 /** State as text, with a mark; an inferred state says so (NFR-08). */
 export function StateChip({ state, inferred, complete }: { state: MapState; inferred: boolean; complete: boolean }) {
@@ -64,6 +65,11 @@ export function Card(props: {
       }}
       onFocus={() => props.onFocus(rect)}
     >
+      {card.tool && card.action_at && now - Date.parse(card.action_at) < PING_MS && (
+        <span key={card.action_at} className="map-ping" aria-hidden="true">
+          › {card.tool} {card.target && !/\s/.test(card.target) ? basename(card.target) : ""}
+        </span>
+      )}
       <span className="meta">
         <span className="rt">
           {sub ? (card.label ?? "subagent") : card.runtime}

@@ -3,6 +3,7 @@ import { api, type MapCard, type MapCluster, type Session } from "../api";
 import { Card } from "./Card";
 import { layout, PANEL_GAP } from "./layout";
 import { TaskPanel } from "./TaskPanel";
+import { Wire } from "./Wire";
 import { liveState, useTick } from "./useMap";
 
 const INSET = { x: 24, y: 44 }; // where layout puts a cluster's first card; the flow has no frame
@@ -63,12 +64,7 @@ export function SessionFlow({ session, onChanged }: { session: Session; onChange
       <div className="flow-canvas" style={{ height: lay.bounds.h - INSET.y + 8 }}>
         <svg className="map-wires" width={lay.bounds.w} height={lay.bounds.h} aria-hidden="true">
           {lay.edges.map((e) => (
-            <path
-              key={e.to}
-              d={e.d}
-              className={e.live ? "live" : ""}
-              transform={`translate(${16 - INSET.x} ${16 - INSET.y})`}
-            />
+            <Wire key={e.to} edge={e} transform={`translate(${16 - INSET.x} ${16 - INSET.y})`} />
           ))}
         </svg>
         {cards.map((c) => {

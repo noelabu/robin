@@ -15,7 +15,7 @@ const COLUMN_GAP = 32;
 
 export type Rect = { x: number; y: number; w: number; h: number };
 export type Frame = Rect & { key: string; more: (Rect & { count: number }) | null };
-export type Edge = { from: string; to: string; d: string; live: boolean };
+export type Edge = { from: string; to: string; d: string; live: boolean; cluster: string };
 export type Layout = { cards: Record<string, Rect>; frames: Frame[]; edges: Edge[]; bounds: { w: number; h: number } };
 
 /**
@@ -101,7 +101,7 @@ export function layout(
     const x2 = b.x;
     const y2 = b.y + b.h / 2;
     const mx = (x1 + x2) / 2;
-    out.edges.push({ from: c.parent!, to: c.id, d: `M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`, live: c.state === "running" });
+    out.edges.push({ from: c.parent!, to: c.id, d: `M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`, live: c.state === "running", cluster: c.cluster });
   }
   return out;
 }

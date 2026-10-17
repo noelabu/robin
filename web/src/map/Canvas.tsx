@@ -1,5 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { Layout, Rect } from "./layout";
+import { Wire } from "./Wire";
 
 export type CanvasHandle = { panTo: (r: Rect) => void; fit: () => void; reveal: (r: Rect) => void };
 type View = { x: number; y: number; k: number };
@@ -156,14 +157,14 @@ export const Canvas = forwardRef<
         <svg className="map-wires" width={layout.bounds.w} height={layout.bounds.h} aria-hidden="true">
           <defs>
             <marker id="map-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
-              <path d="M0 0L8 4L0 8z" fill="#5f5378" stroke="none" />
+              <path d="M0 0L8 4L0 8z" style={{ fill: "var(--m-line-hi)" }} stroke="none" />
             </marker>
             <marker id="map-arrow-live" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
-              <path d="M0 0L8 4L0 8z" fill="#b197fc" stroke="none" />
+              <path d="M0 0L8 4L0 8z" style={{ fill: "var(--m-accent)" }} stroke="none" />
             </marker>
           </defs>
           {layout.edges.map((e) => (
-            <path key={e.to} d={e.d} className={e.live ? "live" : ""} markerEnd={`url(#${e.live ? "map-arrow-live" : "map-arrow"})`} />
+            <Wire key={e.to} edge={e} arrow />
           ))}
         </svg>
         {children(visible)}
