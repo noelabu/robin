@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { api, type MapCard, type Session } from "../api";
+import { api, type MapCard, type MapCluster, type Session } from "../api";
+import { RecencySwitch, WIDER } from "../components/RecencySwitch";
+import { inRecency, type Recency } from "../recency";
 import type { FeedItem } from "../useWorkspace";
 import { Canvas, type CanvasHandle } from "./Canvas";
 import { Card } from "./Card";
@@ -18,6 +20,8 @@ const shortTarget = (t: string | null) => (t && !/\s/.test(t) && t.includes("/")
 export function MapView(props: {
   ws: { ready: boolean; feed: FeedItem[]; sessions: Record<string, Session>; attentionVersion: number; streamState: string };
   tabs: ReactNode;
+  recency?: Recency;
+  onRecency?: (r: Recency) => void;
   onOpenSession: (sessionId: string) => void;
   onOpenAttention: () => void;
   onChanged?: () => void;
@@ -39,13 +43,33 @@ export function MapView(props: {
   }, [ws.attentionVersion]);
 
   const data = map.data;
-  const cards = data?.cards ?? [];
-  const lay = useMemo(
-    () => layout(map.order, data?.clusters ?? [], cards, selected && panelH ? { [selected]: panelH } : {}),
-    [map.order, data?.clusters, cards, selected, panelH],
-  );
+  const recency = props.recency ?? "all";
   const state = (c: MapCard) => liveState(c, ws.sessions[c.session_id], now);
-  const mains = cards.filter((c) => !c.parent);
+  const filterNow = useTick(30_000); // recency moves slowly; re-filtering every second would re-lay the canvas
+  const allCards = useMemo(() => data?.cards ?? [], [data]);
+  const { counts, mains, cards, clusters } = useMemo(() => {
+    const allMains = allCards.filter((c) => !c.parent);
+    const recent = (c: MapCard, r: Recency) =>
+      c.id === selected || inRecency(liveState(c, ws.sessions[c.session_id], filterNow).state, c.last_activity_at, filterNow, r);
+    const counts = {
+      active: allMains.filter((c) => recent(c, "active")).length,
+      today: allMains.filter((c) => recent(c, "today")).length,
+      all: (data?.clusters ?? []).reduce((n, c) => n + c.sessions, 0),
+    };
+    if (recency === "all") return { counts, mains: allMains, cards: allCards, clusters: data?.clusters ?? [] };
+    // A session's subagents show with it; a narrowed view has no "+N more", which would page in older sessions.
+    const mains = allMains.filter((c) => recent(c, recency));
+    const kept = new Set(mains.map((c) => c.session_id));
+    const clusters: MapCluster[] = (data?.clusters ?? []).flatMap((cl) => {
+      const n = mains.filter((c) => c.cluster === cl.key).length;
+      return n ? [{ ...cl, sessions: n, shown: n }] : [];
+    });
+    return { counts, mains, cards: allCards.filter((c) => kept.has(c.parent ?? c.session_id)), clusters };
+  }, [data, allCards, recency, filterNow, ws.sessions, selected]);
+  const lay = useMemo(
+    () => layout(map.order, clusters, cards, selected && panelH ? { [selected]: panelH } : {}),
+    [map.order, clusters, cards, selected, panelH],
+  );
   const working = mains.filter((c) => state(c).state === "running");
   const workingAt = working.reduce<string | null>(
     (m, c) => (c.last_activity_at && (!m || c.last_activity_at > m) ? c.last_activity_at : m),
@@ -121,9 +145,10 @@ export function MapView(props: {
       </header>
 
       <nav className="map-side" aria-label="Folders">
+        {props.onRecency && <RecencySwitch value={recency} counts={counts} onChange={props.onRecency} />}
         <h2>Folders</h2>
         <ul>
-          {(data?.clusters ?? []).map((cl) => {
+          {clusters.map((cl) => {
             const frame = lay.frames.find((f) => f.key === cl.key);
             const recent = mains
               .filter((c) => c.cluster === cl.key)
@@ -194,12 +219,22 @@ export function MapView(props: {
                 </div>
               </div>
             )}
-            {data && !cards.length && (
+            {data && !allCards.length && (
               <div className="map-empty">
                 <div>
                   <b>No sessions yet</b>
                   Run <code>robin scan</code> to index your Claude, Codex and Pi sessions, and <code>robin watch on</code> to
                   follow them live.
+                </div>
+              </div>
+            )}
+            {data && cards.length === 0 && allCards.length > 0 && recency !== "all" && (
+              <div className="map-empty">
+                <div>
+                  <b>Nothing {recency === "active" ? "active" : "from today"}</b>
+                  No session has worked in the last {recency === "active" ? "two hours" : "day"}.
+                  <br />
+                  <button onClick={() => props.onRecency?.(WIDER[recency].to)}>{WIDER[recency].label}</button>
                 </div>
               </div>
             )}
@@ -225,7 +260,7 @@ export function MapView(props: {
         {(visible) => (
           <>
             {lay.frames.filter(visible).map((f) => {
-              const cl = data?.clusters.find((c) => c.key === f.key);
+              const cl = clusters.find((c) => c.key === f.key);
               return (
                 <div key={f.key} className="map-frame" style={{ left: f.x, top: f.y, width: f.w, height: f.h }}>
                   <span>

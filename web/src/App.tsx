@@ -5,12 +5,15 @@ import { AttentionPanel } from "./components/AttentionPanel";
 import { LaunchForm } from "./components/LaunchForm";
 import { Navigator } from "./components/Navigator";
 import { NewTaskForm } from "./components/NewTaskForm";
+import { RecencySwitch, WIDER } from "./components/RecencySwitch";
 import { SearchBox } from "./components/SearchBox";
 import { SessionDetail } from "./components/SessionDetail";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { SessionList } from "./components/SessionList";
 import { TaskDetail } from "./components/TaskDetail";
 import { MapView } from "./map/MapView";
+import { sessionState, useTick } from "./map/useMap";
+import { inRecency, type Recency, useRecency } from "./recency";
 import { inScope, type Scope } from "./scope";
 import { useWorkspace } from "./useWorkspace";
 
@@ -86,6 +89,8 @@ export function App() {
   const [storage, setStorage] = useState<{ state: string; ratio: number } | null>(null);
   const [runtimeFilter, setRuntimeFilter] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  const [recency, setRecency] = useRecency();
+  const now = useTick(30_000);
   const [notice, setNotice] = useState<string | null>(null);
   const ws = useWorkspace(auth === "ok");
 
@@ -113,9 +118,17 @@ export function App() {
   // Like the server's count: observed sessions that aren't archived.
   const observedLoaded = all.filter((s) => s.mode === "observed" && !s.archived).length;
   const runtimes = useMemo(() => [...new Set(all.map((s) => s.runtime))].sort(), [all]);
-  const sessions = all.filter(
+  const filtered = all.filter(
     (s) => inScope(s, scope, null) && (showArchived || !s.archived) && (!runtimeFilter || s.runtime === runtimeFilter),
   );
+  const recent = (s: Session, r: Recency) => inRecency(sessionState(s, now).state, s.last_activity_at ?? s.updated_at, now, r);
+  const counts = {
+    active: filtered.filter((s) => recent(s, "active")).length,
+    today: filtered.filter((s) => recent(s, "today")).length,
+    all: filtered.length,
+  };
+  // The open session stays listed, e.g. an older one opened from the Map.
+  const sessions = filtered.filter((s) => s.session_id === selected || recent(s, recency));
   const writers = all.filter((s) => !s.archived && !["stopped", "failed"].includes(s.runtime_state) && s.mode === "managed");
   const current: Session | undefined = selected
     ? ws.sessions[selected]
@@ -168,6 +181,8 @@ export function App() {
       <MapView
         ws={ws}
         tabs={tabs}
+        recency={recency}
+        onRecency={setRecency}
         onOpenSession={(id) => {
           setView("sessions");
           setScope({ kind: "all" });
@@ -240,6 +255,7 @@ export function App() {
             onChanged={() => void ws.reload()}
           />
         </details>
+        <RecencySwitch value={recency} counts={counts} onChange={setRecency} />
         <div className="filters">
           <label className="inline">
             Runtime
@@ -255,8 +271,17 @@ export function App() {
             archived
           </label>
         </div>
-        <SessionList sessions={sessions} selected={current?.session_id ?? null} onSelect={setSelected} />
-        {!ws.olderDone && observedLoaded < ws.observedTotal && (
+        {!sessions.length && recency !== "all" && filtered.length ? (
+          <p className="empty">
+            Nothing {recency === "active" ? "active" : "from today"}.{" "}
+            <button className="link" onClick={() => setRecency(WIDER[recency].to)}>
+              {WIDER[recency].label}
+            </button>
+          </p>
+        ) : (
+          <SessionList sessions={sessions} selected={current?.session_id ?? null} onSelect={setSelected} />
+        )}
+        {recency === "all" && !ws.olderDone && observedLoaded < ws.observedTotal && (
           <button className="link" onClick={() => void ws.loadOlder()}>
             {observedLoaded.toLocaleString()} of {ws.observedTotal.toLocaleString()} observed sessions loaded · load
             older
