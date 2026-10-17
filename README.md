@@ -36,15 +36,42 @@ robin open                   # a fresh sign-in link for the dashboard
 
 Robin's data lives in `~/Library/Application Support/Robin` (override with `--data` or `ROBIN_DATA_DIR`).
 
+Every command except `serve` and `doctor` talks to the running service, so start it first (`robin`, or `robin serve --no-browser` in another tab), or let the menu bar app run it.
+
+### Menu bar app (macOS)
+
+`mac/` is a small native app that keeps the service running and shows the dashboard in its own window.
+
+```bash
+make mac-run                 # build mac/build/.../Robin.app and launch it
+make mac-test                # its unit tests
+```
+
+- It lives in the menu bar: a dot (green running, yellow starting, red failing, hollow when `robin` isn't installed) and the number of items waiting on you. It has no Dock icon until the dashboard window is open.
+- It uses the installed `robin` (`~/.local/bin`, then Homebrew), so run `uv tool install --reinstall .` after changing Robin. It uses a service that's already running, otherwise starts `robin serve --no-browser`, and restarts it if it exits (after 1, 2, 4… up to 30 seconds).
+- **Open Dashboard** shows the same web dashboard, signed in for you. **Restart Service**, **Notifications** (the same setting as `robin notify`) and **Launch at Login** are in the menu.
+- **Quit** stops the service only if the app started it; one you started in a terminal keeps running. Agent sessions survive either way, because the supervisor is a separate process.
+- For Launch at Login, copy `Robin.app` to `/Applications` first. A GUI app only sees `ROBIN_DATA_DIR` if it's set with `launchctl setenv`.
+
 ### Map
 
-The dashboard opens on the Map: every session at once, one card per session, grouped by repository (a subfolder or worktree counts as its repository). A card shows the title (the first prompt), whether it's working, the todo list's progress and the files it changed; Claude subagents get their own cards, linked to their parent. The floating card in the corner is the latest action anywhere. Click a card and its tasks open right below it, each with the files edited while it was in progress; from there, **Open in Sessions**, **Stop** (sessions Robin launched) or **Archive**. No projects or tasks are needed: `robin scan` and `robin watch on` are enough.
+The dashboard opens on the Map: every session at once, one card per session, grouped by repository (a subfolder or worktree counts as its repository). A card shows the title (the first prompt), whether it's working, the todo list's progress and the files it changed. The floating card in the corner is the latest action anywhere. Click a card and its tasks open right below it, each with the files edited while it was in progress; from there, **Open in Sessions**, **Stop** (sessions Robin launched) or **Archive**. No projects or tasks are needed: `robin scan` and `robin watch on` are enough.
 
-Tools, todos and file edits are read for Claude Code and Codex; Pi sessions show without them. For sessions started outside Robin, "Working" is inferred from activity in the last minute unless hooks are installed (`robin hooks install claude`). Large folders show their 50 newest sessions, with the rest one click away.
+What a Claude session starts gets its own card, in columns joined by wires: the session, then its skills, subagents and background shells, then a skill's workflows, then a workflow's agents in phase order. A workflow card counts its agents per phase ("Find 2/3 · 1 failed"), a skill names the skills it called, a shell shows its command. Jobs that finished a while ago fold into a count on the session card. While a subagent works, packets run along its wire.
+
+- **Needs permission** — a session waiting on an approval turns red and pulses. Click it for the request with **Approve** and **Deny**.
+- **Needs an answer** — a session asking a question turns amber. The question and its options show at the top of its panel and in Needs attention; answer it in the session's terminal.
+- **Active / Today / All** — the filter above the Map and the session list. Active (the default) is what's working or waiting on you, including a session whose workflow, shell or subagent still runs; Today adds the rest of the day. The choice is shared by both views and remembered per browser.
+
+Each folder gets its own colour, the same on the Map and in Sessions, and folders shown together never share one. Working cards glow in their folder's colour; waiting stays blue and failed red.
+
+Tools, todos, file edits, skills, workflows and shells are read for Claude Code; Codex sessions show tools, todos and file edits; Pi sessions show without them. For sessions started outside Robin, "Working" is inferred from activity in the last minute unless hooks are installed (`robin hooks install claude`); with hooks, a question asked outside Robin also waits in `robin attention`. Large folders show their 50 newest sessions, with the rest under All.
 
 ### Sessions
 
-The **Sessions** tab lists sessions grouped by folder, each with its title, state and age. A session shows its card and its subagents' cards (click one for its tasks), the controls Robin has for it (sessions started elsewhere are read-only, with their resume command), and a readable, redacted timeline grouped by turn; "Show all events" brings back the raw event types. Robin is always dark (violet), in both tabs.
+The **Sessions** tab lists sessions grouped by folder, each with its title, state and age. A session shows its card and its subagents' cards (click one for its tasks), the controls Robin has for it, and its conversation as a terminal-style chat: each prompt, one dim line folding the work in between, and the reply the turn ended with, with a live line while it runs. The raw, redacted events are a tab away. Enter sends a message; Shift+Enter starts a new line. Robin is always dark (violet), in both tabs.
+
+A session started outside Robin can be continued from here: the first message you send takes it over, and Robin resumes it with that message. It's refused, changing nothing, while a terminal may still hold the session (its id on a command line, or a transcript written in the last two minutes).
 
 
 ```bash
@@ -119,6 +146,7 @@ uv run playwright install chromium             # once, if Google Chrome isn't in
 ROBIN_E2E=1 uv run pytest tests/e2e            # the dashboard in a real browser
 ROBIN_PACKAGING=1 uv run pytest tests/packaging  # build the wheel and run it from a clean venv
 ROBIN_LIVE=1 uv run pytest tests/live          # real Claude, Codex and Pi sessions (uses your logins)
+make mac-test                                  # the menu bar app (needs Xcode)
 ```
 
 Rebuild the dashboard after changing `web/`: `cd web && npm run build` (output goes to `src/robin/web/dist`).
