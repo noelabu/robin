@@ -127,3 +127,66 @@ def test_failures_create_one_item_and_reopen(store, sid):
     (again,) = attention.list_items(store)
     assert again["attention_id"] == item["attention_id"] and again["state"] == "open"
     assert again["detail"]["reason"] == "again"
+
+
+QUESTIONS = {
+    "questions": [
+        {
+            "question": "Which database?",
+            "multiSelect": False,
+            "options": [{"label": "SQLite"}, {"label": "Postgres"}],
+        },
+        {
+            "question": "Which features?",
+            "multiSelect": True,
+            "options": [{"label": "Auth"}, {"label": "Billing"}],
+        },
+    ]
+}
+
+
+def test_a_question_in_a_managed_session_is_answered_in_robin(store, sid):
+    feed(
+        store,
+        sid,
+        {"type": "turn_started"},
+        {"type": "question", "request_id": "q1", "tool": "AskUserQuestion", "input": QUESTIONS},
+    )
+    (item,) = attention.list_items(store)
+    assert item["kind"] == "question" and item["title"] == "Which database?"
+    assert item["allowed_responses"] == ["answer", "deny"] and item["detail"]["answer_in"] == "robin"
+    assert [q["multi"] for q in item["detail"]["questions"]] == [False, True]
+    with pytest.raises(attention.AttentionError) as exc:
+        attention.claim(store, item["attention_id"], "act-allow-1", "allow")
+    assert exc.value.code == "invalid_response"
+    attention.claim(store, item["attention_id"], "act-answer-1", "answer")
+    with pytest.raises(attention.AttentionError) as exc:
+        attention.claim(store, item["attention_id"], "act-answer-2", "answer")
+    assert exc.value.code == "not_answerable"  # one request, one response
+    feed(
+        store,
+        sid,
+        {"type": "approval_answered", "request_id": "q1", "allow": True, "answered": True},
+        start=3,
+    )
+    assert attention.get(store, item["attention_id"])["resolution"] == "answered"
+
+
+def test_answers_are_checked_against_the_questions():
+    qs = attention._questions(QUESTIONS)
+    assert attention.normalize_answers(
+        qs, {"Which database?": "Postgres", "Which features?": ["Auth", "Billing"]}
+    ) == {
+        "Which database?": "Postgres",
+        "Which features?": "Auth, Billing",
+    }
+    for bad in (
+        {},
+        {"Which color?": "red"},
+        {"Which database?": ["SQLite", "Postgres"]},  # one answer only
+        {"Which database?": "  "},
+        {"Which database?": "x" * (attention.ANSWER_CHARS + 1)},
+    ):
+        with pytest.raises(attention.AttentionError) as exc:
+            attention.normalize_answers(qs, bad)
+        assert exc.value.code == "invalid_answers"

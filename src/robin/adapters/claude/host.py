@@ -42,6 +42,19 @@ def permission_mode(env: Mapping[str, str]) -> Literal["default", "bypassPermiss
     return "bypassPermissions" if env.get("ROBIN_SKIP_PERMISSIONS") == "1" else "default"
 
 
+QUESTION_TOOLS = {"AskUserQuestion"}
+
+
+def question_result(
+    tool_input: dict[str, Any], decision: dict[str, Any]
+) -> tuple[bool, dict[str, Any] | str]:
+    """The user's answers go back as the tool's own input plus "answers", nothing else changed; without
+    answers the question is declined, never passed through unanswered."""
+    if decision.get("answers") and "answers" not in tool_input:
+        return True, {**tool_input, "answers": decision["answers"]}
+    return False, decision.get("message") or "The user didn't answer in Robin"
+
+
 @runtime("claude")
 async def run_claude(args: argparse.Namespace) -> None:
     from claude_agent_sdk import (
@@ -60,6 +73,11 @@ async def run_claude(args: argparse.Namespace) -> None:
     state = {"busy": False, "interrupted": False}
 
     async def can_use_tool(tool_name: str, input_data: dict[str, Any], context: Any) -> Any:
+        if tool_name in QUESTION_TOOLS:
+            ok, result = question_result(input_data, await approvals.ask(tool_name, input_data))
+            if ok and isinstance(result, dict):
+                return PermissionResultAllow(updated_input=result)
+            return PermissionResultDeny(message=str(result))
         decision = await approvals.request(tool_name, input_data)
         if decision.get("allow"):
             return PermissionResultAllow(updated_input=input_data)

@@ -436,6 +436,80 @@ def test_attention_queue_answers_an_approval_once(service):
     c.post(f"/api/v1/sessions/{sid}/actions", json={"type": "stop", "action_id": aid()})
 
 
+def test_a_question_is_answered_through_the_api(service):
+    store, port, auth = service
+    c = browser(port, auth)
+    sid = c.post(
+        "/api/v1/sessions/launch",
+        json={"runtime": "fake", "cwd": work(store), "prompt": "ask", "action_id": aid()},
+    ).json()["session_id"]
+    deadline = time.time() + 10
+    items = []
+    while not items and time.time() < deadline:
+        items = c.get(f"/api/v1/attention?session_id={sid}").json()["items"]
+        time.sleep(0.05)
+    (item,) = items
+    assert item["kind"] == "question" and item["allowed_responses"] == ["answer", "deny"]
+    url = f"/api/v1/attention/{item['attention_id']}/responses"
+    bad = c.post(url, json={"decision": "answer", "answers": {"Which color?": "red"}, "action_id": aid()})
+    assert bad.status_code == 422 and bad.json()["error"]["code"] == "invalid_answers"
+    assert c.post(url, json={"decision": "answer", "action_id": aid()}).status_code == 422  # no answers
+    answers = {"Which database?": "Postgres", "Which features?": ["Auth", "Billing"]}
+    r = c.post(url, json={"decision": "answer", "answers": answers, "action_id": aid()})
+    assert r.status_code == 202
+    expected = 'Answers: {"Which database?": "Postgres", "Which features?": "Auth, Billing"}'
+    deadline = time.time() + 10
+    texts: list[str] = []
+    while expected not in texts and time.time() < deadline:
+        texts = [m.get("text") for m in c.get(f"/api/v1/sessions/{sid}/conversation").json()["messages"]]
+        time.sleep(0.05)
+    assert expected in texts
+    assert c.get(f"/api/v1/attention/{item['attention_id']}").json()["resolution"] == "answered"
+    c.post(f"/api/v1/sessions/{sid}/actions", json={"type": "stop", "action_id": aid()})
+
+
+def test_declining_a_question_tells_the_agent(service):
+    store, port, auth = service
+    c = browser(port, auth)
+    sid = c.post(
+        "/api/v1/sessions/launch",
+        json={"runtime": "fake", "cwd": work(store), "prompt": "ask", "action_id": aid()},
+    ).json()["session_id"]
+    deadline = time.time() + 10
+    items = []
+    while not items and time.time() < deadline:
+        items = c.get(f"/api/v1/attention?session_id={sid}").json()["items"]
+        time.sleep(0.05)
+    r = c.post(
+        f"/api/v1/attention/{items[0]['attention_id']}/responses",
+        json={"decision": "deny", "action_id": aid()},
+    )
+    assert r.status_code == 202
+    deadline = time.time() + 10
+    texts: list[str] = []
+    while "No answer: The user declined to answer" not in texts and time.time() < deadline:
+        texts = [m.get("text") for m in c.get(f"/api/v1/sessions/{sid}/conversation").json()["messages"]]
+        time.sleep(0.05)
+    assert "No answer: The user declined to answer" in texts
+    c.post(f"/api/v1/sessions/{sid}/actions", json={"type": "stop", "action_id": aid()})
+
+
+def test_the_conversation_carries_the_cursor_it_covers(service):
+    store, port, auth = service
+    c = browser(port, auth)
+    sid = c.post(
+        "/api/v1/sessions/launch",
+        json={"runtime": "fake", "cwd": work(store), "prompt": "ask", "action_id": aid()},
+    ).json()["session_id"]
+    deadline = time.time() + 10
+    while not c.get(f"/api/v1/attention?session_id={sid}").json()["items"] and time.time() < deadline:
+        time.sleep(0.05)
+    page = c.get(f"/api/v1/sessions/{sid}/conversation").json()
+    evs = c.get(f"/api/v1/events?session_id={sid}&limit=500").json()["events"]
+    assert page["cursor"] >= max(e["global_cursor"] for e in evs)
+    c.post(f"/api/v1/sessions/{sid}/actions", json={"type": "stop", "action_id": aid()})
+
+
 def test_handoff_and_reclaim_through_the_api(service):
     store, port, auth = service
     c = browser(port, auth)

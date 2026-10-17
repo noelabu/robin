@@ -45,6 +45,14 @@ def project(conn: Connection, session_id: str, cursor: int, at: datetime, ev: di
             )
         ).first()
         tool = ev.get("tool") or "a tool"
+        if kind == "approval_request":
+            title, allowed = f"{tool} needs approval", ["allow", "deny"]
+            detail: dict[str, Any] = {"tool": tool, "input": _summary(ev.get("input"))}
+        else:  # a question asked in a session Robin runs: answered here
+            questions = _questions(ev.get("input"))
+            title = questions[0]["question"] if questions else str(ev.get("text") or "Question")
+            allowed = ["answer", "deny"] if questions else []
+            detail = {"tool": tool, "questions": questions, "answer_in": "robin" if questions else "terminal"}
         conn.execute(
             sqlite_insert(AttentionItem)
             .values(
@@ -55,13 +63,9 @@ def project(conn: Connection, session_id: str, cursor: int, at: datetime, ev: di
                 run_id=s.active_run_id if s else None,
                 native_request_id=ev.get("request_id"),
                 state="open",
-                title=f"{tool} needs approval"
-                if kind == "approval_request"
-                else str(ev.get("text") or "Question"),
-                detail=json.dumps(
-                    {"tool": tool, "input": _summary(ev.get("input"))}, ensure_ascii=False, default=str
-                ),
-                allowed_responses=json.dumps(["allow", "deny"] if kind == "approval_request" else []),
+                title=title,
+                detail=json.dumps(detail, ensure_ascii=False, default=str),
+                allowed_responses=json.dumps(allowed),
                 originating_cursor=cursor,
                 created_at=at,
                 updated_at=at,
@@ -75,7 +79,7 @@ def project(conn: Connection, session_id: str, cursor: int, at: datetime, ev: di
             ev.get("request_id"),
             "resolved",
             at,
-            resolution="allowed" if ev.get("allow") else "denied",
+            resolution="answered" if ev.get("answered") else "allowed" if ev.get("allow") else "denied",
         )
     elif kind in ("approval_expired", "approval_rejected"):
         _set_request(
@@ -263,17 +267,55 @@ def get(store: Store, attention_id: str) -> dict[str, Any]:
     return view(r)
 
 
-def claim(store: Store, attention_id: str, action_id: str) -> dict[str, Any]:
-    """Atomically take an open request for one response (TR-045). Expired or answered items refuse."""
+ANSWER_CHARS = 8192  # what Claude Code accepts per answer, and in all
+ANSWERS_CHARS = 32768
+
+
+def normalize_answers(questions: list[dict[str, Any]], answers: dict[str, Any]) -> dict[str, str]:
+    """Answers keyed by the exact question text, as the runtime expects them. A multi-select question may
+    take a list, joined the way Claude Code joins its own picks."""
+    by_text = {q["question"]: q for q in questions}
+    if not answers:
+        raise AttentionError("invalid_answers", "give at least one answer", 422)
+    out: dict[str, str] = {}
+    for text, value in answers.items():
+        q = by_text.get(text)
+        if q is None:
+            raise AttentionError("invalid_answers", f"no question {text!r} in this request", 422)
+        if isinstance(value, list):
+            if not q["multi"]:
+                raise AttentionError("invalid_answers", f"{text!r} takes one answer", 422)
+            value = ", ".join(str(v) for v in value)
+        value = str(value).strip()
+        if not value or len(value) > ANSWER_CHARS:
+            raise AttentionError("invalid_answers", f"the answer to {text!r} is empty or too long", 422)
+        out[text] = value
+    if sum(len(v) for v in out.values()) > ANSWERS_CHARS:
+        raise AttentionError("invalid_answers", "the answers are too long", 422)
+    return out
+
+
+def claim(store: Store, attention_id: str, action_id: str, decision: str = "allow") -> dict[str, Any]:
+    """Atomically take an open request for one response (TR-045). Expired or answered items refuse, and so
+    does a response the item doesn't take (a question asked in a terminal is answered there)."""
 
     def work(conn: Connection) -> None:
+        r = conn.execute(
+            select(AttentionItem.kind, AttentionItem.allowed_responses).where(
+                AttentionItem.attention_id == attention_id
+            )
+        ).first()
+        if r is not None and decision not in json.loads(r.allowed_responses):
+            if r.kind == "question" and not json.loads(r.allowed_responses):
+                raise AttentionError("answer_in_terminal", "answer this question in the session's terminal")
+            raise AttentionError("invalid_response", f"a {r.kind} can't take {decision!r}", 422)
         n = conn.execute(
             update(AttentionItem)
             .where(
                 and_(
                     AttentionItem.attention_id == attention_id,
                     AttentionItem.state.in_(ACTIVE),
-                    AttentionItem.kind == "approval",  # questions get a text-answer path later
+                    AttentionItem.kind.in_(("approval", "question")),
                     AttentionItem.resolution_action_id.is_(None),
                 )
             )

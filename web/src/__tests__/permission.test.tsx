@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { vi } from "vitest";
 import type { AttentionItem, MapCard } from "../api";
+import { QuestionList } from "../components/Approval";
 import { MapView } from "../map/MapView";
 
 const NOW = Date.parse("2026-10-17T10:00:00Z");
@@ -140,4 +141,25 @@ test("a session asking a question turns its card amber and its panel shows the q
   expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+test("a question from a session Robin runs says how to answer it here", () => {
+  const item: AttentionItem = {
+    attention_id: "att-9",
+    kind: "question",
+    session_id: "s1",
+    task_id: null,
+    state: "open",
+    title: "Which database?",
+    detail: {
+      tool: "AskUserQuestion",
+      answer_in: "robin",
+      questions: [{ question: "Which database?", header: "", multi: false, options: [{ label: "SQLite", description: "" }] }],
+    },
+    allowed_responses: ["answer", "deny"],
+    created_at: "2026-10-17T09:59:30Z",
+  };
+  const { container } = render(<QuestionList item={item} />);
+  expect(container.textContent).toContain("Answer it with robin chat s1 or robin answer att-9.");
+  expect(container.textContent).not.toContain("terminal");
 });

@@ -7,6 +7,7 @@ runtime-agnostic. Runtimes register a coroutine in RUNTIMES; the scripted "fake"
 
 Commands: {"cmd": "send", "text": ..., "action_id": ...}, {"cmd": "interrupt", "action_id": ...},
           {"cmd": "approval", "request_id": ..., "allow": bool, "message": ..., "action_id": ...},
+          the same with "answers": {question text: answer} for a question asked through `Approvals.ask`,
           {"cmd": "stop"}
 """
 
@@ -47,10 +48,19 @@ class Approvals:
         self.pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
 
     async def request(self, tool: str, tool_input: Any) -> dict[str, Any]:
+        return await self._wait({"type": "approval_request", "tool": tool, "input": tool_input})
+
+    async def ask(self, tool: str, tool_input: Any) -> dict[str, Any]:
+        """A question for the user; the reply carries "answers" when they answered it."""
+        questions = tool_input.get("questions") if isinstance(tool_input, dict) else None
+        first = questions[0].get("question") if questions and isinstance(questions[0], dict) else None
+        return await self._wait({"type": "question", "tool": tool, "input": tool_input, "text": first})
+
+    async def _wait(self, event: dict[str, Any]) -> dict[str, Any]:
         rid = uuid.uuid4().hex[:12]
         fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
         self.pending[rid] = fut
-        emit({"type": "approval_request", "request_id": rid, "tool": tool, "input": tool_input})
+        emit({**event, "request_id": rid})
         try:
             return await fut
         finally:
@@ -74,6 +84,7 @@ class Approvals:
                 "type": "approval_answered",
                 "request_id": rid,
                 "allow": bool(decision.get("allow")),
+                "answered": bool(decision.get("answers")),
                 "action_id": decision.get("action_id"),
             }
         )
@@ -103,6 +114,24 @@ def emit_message_findings(text: str, native_ref: str) -> int:
     for i, payload in enumerate(blocks):
         emit(submission_event("message", payload, f"{native_ref}:{i}"))
     return len(blocks)
+
+
+FAKE_QUESTIONS = {
+    "questions": [
+        {
+            "question": "Which database?",
+            "header": "DB",
+            "multiSelect": False,
+            "options": [{"label": "SQLite", "description": ""}, {"label": "Postgres", "description": ""}],
+        },
+        {
+            "question": "Which features?",
+            "header": "Features",
+            "multiSelect": True,
+            "options": [{"label": "Auth"}, {"label": "Billing"}, {"label": "Search"}],
+        },
+    ]
+}
 
 
 @runtime("fake")
@@ -136,6 +165,16 @@ async def run_fake(args: argparse.Namespace) -> None:
                     "text": f"Synthesis of {sources} sources: they agree on the main point.",
                 }
             )
+            emit({"type": "turn_completed"})
+            return
+        if text.startswith("ask"):  # scripted question: two questions, one of them multi-select
+            d = await approvals.ask("AskUserQuestion", FAKE_QUESTIONS)
+            reply = (
+                f"Answers: {json.dumps(d['answers'], sort_keys=True)}"
+                if d.get("answers")
+                else f"No answer: {d.get('message')}"
+            )
+            emit({"type": "message_completed", "text": reply})
             emit({"type": "turn_completed"})
             return
         if "```robin-finding" in text or text.startswith("tool-finding:"):

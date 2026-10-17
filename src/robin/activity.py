@@ -680,14 +680,23 @@ def full_text(rules: RuleSet, text: str) -> str:
 
 
 def conversation(store: Store, session_id: str) -> list[dict[str, Any]]:
+    return conversation_page(store, session_id)[0]
+
+
+def conversation_page(store: Store, session_id: str) -> tuple[list[dict[str, Any]], int]:
     """The session as a chat: the user's prompts and the assistant's replies in full (redacted), with
     the tool calls between them grouped as one-line summaries. Oldest first. Only the main thread:
-    subagents' own prompts and reports stay on their cards."""
+    subagents' own prompts and reports stay on their cards.
+
+    Also the cursor it covers: every later event of the session has a larger one, so a stream read after it
+    neither misses nor repeats one."""
     rules = for_data_dir(store.data_dir)
     with store.reader.connect() as conn:
         cwd = conn.execute(
             select(SessionRow.execution_cwd).where(SessionRow.session_id == session_id)
         ).scalar()
+    with store.reader.connect() as conn:
+        head = conn.execute(select(func.coalesce(func.max(Event.global_cursor), 0))).scalar_one()
     events = read_events(store, session_id=session_id, limit=CONVERSATION_EVENTS, latest=True)
     out: list[dict[str, Any]] = []
 
@@ -750,7 +759,7 @@ def conversation(store: Store, session_id: str) -> list[dict[str, Any]]:
                 out.append({"role": "tools", "at": when, "items": [line]})
     for at, text in sent:  # sent after the newest event
         prompt(text, at)
-    return out
+    return out, max(head, events[-1].global_cursor if events else 0)
 
 
 def summaries(store: Store, events: list[Any]) -> list[tuple[str | None, bool]]:

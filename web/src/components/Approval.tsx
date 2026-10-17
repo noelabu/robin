@@ -68,7 +68,7 @@ export function ApprovalBox({ item, onAnswered }: { item: AttentionItem; onAnswe
   );
 }
 
-/** The questions an agent asked and their options. Answered where the session runs, not here. */
+/** The questions an agent asked and their options. Answered in its terminal, or with `robin chat` / `robin answer`. */
 export function QuestionList({ item }: { item: AttentionItem }) {
   const qs = item.detail.questions ?? [];
   return (
@@ -87,6 +87,11 @@ export function QuestionList({ item }: { item: AttentionItem }) {
         </div>
       ))}
       {item.detail.answer_in === "terminal" && <p className="muted question-where">Answer it in the session&apos;s terminal.</p>}
+      {item.detail.answer_in === "robin" && (
+        <p className="muted question-where">
+          Answer it with <code>robin chat {item.session_id}</code> or <code>robin answer {item.attention_id}</code>.
+        </p>
+      )}
     </>
   );
 }

@@ -496,7 +496,8 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         with store.reader.connect() as conn:
             if not _sessions(conn, session_id):
                 raise ApiError(404, "not_found", f"no session {session_id}")
-        return {"messages": await asyncio.to_thread(activity.conversation, store, session_id)}
+        messages, cursor = await asyncio.to_thread(activity.conversation_page, store, session_id)
+        return {"messages": messages, "cursor": cursor}
 
     @app.get(f"{API}/sessions/{{session_id}}/runs")
     async def session_runs(session_id: str, _: str = Authed, limit: int = Query(20, ge=1, le=200)) -> Any:

@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from robin.runtime import attention
 from robin.runtime.ledger import ActionConflict, ActionRejected
@@ -13,9 +13,17 @@ from robin.service.runtime import ServiceRuntime
 
 
 class ResponseBody(BaseModel):
-    decision: Literal["allow", "deny"]
+    decision: Literal["allow", "deny", "answer"]
     action_id: str = Field(min_length=8, max_length=128)
     message: str | None = None
+    # "answer": {question text: answer}, a list of picks for a multi-select question
+    answers: dict[str, str | list[str]] | None = None
+
+    @model_validator(mode="after")
+    def _answers_go_with_answer(self) -> "ResponseBody":
+        if (self.decision == "answer") != (self.answers is not None):
+            raise ValueError('answers are sent with decision "answer", and only with it')
+        return self
 
 
 def register(app: FastAPI, runtime: ServiceRuntime, authed: Any, api: str, error: Any) -> None:
@@ -44,15 +52,22 @@ def register(app: FastAPI, runtime: ServiceRuntime, authed: Any, api: str, error
         existing = await manager.get_action(body.action_id)
         if existing is not None:  # a retried request: report, never answer twice
             return {"action": _action(existing)}
-        it = await asyncio.to_thread(attention.claim, store, attention_id, body.action_id)
+        answers = None
+        if body.answers is not None:
+            current = await asyncio.to_thread(attention.get, store, attention_id)
+            questions = current["detail"].get("questions") or []
+            answers = attention.normalize_answers(questions, body.answers)
+        it = await asyncio.to_thread(attention.claim, store, attention_id, body.action_id, body.decision)
         native_request = await asyncio.to_thread(_request_id, store, attention_id)
+        declined = it["kind"] == "question" and body.decision == "deny"
         try:
             action = await manager.respond(
                 it["session_id"],
                 native_request,
-                body.decision == "allow",
+                body.decision != "deny",
                 action_id=body.action_id,
-                message=body.message,
+                message=body.message or ("The user declined to answer" if declined else None),
+                answers=answers,
             )
         except (ActionRejected, ActionConflict) as exc:
             await asyncio.to_thread(attention.release, store, attention_id, body.action_id)

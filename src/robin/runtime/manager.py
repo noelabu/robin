@@ -141,19 +141,30 @@ class RuntimeManager:
         )
 
     async def respond(
-        self, session_id: str, request_id: str, allow: bool, *, action_id: str, message: str | None = None
+        self,
+        session_id: str,
+        request_id: str,
+        allow: bool,
+        *,
+        action_id: str,
+        message: str | None = None,
+        answers: dict[str, str] | None = None,
     ) -> Action:
-        cmd = {
+        """An approval's decision, or a question's answers (sent as an allow carrying them)."""
+        cmd: dict[str, Any] = {
             "cmd": "approval",
             "request_id": request_id,
             "allow": allow,
             "message": message,
             "action_id": action_id,
         }
+        payload: dict[str, Any] = {"request_id": request_id, "allow": allow}
+        if answers:
+            cmd["answers"] = payload["answers"] = answers
         return await self._control(
             session_id,
             "approval",
-            {"request_id": request_id, "allow": allow},
+            payload,
             action_id,
             {"type": "command", "session": session_id, "command": cmd},
         )

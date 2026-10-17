@@ -39,14 +39,18 @@ def endpoint(data_dir: Path) -> str | None:
         return None
 
 
-def client(data_dir: Path) -> httpx.Client:
+def connection(data_dir: Path) -> tuple[str, str]:
+    """The running service's address and the CLI's token."""
     url = endpoint(data_dir)
     token_path = data_dir / "cli.token"
     if url is None or not token_path.exists():
         raise CliError("Robin isn't running. Start it with `robin` or `robin serve`.", EXIT_UNAVAILABLE)
-    return httpx.Client(
-        base_url=url, timeout=30, headers={"authorization": f"Bearer {token_path.read_text().strip()}"}
-    )
+    return url, token_path.read_text().strip()
+
+
+def client(data_dir: Path) -> httpx.Client:
+    url, token = connection(data_dir)
+    return httpx.Client(base_url=url, timeout=30, headers={"authorization": f"Bearer {token}"})
 
 
 def call(c: httpx.Client, method: str, path: str, body: dict[str, Any] | None = None) -> Any:
@@ -193,6 +197,10 @@ def cmd_run(args: argparse.Namespace) -> None:
         for warning in r.get("warnings") or []:
             print(f"warning: {warning}", file=sys.stderr)
         print_action(wait_action(c, aid, args.wait) if args.wait else r["action"])
+    if args.chat:
+        from robin.chat.app import run_chat
+
+        run_chat(args.data, r["session_id"])
 
 
 def cmd_control(args: argparse.Namespace) -> None:
@@ -276,8 +284,49 @@ def cmd_attention(args: argparse.Namespace) -> None:
     if not items:
         print("nothing needs attention")
     for i in items:
+        if i["kind"] == "question":
+            where = "robin answer" if "answer" in i["allowed_responses"] else "answer in its terminal"
+            print(f"{i['attention_id']}  {i['kind']:<9} {i['state']:<12} {i['title']}  ({where})")
+            continue
         detail = i["detail"].get("input") or i["detail"].get("reason") or ""
         print(f"{i['attention_id']}  {i['kind']:<9} {i['state']:<12} {i['title']}  {json.dumps(detail)[:80]}")
+
+
+def cmd_answer(args: argparse.Namespace) -> None:
+    """Answer a question in order: a number picks an option (`1,3` for several), other text is your own."""
+    from robin.chat.model import parse_choice
+
+    with client(args.data) as c:
+        item = call(c, "GET", f"/attention/{args.attention_id}")
+        questions = item["detail"].get("questions") or []
+        if item["kind"] != "question":
+            raise CliError(f"{args.attention_id} is a {item['kind']}; use robin approve or robin deny")
+        body: dict[str, Any] = {"action_id": action_id()}
+        if args.decline:
+            body["decision"] = "deny"
+        elif not args.answers:
+            for n, q in enumerate(questions, 1):
+                pick = "several: 1,3" if q["multi"] else "one"
+                print(f"{n}. {q['question']}  (pick {pick}, or type your own answer)")
+                for i, o in enumerate(q["options"], 1):
+                    print(f"     {i}. {o['label']}" + (f" — {o['description']}" if o["description"] else ""))
+            raise CliError(f"robin answer {args.attention_id} ANSWER... (one per question, in order)")
+        else:
+            if len(args.answers) > len(questions):
+                raise CliError(f"this request asks {len(questions)} question(s)")
+            body["decision"] = "answer"
+            pairs = zip(questions, args.answers, strict=False)  # later questions may stay unanswered
+            body["answers"] = {q["question"]: parse_choice(a, q) for q, a in pairs}
+        call(c, "POST", f"/attention/{args.attention_id}/responses", body)
+        print_action(wait_action(c, body["action_id"], args.wait))
+
+
+def cmd_chat(args: argparse.Namespace) -> None:
+    with client(args.data) as c:
+        call(c, "GET", f"/sessions/{args.session}")  # a clear error before the screen takes over
+    from robin.chat.app import run_chat  # loads the terminal UI only for this command
+
+    run_chat(args.data, args.session)
 
 
 def cmd_respond(args: argparse.Namespace) -> None:
@@ -1231,6 +1280,7 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="run tools without asking (claude, codex); deny rules and the sandbox still apply",
     )
+    p.add_argument("--chat", action="store_true", help="then chat with it in this terminal")
     p.set_defaults(func=cmd_run)
 
     for control, help_text in (
@@ -1280,6 +1330,16 @@ def parser() -> argparse.ArgumentParser:
         p.add_argument("attention_id")
         p.add_argument("--wait", type=float, default=5)
         p.set_defaults(func=cmd_respond, decision=decision)
+    p = sub.add_parser("answer", parents=[common], help="answer a question from a session Robin runs")
+    p.add_argument("attention_id")
+    p.add_argument("answers", nargs="*", help="one per question, in order: an option number (1,3) or text")
+    p.add_argument("--decline", action="store_true", help="tell the agent you won't answer")
+    p.add_argument("--wait", type=float, default=5)
+    p.set_defaults(func=cmd_answer)
+
+    p = sub.add_parser("chat", parents=[common], help="chat with a session in this terminal")
+    p.add_argument("session")
+    p.set_defaults(func=cmd_chat)
 
     p = sub.add_parser("scan", parents=[common], help="index native session history (read-only)")
     p.add_argument("--runtime", action="append", choices=["claude", "codex", "pi"])

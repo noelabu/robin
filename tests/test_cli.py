@@ -142,3 +142,88 @@ def test_attention_and_approve_from_the_cli(served, capsys):
     attention_id = out.split()[0]
     assert "Bash needs approval" in out and "make test" in out
     assert "acknowledged" in run(capsys, "approve", attention_id, "--data", d)
+
+
+def test_answer_a_question_from_the_cli(served, capsys):
+    store, project = served
+    d = str(store.data_dir)
+    sid = session_id(
+        run(capsys, "run", "fake", "--cwd", str(project), "--prompt", "ask", "--wait", "10", "--data", d)
+    )
+    deadline = time.time() + 10
+    while "question" not in (out := run(capsys, "attention", "--data", d)) and time.time() < deadline:
+        time.sleep(0.05)
+    assert "Which database?" in out and "(robin answer)" in out
+    item = out.split()[0]
+    with pytest.raises(SystemExit) as exc:
+        main(["answer", item, "--data", d])
+    assert exc.value.code == 1
+    listed = capsys.readouterr().out
+    assert "1. Which database?" in listed and "2. Postgres" in listed and "pick several: 1,3" in listed
+    assert "acknowledged" in run(capsys, "answer", item, "2", "1,2", "--data", d)
+    from robin.activity import conversation
+
+    deadline = time.time() + 10
+    expected = 'Answers: {"Which database?": "Postgres", "Which features?": "Auth, Billing"}'
+    while expected not in [m.get("text") for m in conversation(store, sid)] and time.time() < deadline:
+        time.sleep(0.05)
+    assert expected in [m.get("text") for m in conversation(store, sid)]
+
+
+def test_chat_opens_on_the_session_and_run_can_open_it(served, capsys, monkeypatch):
+    store, project = served
+    d = str(store.data_dir)
+    opened = []
+    monkeypatch.setattr("robin.chat.app.run_chat", lambda data, sid: opened.append(sid))
+    out = run(capsys, "run", "fake", "--cwd", str(project), "--chat", "--data", d)
+    sid = session_id(out)
+    run(capsys, "chat", sid, "--data", d)
+    assert opened == [sid, sid]
+    with pytest.raises(SystemExit) as exc:
+        main(["chat", "no-such-session", "--data", d])
+    assert exc.value.code == 1 and opened == [sid, sid]  # refused before the screen opens
+
+
+async def test_the_chat_answers_a_question_against_the_real_service(served, capsys):
+    """The terminal UI end to end: the real client, stream and service, and the scripted question."""
+    from textual.widgets import Static
+
+    from robin.chat.api import ChatApi
+    from robin.chat.app import ChatApp, ChatInput
+    from robin.cli import connection
+
+    store, project = served
+    d = str(store.data_dir)
+    sid = session_id(await asyncio.to_thread(run, capsys, "run", "fake", "--cwd", str(project), "--data", d))
+    url, token = connection(store.data_dir)
+    app = ChatApp(ChatApi(url, token, sid), sid)
+
+    async def until(check, timeout=10.0):
+        deadline = time.time() + timeout
+        while not check() and time.time() < deadline:
+            await pilot.pause(0.05)
+        assert check()
+
+    async def say(text):
+        box = app.query_one("#input", ChatInput)
+        box.text = text
+        box.focus()
+        await pilot.press("enter")
+
+    def panel():
+        return str(app.query_one("#pending", Static).content)
+
+    def shown():
+        return " ".join(str(getattr(w.content, "markup", w.content)) for w in app.query("#log > Static"))
+
+    async with app.run_test() as pilot:
+        await until(lambda: "● live" in str(app.query_one("#status", Static).content))
+        await say("ask")
+        await until(lambda: "Which database?" in panel())
+        await say("2")
+        await until(lambda: "Which features?" in panel())
+        await say("1,3")
+        await until(
+            lambda: 'Answers: {"Which database?": "Postgres", "Which features?": "Auth, Search"}' in shown()
+        )
+        assert shown().count("You  ask") == 1

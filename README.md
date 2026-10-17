@@ -69,6 +69,7 @@ From the dashboard's launch form, or:
 robin run claude --prompt "Fix the failing test"          # in the current folder
 robin run claude --worktree --prompt "..."                # in a new Git worktree on its own branch
 robin run claude --skip-permissions --prompt "..."        # run tools without asking (claude, codex)
+robin run claude --skip-permissions --chat                # then chat with it in this terminal
 ```
 
 ### If something's wrong
@@ -116,6 +117,16 @@ The **Sessions** tab lists sessions grouped by folder, each with its title, stat
 
 A session started outside Robin can be continued from here: the first message you send takes it over, and Robin resumes it with that message. It's refused, changing nothing, while a terminal may still hold the session (its id on a command line, or a transcript written in the last two minutes).
 
+### Chat in the terminal
+
+`robin chat <session>` shows one session full screen in this terminal: a status bar (runtime, folder, state, skip permissions, who controls it), the conversation with each tool step as it happens, and an input box. Robin keeps control of the session the whole time, and leaving the chat (`/quit` or Ctrl+C) never stops it. `robin run … --chat` launches a session and opens it straight away.
+
+- Enter sends; Ctrl+J starts a new line (Shift+Enter too, in terminals that report it). A message sent while a turn runs is queued until it ends. `/interrupt` ends the turn, `/stop` ends the session, `/help` lists these.
+- An approval shows above the input: `y` allows, `n` denies.
+- A question from Claude shows its options: type a number to pick one (`1,3` for several), or any other text as your own answer; with more than one question it asks them in turn. `/decline` tells Claude you won't answer. Without the chat: `robin answer <attention-id> 2 "1,3"` (one answer per question, in order); with no answers it lists them.
+- A session started outside Robin is taken over by your first message, as in the dashboard. Its questions are still answered in its own terminal.
+- If the connection drops, the chat says so and picks up where it left off.
+
 
 ```bash
 robin project add ~/code/app
@@ -126,6 +137,8 @@ robin message <session> --text "Focus on the auth section"
 robin interrupt <session>
 robin attention              # questions, approvals and failures waiting on you
 robin approve <attention-id> # or: robin deny <attention-id>
+robin answer <attention-id> 2 # a question: an option number per question, or your own text
+robin chat <session>         # the session full screen in this terminal
 robin open <session>         # continue the session in this terminal; Robin hands over control
 robin reclaim <session>      # take it back
 robin stop <session>
