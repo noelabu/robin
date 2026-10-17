@@ -502,3 +502,127 @@ def test_file_edits_are_credited_to_the_task_in_progress(store):
         "/r/plan.md",
         "/r/early.py",
     ]
+
+
+def test_conversation_shows_prompts_and_replies_in_full_with_tool_calls_folded(store):
+    reply = "Done.\n\n- three files changed\n- tests pass"
+    bash = {"type": "tool_started", "tool": "Bash", "input": {"command": "npm test"}}
+    injected = "<system-reminder>x</system-reminder>"  # context the harness adds, not the user's words
+    sid = observed_session_with(
+        store,
+        [
+            ("message.user", {"type": "user_message", "text": "fix the login test"}),
+            ("message.user", {"type": "user_message", "text": "fix the login test"}),  # hook + transcript
+            ("message.user", {"type": "user", "message": {"content": injected}}),
+            ("tool.started", bash),
+            ("tool.started", bash),  # hook + transcript
+            ("tool.started", {"type": "tool_started", "tool": "Read", "input": {"file_path": "/a/x.py"}}),
+            ("tool.result", {"type": "tool_result", "output": "ok"}),
+            ("message.completed", {"type": "message_completed", "text": reply}),
+            ("message.completed", {"type": "message_completed", "text": "One more thing."}),
+            ("session.turn_completed", {"type": "turn_completed"}),
+        ],
+    )
+    msgs = [{k: v for k, v in m.items() if k != "at"} for m in activity.conversation(store, sid)]
+    assert msgs == [
+        {"role": "user", "text": "fix the login test"},
+        {"role": "tools", "items": ["Bash npm test", "Read /a/x.py"]},
+        {"role": "assistant", "text": reply + "\n\nOne more thing."},
+    ]
+
+
+def test_conversation_is_redacted_and_long_replies_are_read_and_capped(store):
+    long_reply = FAKE_TOKEN + " " + "y" * (activity.MESSAGE_LIMIT + 50_000)  # big enough for the blob store
+    sid = observed_session_with(
+        store,
+        [
+            ("message.user", {"type": "user_message", "text": f"use token {FAKE_TOKEN}\nplease"}),
+            ("message.completed", {"type": "message_completed", "text": long_reply}),
+        ],
+    )
+    user, assistant = activity.conversation(store, sid)
+    assert user["text"] == "use token [REDACTED:github-pat]\nplease"
+    assert assistant["text"].startswith("[REDACTED:github-pat] yyy")
+    assert assistant["text"].endswith("… (truncated)")
+    assert FAKE_TOKEN not in json.dumps([user, assistant])
+
+
+def test_a_prompt_sent_again_after_a_reply_stays_in_the_conversation(store):
+    sid = observed_session_with(
+        store,
+        [
+            ("message.user", {"type": "user_message", "text": "continue"}),
+            ("message.completed", {"type": "message_completed", "text": "Done part one."}),
+            ("message.user", {"type": "user_message", "text": "continue"}),
+            ("message.completed", {"type": "message_completed", "text": "Done part two."}),
+        ],
+    )
+    assert [m["role"] for m in activity.conversation(store, sid)] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+
+
+def test_subagent_prompts_and_reports_stay_out_of_the_conversation(store):
+    from robin.events.envelope import EvidenceKind, NewEvent
+    from robin.events.ingest import CheckpointAdvance, ingest_batch, open_generation
+
+    sid = observed_session_with(
+        store,
+        [
+            ("message.user", {"type": "user_message", "text": "plan it"}),
+            ("message.completed", {"type": "message_completed", "text": "Here's the plan."}),
+        ],
+    )
+    sub = "file:/h/.claude/projects/-repo/obs-1/subagents/agent-a.jsonl"
+    store.writer.call(
+        lambda c: open_generation(
+            c, source_id=sub, kind="jsonl_file", runtime="claude", reason="initial", session_id=sid
+        )
+    )
+    report = [
+        ("message.user", {"type": "user_message", "text": "Map the codebase"}),
+        ("message.completed", {"type": "message_completed", "text": "A very long internal report"}),
+    ]
+    batch = [
+        NewEvent(
+            runtime="claude",
+            session_id=sid,
+            source_id=sub,
+            source_generation=0,
+            source_event_id=f"s{i}",
+            source_seq=i,
+            event_type=t,
+            evidence_kind=EvidenceKind.REPORTED,
+            payload=json.dumps(p).encode(),
+        )
+        for i, (t, p) in enumerate(report, 1)
+    ]
+    ingest_batch(store, batch, [], CheckpointAdvance(sub, 0, len(report), None))
+    assert [m["text"] for m in activity.conversation(store, sid)] == ["plan it", "Here's the plan."]
+
+
+def test_prompts_sent_through_robin_show_even_when_the_runtime_does_not_echo_them(store):
+    from robin.runtime import ledger
+
+    sid = observed_session_with(
+        store, [("message.completed", {"type": "message_completed", "text": "Started on it."})]
+    )
+
+    def send(action_id, kind, payload, state):
+        def run(c):
+            ledger.create(c, action_id=action_id, session_id=sid, action_type=kind, payload=payload)
+            if state != "requested":
+                ledger.transition(c, action_id, state)
+
+        store.writer.call(run)
+
+    send("act-11111111", "message", {"text": f"now the tests, token {FAKE_TOKEN}"}, "submitted")
+    send("act-22222222", "message", {"text": "never delivered"}, "failed")
+    msgs = activity.conversation(store, sid)
+    assert [(m["role"], m["text"]) for m in msgs] == [
+        ("assistant", "Started on it."),
+        ("user", "now the tests, token [REDACTED:github-pat]"),
+    ]

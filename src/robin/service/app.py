@@ -488,6 +488,14 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         await runtime.notify()
         return result
 
+    @app.get(f"{API}/sessions/{{session_id}}/conversation")
+    async def conversation(session_id: str, _: str = Authed) -> dict[str, Any]:
+        """The session's prompts and replies in full, redacted, with tool calls grouped between them."""
+        with store.reader.connect() as conn:
+            if not _sessions(conn, session_id):
+                raise ApiError(404, "not_found", f"no session {session_id}")
+        return {"messages": await asyncio.to_thread(activity.conversation, store, session_id)}
+
     @app.get(f"{API}/sessions/{{session_id}}/runs")
     async def session_runs(session_id: str, _: str = Authed, limit: int = Query(20, ge=1, le=200)) -> Any:
         """The session's latest runs with their Git context (FR-050)."""

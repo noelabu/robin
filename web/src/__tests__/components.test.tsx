@@ -1,7 +1,8 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, vi } from "vitest";
 import { api, ApiError, type Session } from "../api";
 import { ActivityFeed } from "../components/ActivityFeed";
+import { Prose } from "../components/Prose";
 import { SessionDetail } from "../components/SessionDetail";
 import { GROUP, ROW, SessionList } from "../components/SessionList";
 import type { FeedItem } from "../useWorkspace";
@@ -66,14 +67,14 @@ test("disabled controls say why", () => {
 
 test("input during a turn is labelled by what the runtime does with it", () => {
   render(<SessionDetail session={session()} />);
-  expect(screen.getByRole("button", { name: "Queue follow-up" })).toBeTruthy();
-  expect(screen.getByText(/applies input sent during a turn after the turn ends/)).toBeTruthy();
+  expect(screen.getByRole("textbox").getAttribute("placeholder")).toContain("↵ queue follow-up");
+  expect(screen.queryByText("Robin already controls this session")).toBeNull();
 });
 
 test("a runtime that steers mid-turn says Steer", () => {
   render(<SessionDetail session={session({ runtime: "codex",
     capabilities: { runtime: "codex", steer_mid_turn: true, tested_versions: "x", level: "live" } })} />);
-  expect(screen.getByRole("button", { name: "Steer" })).toBeTruthy();
+  expect(screen.getByRole("textbox").getAttribute("placeholder")).toContain("↵ steer");
 });
 
 test("a handed-off session shows the resume command and only Take back control", () => {
@@ -232,11 +233,12 @@ test("a session started outside Robin can be continued by sending it a message",
   });
   const onChanged = vi.fn();
   render(<SessionDetail session={continuable(session({ mode: "observed", native_session_id: "abc-1" }))} onChanged={onChanged} />);
-  expect(screen.getByText("Sending continues this session in Robin.")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Archive" })).toBeTruthy(); // in the header now
   expect(screen.queryByText(/Read-only here/)).toBeNull();
   expect(screen.queryByRole("button", { name: "Interrupt" })).toBeNull();
   fireEvent.change(screen.getByRole("textbox"), { target: { value: "keep going" } });
-  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
   expect(await screen.findByText("Send: submitted")).toBeTruthy();
   expect(send).toHaveBeenCalledWith("s1", { type: "takeover", text: "keep going" });
   expect(onChanged).toHaveBeenCalled();
@@ -249,7 +251,7 @@ test("a refused takeover says why and keeps the message", async () => {
   );
   render(<SessionDetail session={continuable(session({ mode: "observed", native_session_id: "abc-1" }))} />);
   fireEvent.change(screen.getByRole("textbox"), { target: { value: "keep going" } });
-  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
   expect(await screen.findByText("Send not sent: close it in your terminal first (process 42)")).toBeTruthy();
   expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("keep going");
 });
@@ -300,4 +302,95 @@ test("session titles with markup render as text", () => {
   );
   expect(container.querySelector("img, script")).toBeNull();
   expect(container.textContent).toContain("<script>");
+});
+
+test("replies keep their structure but never become markup or links", () => {
+  const text = [
+    "## Plan",
+    "Run `make test` and **then** ship.",
+    "- one",
+    "- [link](javascript:alert(1)) <img src=x onerror=alert(1)>",
+    "```",
+    "<script>alert(2)</script>",
+    "```",
+    "| a | b |",
+    "|---|---|",
+    "| 1 | 2 |",
+  ].join("\n");
+  const { container } = render(<Prose text={text} />);
+  expect(container.querySelector(".h2")?.textContent).toBe("Plan");
+  expect(container.querySelector("code")?.textContent).toBe("make test");
+  expect(container.querySelector("strong")?.textContent).toBe("then");
+  expect(container.querySelectorAll("li")).toHaveLength(2);
+  expect(container.querySelector("pre code")?.textContent).toBe("<script>alert(2)</script>");
+  expect([...container.querySelectorAll("th")].map((c) => c.textContent)).toEqual(["a", "b"]);
+  expect([...container.querySelectorAll("td")].map((c) => c.textContent)).toEqual(["1", "2"]);
+  expect(container.querySelector("a, img, script")).toBeNull();
+  expect(container.textContent).toContain("[link](javascript:alert(1))");
+});
+
+test("a session shows its conversation as a chat, with tool calls folded and the raw events a tab away", async () => {
+  vi.spyOn(api, "conversation").mockResolvedValue({
+    messages: [
+      { role: "user", at: "2026-10-17T11:45:00Z", text: "yes please" },
+      { role: "tools", at: "2026-10-17T11:45:01Z", items: ["Bash git commit", "Bash git log"] },
+      { role: "assistant", at: "2026-10-17T11:45:05Z", text: "Committed as `1709736`." },
+    ],
+  });
+  render(<SessionDetail session={session()} events={<p>raw events</p>} />);
+  const chat = await screen.findByRole("region", { name: "Conversation" });
+  expect(await within(chat).findByText("yes please")).toBeTruthy();
+  const work = within(chat).getByText(/^Worked/).closest("details")!;
+  expect(work.querySelector("summary")?.textContent).toBe("Worked · 2 tool calls");
+  expect(work.textContent).toContain("Bash git commit");
+  expect(work.contains(within(chat).getByText("1709736"))).toBe(false); // the answer stays out of the fold
+  expect(within(chat).getByText("1709736").tagName).toBe("CODE");
+  expect(within(chat).getByText("Claude:", { exact: false })).toBeTruthy();
+  fireEvent.click(within(chat).getByRole("tab", { name: "Events" }));
+  expect(within(chat).getByText("raw events")).toBeTruthy();
+  expect(within(chat).queryByText("yes please")).toBeNull();
+});
+
+test("a long reply is folded until asked for the rest", async () => {
+  const long = Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join("\n");
+  vi.spyOn(api, "conversation").mockResolvedValue({ messages: [{ role: "assistant", at: "2026-10-17T11:45:05Z", text: long }] });
+  render(<SessionDetail session={session()} />);
+  const more = await screen.findByRole("button", { name: "Show more" });
+  expect(more.getAttribute("aria-expanded")).toBe("false");
+  expect(document.querySelector(".folded")).toBeTruthy();
+  fireEvent.click(more);
+  expect(screen.getByRole("button", { name: "Show less" })).toBeTruthy();
+  expect(document.querySelector(".folded")).toBeNull();
+});
+
+test("Shift+Enter starts a new line instead of sending", () => {
+  const send = vi.spyOn(api, "act");
+  render(<SessionDetail session={continuable(session({ mode: "observed", native_session_id: "abc-1" }))} />);
+  fireEvent.change(screen.getByRole("textbox"), { target: { value: "first line" } });
+  fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter", shiftKey: true });
+  expect(send).not.toHaveBeenCalled();
+});
+
+test("a turn still running shows its latest step, and earlier notes fold into the work", async () => {
+  vi.spyOn(api, "conversation").mockResolvedValue({
+    messages: [
+      { role: "user", at: "2026-10-17T11:45:00Z", text: "run the tests" },
+      { role: "assistant", at: "2026-10-17T11:45:01Z", text: "Running them now." },
+      { role: "tools", at: "2026-10-17T11:45:02Z", items: ["Bash npm test"] },
+    ],
+  });
+  render(<SessionDetail session={session()} />);
+  const summary = await screen.findByText(/^So far/);
+  expect(summary.textContent).toBe("So far · 1 note · 1 tool call");
+  expect(summary.closest("details")?.textContent).toContain("Running them now.");
+  expect(document.querySelector(".msg.live")?.textContent).toMatch(/^.Working… \(.+\)⎿ Bash npm test$/);
+});
+
+test("an idle session has no live line", async () => {
+  vi.spyOn(api, "conversation").mockResolvedValue({
+    messages: [{ role: "assistant", at: "2026-10-17T11:45:05Z", text: "All done." }],
+  });
+  render(<SessionDetail session={session({ runtime_state: "idle" })} />);
+  expect(await screen.findByText("All done.")).toBeTruthy();
+  expect(document.querySelector(".msg.live")).toBeNull();
 });

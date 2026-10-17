@@ -277,7 +277,7 @@ button.pill { cursor: pointer; background: transparent; }
 .readonly-note code { color: var(--ink); background: var(--m-select); padding: 2px 6px; border-radius: 5px; }
 .readonly-note .status { flex-basis: 100%; margin: 0; }
 .compose { margin-top: 14px; }
-.compose textarea { background: var(--card); min-height: 64px; }
+
 .terminal { margin-top: 12px; }
 
 .recency { display: flex; gap: 2px; padding: 3px; margin: 8px 0 4px; border: 1px solid var(--line); border-radius: 8px; }
@@ -307,4 +307,88 @@ button.primary:hover:not(:disabled) { background: var(--m-cta); filter: brightne
 body::after {
   content: ""; position: fixed; inset: 0; z-index: 40; pointer-events: none; opacity: .35;
   background: repeating-linear-gradient(0deg, #00000029 0, #00000029 1px, transparent 2px, transparent 3px);
+}
+
+/* -- conversation: prompts and replies as a chat, the message box below ---------------------------- */
+.chat { margin-top: 16px; border: 1px solid var(--line); border-radius: 4px; background: var(--canvas); }
+.chat-head {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.chat-head h3 { margin: 0; color: var(--muted); }
+.chat-tabs { display: flex; gap: 2px; }
+.chat-tabs button {
+  padding: 3px 10px; border: 0; background: none; color: var(--muted); font: 600 11px var(--disp);
+  letter-spacing: .12em; text-transform: uppercase;
+}
+.chat-tabs button[aria-selected="true"] { color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+.chat > .feed { border: 0; border-radius: 0; background: none; }
+.chat-scroll { max-height: 62vh; overflow-y: auto; padding: 14px 16px; }
+.chat-scroll > .empty { margin: 0; }
+.chat-scroll { background: var(--bg); font-family: var(--mono); }
+.chat-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.msg { display: grid; grid-template-columns: 18px 1fr auto; gap: 0 8px; align-items: baseline; }
+.msg .sigil { font: 600 13px var(--mono); line-height: 1.6; }
+.msg .body { min-width: 0; }
+.msg time { font: 10.5px var(--mono); color: var(--faint); white-space: nowrap; }
+.msg.user { padding: 6px 8px; margin: 4px -8px 0; background: var(--m-select); border-radius: 2px; }
+.msg.user .sigil { color: var(--muted); }
+.msg.user .prose { color: var(--ink); }
+.msg.assistant .sigil { color: var(--ink); }
+.msg.assistant { padding: 10px 12px 10px 0; border-left: 2px solid var(--accent); padding-left: 10px; margin-left: -12px; }
+.msg.assistant .prose { font-size: 13.5px; color: var(--ink); }
+.msg.assistant .sigil { color: var(--accent); }
+.msg.work { display: block; margin: -4px 0; font: 11.5px/1.5 var(--mono); color: var(--faint); }
+.msg.work summary { cursor: pointer; padding-left: 26px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msg.work summary:hover { color: var(--muted); }
+.msg.work .latest { color: var(--muted); }
+.msg.work .steps {
+  list-style: none; margin: 6px 0 2px 26px; padding: 0 0 0 12px; border-left: 1px dashed var(--line-hi);
+  display: grid; gap: 4px;
+}
+.msg.work .step.call { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msg.work .step.call::before { content: "$ "; color: var(--faint); }
+.msg.work .step.note .prose { font-size: 12px; color: var(--muted); }
+
+.term-input {
+  display: flex; gap: 10px; align-items: flex-start; padding: 8px 12px; border: 1px solid var(--line-hi);
+  border-radius: 3px; background: var(--bg);
+}
+.term-input:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.term-input .prompt { font: 600 13px/1.6 var(--mono); color: var(--accent); padding-top: 1px; }
+.term-input textarea {
+  flex: 1; border: 0; padding: 0; background: none; min-height: 3.2em; resize: vertical; font: 13px/1.6 var(--mono);
+  outline: none;
+}
+
+.prose { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.prose > :first-child { margin-top: 0; }
+.prose > :last-child { margin-bottom: 0; }
+.prose p { margin: 0 0 8px; white-space: pre-wrap; }
+.prose .h { font-family: var(--disp); font-weight: 600; color: var(--ink); margin: 12px 0 6px; }
+.prose .h1 { font-size: 15px; } .prose .h2 { font-size: 14px; } .prose .h3 { font-size: 13px; }
+.prose ul, .prose ol { margin: 0 0 8px; padding-left: 20px; display: grid; gap: 3px; }
+.prose li.nested { margin-left: 18px; }
+.prose code { font: 12px var(--mono); padding: 1px 5px; border-radius: 3px; background: var(--m-select); color: var(--m-ink-2); }
+.prose pre {
+  margin: 0 0 8px; padding: 10px 12px; border-radius: 3px; border: 1px solid var(--line); background: var(--bg);
+  overflow-x: auto; font: 12px/1.5 var(--mono); white-space: pre;
+}
+.prose pre code { padding: 0; background: none; }
+.prose strong { color: var(--ink); }
+.chat + .compose, .chat ~ .compose { margin-top: 10px; }
+.folded { max-height: 24em; overflow: hidden; -webkit-mask-image: linear-gradient(180deg, #000 70%, transparent); mask-image: linear-gradient(180deg, #000 70%, transparent); }
+.more-toggle { margin-top: 4px; font: 600 11px var(--disp); letter-spacing: .12em; text-transform: uppercase; }
+.prose .table-wrap { overflow-x: auto; margin: 0 0 8px; }
+.prose table { border-collapse: collapse; font-size: 12px; }
+.prose th, .prose td { border: 1px solid var(--line-hi); padding: 4px 10px; text-align: left; vertical-align: top; }
+.prose th { color: var(--ink); background: var(--m-select); font-weight: 600; }
+/* Absolutely positioned screen-reader text must stay inside its scroll box, or it stretches the page. */
+.main, .sidebar, .chat-scroll, .session-scroll { position: relative; }
+.msg.live { grid-template-columns: 18px 1fr; align-items: start; margin-top: 2px; }
+.msg.live .spin { color: var(--m-cta); font: 600 14px/1.5 var(--mono); text-shadow: 0 0 10px color-mix(in srgb, var(--m-cta) 60%, transparent); }
+.msg.live .what { color: var(--m-cta); font-weight: 600; }
+.msg.live .elapsed { color: var(--muted); }
+.msg.live .step {
+  display: block; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }

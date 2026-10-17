@@ -336,7 +336,13 @@ export function App() {
           />
         )}
         {current ? (
-          <SessionDetail key={current.session_id} session={current} onChanged={() => void ws.reload()} />
+          <SessionDetail
+            key={current.session_id}
+            session={current}
+            onChanged={() => void ws.reload()}
+            liveCursor={ws.feed.find((i) => i.session_id === current.session_id)?.global_cursor}
+            events={<ActivityFeed items={ws.feed} scope={feedScope} sessions={ws.sessions} ready={ws.ready} />}
+          />
         ) : (
           panel === "none" &&
           !task && (
@@ -345,7 +351,7 @@ export function App() {
             </p>
           )
         )}
-        <ActivityFeed items={ws.feed} scope={feedScope} sessions={ws.sessions} ready={ws.ready} />
+        {!current && <ActivityFeed items={ws.feed} scope={feedScope} sessions={ws.sessions} ready={ws.ready} />}
       </main>
     </div>
   );

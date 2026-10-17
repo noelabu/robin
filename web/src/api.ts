@@ -252,6 +252,10 @@ export type MapNow = {
 
 export type MapSnapshot = { now: MapNow | null; clusters: MapCluster[]; cards: MapCard[]; pending_events: number };
 
+export type ConversationMessage =
+  | { role: "user" | "assistant"; at: string; text: string }
+  | { role: "tools"; at: string; items: string[] };
+
 export type FileTouch = { path: string; op: string; at: string; n?: number };
 export type Todo = { id: string; text: string; status: "pending" | "in_progress" | "completed"; files?: FileTouch[] };
 
@@ -407,6 +411,8 @@ export const api = {
       discard_changes: discardChanges,
     }),
   runs: (sessionId: string) => request<{ runs: Run[] }>("GET", `/sessions/${sessionId}/runs`),
+  conversation: (sessionId: string) =>
+    request<{ messages: ConversationMessage[] }>("GET", `/sessions/${sessionId}/conversation`),
   presence: (session_id: string | null) => request<{ ok: boolean }>("PUT", "/presence", { session_id }),
   search: (q: string) =>
     request<{ results: SearchResult[]; more: boolean; pending_events: number }>(

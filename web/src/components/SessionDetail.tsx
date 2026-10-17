@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { type KeyboardEvent, type ReactNode, useState } from "react";
 import { api, ApiError, type Session } from "../api";
 import { RuntimeIcon } from "../map/RuntimeIcon";
 import { ago as since } from "../map/time";
 import { SessionFlow } from "../map/SessionFlow";
+import { Conversation } from "./Conversation";
 import { Runs } from "./Runs";
 import { WorktreePanel } from "./WorktreePanel";
 import { sessionState } from "../map/useMap";
@@ -25,7 +26,24 @@ function resumeCommand(runtime: string, id: string): string | null {
   return `robin open ${id}`;
 }
 
-export function SessionDetail({ session, onChanged }: { session: Session; onChanged?: () => void }) {
+/** Enter sends, Shift+Enter starts a new line; a key that finishes an IME composition does neither. */
+function enterSends(e: KeyboardEvent<HTMLTextAreaElement>) {
+  if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
+  e.preventDefault();
+  e.currentTarget.form?.requestSubmit();
+}
+
+export function SessionDetail({
+  session,
+  onChanged,
+  liveCursor,
+  events,
+}: {
+  session: Session;
+  onChanged?: () => void;
+  liveCursor?: number;
+  events?: ReactNode;
+}) {
   const [text, setText] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -74,7 +92,9 @@ export function SessionDetail({ session, onChanged }: { session: Session; onChan
   const resume = session.native_session_id ? resumeCommand(session.runtime, session.native_session_id) : null;
 
   const stale = session.connection_state !== "connected" && session.mode === "managed";
+  // "Take back control" only means something once the session is handed off.
   const disabledReasons = (["interrupt", "stop", "handoff", "reclaim"] as const)
+    .filter((k) => k !== "reclaim" || session.control_owner === "terminal")
     .filter((k) => !c[k].enabled && c[k].reason && c[k].reason !== c.message.reason)
     .map((k) => c[k].reason);
 
@@ -99,6 +119,11 @@ export function SessionDetail({ session, onChanged }: { session: Session; onChan
             </span>
           )}
           {session.last_activity_at && <span>last activity {since(session.last_activity_at, Date.now())} ago</span>}
+          {session.mode === "observed" && c.takeover?.enabled && (
+            <button type="button" className="link" onClick={() => void archive()}>
+              {session.archived ? "Restore" : "Archive"}
+            </button>
+          )}
         </p>
       </div>
       <details className="facts-box">
@@ -150,6 +175,14 @@ export function SessionDetail({ session, onChanged }: { session: Session; onChan
 
       <SessionFlow session={session} onChanged={onChanged} />
 
+      <Conversation
+        sessionId={session.session_id}
+        runtime={session.runtime}
+        liveCursor={liveCursor}
+        running={sessionState(session, Date.now()).state === "running"}
+        events={events}
+      />
+
       {session.mode === "observed" && c.takeover?.enabled && (
         <form
           className="compose"
@@ -162,25 +195,18 @@ export function SessionDetail({ session, onChanged }: { session: Session; onChan
             onChanged?.();
           }}
         >
-          <label htmlFor="compose">Message</label>
-          <textarea
-            id="compose"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            rows={3}
-            placeholder="Message this session…  ⌘⏎ to send"
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) e.currentTarget.form?.requestSubmit();
-            }}
-          />
-          <p className="hint">Sending continues this session in Robin.</p>
-          <div className="actions">
-            <button type="submit" className="primary" disabled={!text.trim() || sending}>
-              Send
-            </button>
-            <button type="button" onClick={() => void archive()}>
-              {session.archived ? "Restore" : "Archive"}
-            </button>
+          <label htmlFor="compose" className="sr-only">Message</label>
+          <div className="term-input">
+            <span className="prompt" aria-hidden="true">&gt;</span>
+            <textarea
+              id="compose"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              rows={2}
+              readOnly={sending}
+              placeholder="Message this session…   ↵ send · ⇧↵ new line"
+              onKeyDown={enterSends}
+            />
           </div>
           <p className="status" role="status" aria-live="polite">
             {status}
@@ -262,25 +288,21 @@ export function SessionDetail({ session, onChanged }: { session: Session; onChan
         >
           {c.message.enabled && (
             <>
-              <label htmlFor="compose">Message</label>
-              <textarea
-                id="compose"
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                rows={3}
-                placeholder={`Message this session…${sendLabel === "Queue follow-up" ? " (a turn is running: this is queued)" : ""}  ⌘⏎ to send`}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) e.currentTarget.form?.requestSubmit();
-                }}
-              />
+              <label htmlFor="compose" className="sr-only">Message</label>
+              <div className="term-input">
+                <span className="prompt" aria-hidden="true">&gt;</span>
+                <textarea
+                  id="compose"
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  rows={2}
+                  placeholder={`Message this session…${sendLabel === "Queue follow-up" ? " (a turn is running: this is queued)" : ""}   ↵ ${sendLabel.toLowerCase()} · ⇧↵ new line`}
+                  onKeyDown={enterSends}
+                />
+              </div>
             </>
           )}
           <div className="actions">
-            {c.message.enabled && (
-              <button type="submit" className="primary" disabled={!text.trim()}>
-                {sendLabel}
-              </button>
-            )}
             <button
               type="button"
               disabled={!c.interrupt.enabled}
@@ -311,9 +333,6 @@ export function SessionDetail({ session, onChanged }: { session: Session; onChan
               {r}
             </p>
           ))}
-          {sendLabel === "Queue follow-up" && (
-            <p className="hint">{session.runtime} applies input sent during a turn after the turn ends.</p>
-          )}
           <p className="status" role="status" aria-live="polite">
             {status}
           </p>

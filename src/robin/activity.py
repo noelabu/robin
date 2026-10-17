@@ -19,8 +19,9 @@ from typing import Any
 from sqlalchemy import Connection, delete, func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from robin.events.ingest import read_payload_json
+from robin.events.ingest import read_events, read_payload_json
 from robin.redact.scanner import RuleSet, for_data_dir
+from robin.runtime import ledger
 from robin.store import Store
 from robin.store.models import Event, Meta, SessionActivity
 from robin.store.models import Session as SessionRow
@@ -64,6 +65,7 @@ PATCH_LINE = re.compile(r"^\*\*\* (Add|Update|Delete) File: (.+)$|^\*\*\* Move t
 @dataclass
 class Lane:
     title: str | None = None
+    prompt: str | None = None  # the cleaned prompt in full, for the conversation; never stored
     label: str | None = None
     tool: str | None = None
     target: str | None = None
@@ -136,6 +138,7 @@ def _title(lane: Lane, ctx: Ctx, text: Any) -> None:
     if not text or text.startswith("<"):  # command wrappers, caveats, injected context
         return
     lane.turn_started_at = ctx.at
+    lane.prompt = text
     if lane.title is None:
         lane.title = summarize(ctx.rules, text)
 
@@ -464,6 +467,90 @@ def summary(
     if event_type in NOISE_TYPES:
         return None, True
     return None, True
+
+
+CONVERSATION_EVENTS = 5000  # the newest events a conversation is built from
+MESSAGE_LIMIT = 100_000  # characters of one message shown in full
+
+
+def full_text(rules: RuleSet, text: str) -> str:
+    """A whole message, redacted before it's cut so a secret can't straddle the cut."""
+    masked = rules.redact(text[: MESSAGE_LIMIT + 4096])[0].strip()
+    return masked if len(masked) <= MESSAGE_LIMIT else masked[:MESSAGE_LIMIT] + "\n\n… (truncated)"
+
+
+def conversation(store: Store, session_id: str) -> list[dict[str, Any]]:
+    """The session as a chat: the user's prompts and the assistant's replies in full (redacted), with
+    the tool calls between them grouped as one-line summaries. Oldest first. Only the main thread:
+    subagents' own prompts and reports stay on their cards."""
+    rules = for_data_dir(store.data_dir)
+    with store.reader.connect() as conn:
+        cwd = conn.execute(
+            select(SessionRow.execution_cwd).where(SessionRow.session_id == session_id)
+        ).scalar()
+    events = read_events(store, session_id=session_id, limit=CONVERSATION_EVENTS, latest=True)
+    out: list[dict[str, Any]] = []
+
+    def prompt(text: str, at: datetime) -> None:
+        text = full_text(rules, text)
+        # A hook and the transcript both report a prompt, with at most tool calls between the two
+        # reports; the same words sent again after a reply are a new prompt.
+        last = next((m for m in reversed(out) if m["role"] != "tools"), None)
+        if last is None or last["role"] != "user" or last["text"] != text:
+            out.append({"role": "user", "at": at.isoformat(), "text": text})
+
+    # Prompts sent through Robin: runtimes don't always echo them back as events.
+    with store.reader.connect() as conn:
+        sent = [
+            (a.requested_at, str(a.payload.get("text") or a.payload.get("prompt") or ""))
+            for a in ledger.for_session(conn, session_id, ("launch", "message", "takeover"))
+            if a.state not in ("failed", "cancelled") and (a.payload.get("text") or a.payload.get("prompt"))
+        ]
+    if events:  # only what falls inside the window of events shown
+        first = events[0].source_time or events[0].ingested_at
+        sent = [(at, t) for at, t in sent if at >= first]
+    for e in events:
+        at = e.source_time or e.ingested_at
+        while sent and sent[0][0] <= at:
+            prompt(sent[0][1], sent[0][0])
+            sent.pop(0)
+        if e.event_type not in ("message.user", "message.completed", "tool.started", "tool.error"):
+            continue
+        if lane_of(e.source_id):
+            continue
+        at = e.source_time or e.ingested_at
+        try:
+            payload = read_payload_json(store, e.global_cursor)
+        except (ValueError, OSError):
+            continue
+        if not isinstance(payload, dict) or payload.get("type") == "response_item":  # Codex repeats
+            continue
+        when = at.isoformat()
+        if e.event_type == "message.user":
+            lane = Lane()
+            fold(lane, Ctx(rules, cwd, at), e.event_type, payload)
+            if lane.prompt:
+                prompt(lane.prompt, at)
+        elif e.event_type == "message.completed":
+            reply = _assistant_text(payload)
+            if not reply or not reply.strip():
+                continue
+            if out and out[-1]["role"] == "assistant":  # one reply split over several records
+                out[-1]["text"] = full_text(rules, out[-1]["text"] + "\n\n" + reply)
+            else:
+                out.append({"role": "assistant", "at": when, "text": full_text(rules, reply)})
+        else:
+            line, noise = summary(rules, cwd, e.runtime, e.event_type, payload, at)
+            if not line or noise:
+                continue
+            if out and out[-1]["role"] == "tools":
+                if out[-1]["items"][-1] != line:  # a hook and the transcript both report a call
+                    out[-1]["items"].append(line)
+            else:
+                out.append({"role": "tools", "at": when, "items": [line]})
+    for at, text in sent:  # sent after the newest event
+        prompt(text, at)
+    return out
 
 
 def summaries(store: Store, events: list[Any]) -> list[tuple[str | None, bool]]:

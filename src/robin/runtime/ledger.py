@@ -99,6 +99,16 @@ def get(conn: Connection, action_id: str) -> Action | None:
     return _row_to_action(row) if row else None
 
 
+def for_session(conn: Connection, session_id: str, types: tuple[str, ...]) -> list[Action]:
+    """A session's actions of these types, oldest first."""
+    rows = conn.execute(
+        select(ControlAction)
+        .where(ControlAction.session_id == session_id, ControlAction.action_type.in_(types))
+        .order_by(ControlAction.requested_at)
+    ).mappings()
+    return [_row_to_action(r) for r in rows]
+
+
 def create(
     conn: Connection,
     *,

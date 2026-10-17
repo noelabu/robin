@@ -612,3 +612,24 @@ def test_paging_from_a_cursor_skips_nothing_when_sessions_are_archived_meanwhile
     assert c.get("/api/v1/sessions?before_id=x").status_code == 422  # both halves of the cursor, or neither
     naive = c.get("/api/v1/sessions?before_id=x&before_updated_at=2026-10-15T00:00:00")
     assert naive.status_code == 422
+
+
+def test_conversation_through_the_api(service):
+    from test_context import FAKE_TOKEN, observed_session_with
+
+    store, port, auth = service
+    c = browser(port, auth)
+    sid = observed_session_with(
+        store,
+        [
+            ("message.user", {"type": "user_message", "text": "hello"}),
+            ("message.completed", {"type": "message_completed", "text": f"key {FAKE_TOKEN}"}),
+        ],
+    )
+    r = c.get(f"/api/v1/sessions/{sid}/conversation")
+    assert r.status_code == 200
+    assert [(m["role"], m["text"]) for m in r.json()["messages"]] == [
+        ("user", "hello"),
+        ("assistant", "key [REDACTED:github-pat]"),
+    ]
+    assert c.get("/api/v1/sessions/nope/conversation").status_code == 404
