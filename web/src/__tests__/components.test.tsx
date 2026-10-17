@@ -3,7 +3,7 @@ import { beforeEach, vi } from "vitest";
 import type { Session } from "../api";
 import { ActivityFeed } from "../components/ActivityFeed";
 import { SessionDetail } from "../components/SessionDetail";
-import { SessionList } from "../components/SessionList";
+import { GROUP, ROW, SessionList } from "../components/SessionList";
 import type { FeedItem } from "../useWorkspace";
 
 const session = (over: Partial<Session> = {}): Session => ({
@@ -23,6 +23,9 @@ const session = (over: Partial<Session> = {}): Session => ({
   archived: false,
   branch: "main",
   shared_folder_with: [],
+  title: null,
+  cluster: "/work/app",
+  last_activity_at: null,
   independence: null,
   created_at: "2026-10-15T00:00:00Z",
   updated_at: "2026-10-15T00:00:00Z",
@@ -111,10 +114,11 @@ test("evidence kinds are labelled separately and can be filtered", async () => {
     feedItem({ event_id: "b", global_cursor: 1, evidence_kind: "inferred", event_type: "session.state_changed" }),
   ];
   render(<ActivityFeed items={items} scope={{}} sessions={{}} ready />);
-  expect(await screen.findByText("session.state_changed")).toBeTruthy();
+  fireEvent.click(await screen.findByLabelText("Show all events"));
+  expect((await screen.findAllByText("session.state_changed")).length).toBeGreaterThan(0);
   fireEvent.change(screen.getByLabelText("Evidence"), { target: { value: "reported" } });
-  expect(screen.queryByText("session.state_changed")).toBeNull();
-  expect(screen.getByText("message.completed")).toBeTruthy();
+  expect(screen.queryAllByText("session.state_changed")).toHaveLength(0);
+  expect(screen.getAllByText("message.completed").length).toBeGreaterThan(0);
 });
 
 test("a session sharing its folder warns about collisions and shows its branch", () => {
@@ -140,18 +144,18 @@ test("an independent review says whether it is isolated", () => {
 test("a long session list renders only the rows in view, and scrolling moves the window", () => {
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(640);
   const many = Array.from({ length: 5000 }, (_, i) =>
-    session({ session_id: `s${i}`, execution_cwd: `/work/app${i}`, mode: "observed", branch: null }),
+    session({ session_id: `s${i}`, title: `task ${i}`, execution_cwd: `/work/app${i}`, mode: "observed", branch: null }),
   );
   const onSelect = vi.fn();
   const { container, rerender } = render(<SessionList sessions={many} selected={null} onSelect={onSelect} />);
   expect(container.querySelectorAll("li").length).toBeLessThan(40);
-  expect(screen.getByText("app0")).toBeTruthy();
-  expect(screen.queryByText("app2600")).toBeNull();
+  expect(screen.getByText("task 0")).toBeTruthy();
+  expect(screen.queryByText("task 2600")).toBeNull();
   rerender(<SessionList sessions={many} selected="s2600" onSelect={onSelect} />);
 
-  fireEvent.scroll(container.querySelector(".session-scroll")!, { target: { scrollTop: 2600 * 64 } });
-  expect(screen.queryByText("app0")).toBeNull();
-  const row = screen.getByText("app2600").closest("button")!;
+  fireEvent.scroll(container.querySelector(".session-scroll")!, { target: { scrollTop: GROUP + 2600 * ROW } });
+  expect(screen.queryByText("task 0")).toBeNull();
+  const row = screen.getByText("task 2600").closest("button")!;
   expect(row.getAttribute("aria-current")).toBe("true");
   fireEvent.click(row);
   expect(onSelect).toHaveBeenCalledWith("s2600");
@@ -171,7 +175,7 @@ test("the session list is one tab stop and the keyboard reaches every session", 
   expect(document.activeElement?.textContent).toContain("app198");
   fireEvent.keyDown(document.activeElement!, { key: "Home" });
   expect(document.activeElement?.textContent).toContain("app0");
-  expect(container.querySelector("li")!.getAttribute("aria-setsize")).toBe("200");
+  expect(container.querySelector("li[aria-setsize]")!.getAttribute("aria-setsize")).toBe("200");
   vi.restoreAllMocks();
 });
 
@@ -185,4 +189,73 @@ test("a disabled control's reason is shown as text, not only a tooltip", () => {
   const s = session();
   render(<SessionDetail session={{ ...s, controls: { ...s.controls, stop: { enabled: false, reason: "Already stopping" } } }} />);
   expect(screen.getByText("Already stopping")).toBeTruthy();
+});
+
+test("the session list groups by folder and shows each session's title, state and age", () => {
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(640);
+  const recent = new Date(Date.now() - 5_000).toISOString();
+  const list = [
+    session({ session_id: "a", title: "Fix the login test", cluster: "/r/app", runtime_state: "unknown", mode: "observed", last_activity_at: recent }),
+    session({ session_id: "b", title: null, cluster: "/r/api", runtime: "codex", runtime_state: "idle" }),
+    session({ session_id: "c", title: "Ship it", cluster: "/r/app", runtime_state: "waiting_for_input" }),
+  ];
+  const { container } = render(<SessionList sessions={list} selected={null} onSelect={() => {}} />);
+  const rows = [...container.querySelectorAll(".session-group, .session-item .title")].map((n) => n.textContent);
+  expect(rows).toEqual(["app2", "Fix the login test", "Ship it", "api1", "codex · b"]);
+  const inferred = screen.getByText("Fix the login test").closest("button")!;
+  expect(inferred.textContent).toContain("Working");
+  expect(inferred.textContent).toContain("guess");
+  expect(inferred.querySelector("[title='Inferred from recent activity']")).toBeTruthy();
+  expect(screen.getByText("Ship it").closest("button")!.textContent).toContain("Needs input");
+  vi.restoreAllMocks();
+});
+
+test("a session started outside Robin is read-only, with its resume command and Archive", () => {
+  render(<SessionDetail session={session({ mode: "observed", native_session_id: "abc-1", title: "Review it" })} />);
+  expect(screen.getByRole("heading", { name: /Review it/ })).toBeTruthy();
+  expect(screen.getByText(/Read-only here/)).toBeTruthy();
+  expect(screen.getByText("claude --resume abc-1")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Archive" })).toBeTruthy();
+  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Interrupt" })).toBeNull();
+});
+
+test("a managed session that can't take messages hides the box but keeps its controls", () => {
+  const s = session({ connection_state: "disconnected" });
+  render(<SessionDetail session={{ ...s, controls: { ...s.controls, message: { enabled: false, reason: "session is disconnected" } } }} />);
+  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(screen.getByRole("button", { name: "Interrupt" })).toBeTruthy();
+  expect(screen.getByText(/Controls unavailable: session is disconnected/)).toBeTruthy();
+});
+
+test("the timeline hides noise until asked and groups a session's events into turns", async () => {
+  const items = [
+    feedItem({ event_id: "p2", global_cursor: 6, event_type: "message.user", preview: "You: make it violet" }),
+    feedItem({ event_id: "n", global_cursor: 5, event_type: "unknown.raw", event_family: "unknown", preview: null, noise: true }),
+    feedItem({ event_id: "d", global_cursor: 4, event_type: "session.turn_completed", event_family: "session", preview: "Turn completed" }),
+    feedItem({ event_id: "t", global_cursor: 3, event_type: "tool.started", event_family: "tool", preview: "Bash npm test" }),
+    feedItem({ event_id: "p1", global_cursor: 2, event_type: "message.user", preview: "You: fix the test" }),
+  ];
+  const { container } = render(<ActivityFeed items={items} scope={{ session_id: "s1" }} sessions={{ s1: session() }} ready />);
+  await screen.findByText("You: make it violet");
+  const turns = [...container.querySelectorAll(".feed-turn > h3 span")].map((n) => n.textContent);
+  expect(turns).toEqual(["You: make it violet", "You: fix the test"]); // newest turn first
+  const first = container.querySelectorAll(".feed-turn")[1];
+  expect([...first.querySelectorAll(".feed-item .preview")].map((n) => n.textContent)).toEqual(["Bash npm test", "Turn completed"]);
+  expect(screen.queryByText("unknown.raw")).toBeNull();
+  fireEvent.click(screen.getByLabelText("Show all events"));
+  expect(screen.getAllByText("unknown.raw").length).toBeGreaterThan(0);
+});
+
+test("session titles with markup render as text", () => {
+  const H = '<img src=x onerror="alert(1)"><script>alert(2)</script>';
+  const s = session({ title: H });
+  const { container } = render(
+    <>
+      <SessionList sessions={[s]} selected={null} onSelect={() => {}} />
+      <SessionDetail session={s} />
+    </>,
+  );
+  expect(container.querySelector("img, script")).toBeNull();
+  expect(container.textContent).toContain("<script>");
 });

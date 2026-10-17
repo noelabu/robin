@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import Connection, func, select
+from sqlalchemy.orm import aliased
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from robin import activity, retrieval
@@ -31,7 +32,7 @@ from robin.runtime.capabilities import RUNTIME_CAPABILITIES, capabilities_for
 from robin.runtime.ledger import Action, ActionConflict, ActionRejected
 from robin.service.auth import COOKIE, CSRF_HEADER, Auth
 from robin.service.runtime import ServiceRuntime
-from robin.store.models import Event
+from robin.store.models import Event, SessionActivity
 from robin.store.models import Session as SessionRow
 from robin.workspace import folders, worktrees
 from robin.workspace import tasks as ws
@@ -121,6 +122,10 @@ class ExchangeBody(BaseModel):
 CONTROL_TYPES = ("message", "interrupt", "stop", "approval", "handoff", "reclaim", "resume")
 
 
+def _iso(value: Any) -> str | None:
+    return value.isoformat() if value is not None and hasattr(value, "isoformat") else value
+
+
 def session_view(r: Any, shared: list[str] | None = None) -> dict[str, Any]:
     caps = capabilities_for(r["runtime"])
     controls = {}
@@ -162,6 +167,9 @@ def session_view(r: Any, shared: list[str] | None = None) -> dict[str, Any]:
         "independence": r["independence"],
         "branch": None if r["archived"] else folders.branch_of(r["execution_cwd"]),
         "shared_folder_with": shared or [],
+        "title": r.get("title"),
+        "cluster": activity.cluster_of(r["execution_cwd"]),
+        "last_activity_at": _iso(r.get("last_activity_at")),
         "created_at": r["created_at"].isoformat(),
         "updated_at": r["updated_at"].isoformat(),
         "controls": controls,
@@ -192,7 +200,22 @@ def _sessions(
     offset: int = 0,
 ) -> list[dict[str, Any]]:
     # session_id breaks ties so offset pages never overlap or skip
-    q = select(SessionRow).order_by(SessionRow.updated_at.desc(), SessionRow.session_id.desc())
+    # The Map's derived title and last activity ride along: one primary-key lookup per row.
+    lanes = aliased(SessionActivity)
+    last = (
+        select(func.max(lanes.last_activity_at))
+        .where(lanes.session_id == SessionRow.session_id)
+        .correlate(SessionRow)
+        .scalar_subquery()
+    )
+    q = (
+        select(SessionRow, SessionActivity.title.label("title"), last.label("last_activity_at"))
+        .outerjoin(
+            SessionActivity,
+            (SessionActivity.session_id == SessionRow.session_id) & (SessionActivity.lane == ""),
+        )
+        .order_by(SessionRow.updated_at.desc(), SessionRow.session_id.desc())
+    )
     if session_id:
         q = q.where(SessionRow.session_id == session_id)
     for clause in where:

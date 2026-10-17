@@ -130,6 +130,7 @@ export const Canvas = forwardRef<
         if (e.key === "+" || e.key === "=") zoomBy(1.2);
         else if (e.key === "-") zoomBy(1 / 1.2);
         else if (e.key === "0") fit();
+        else if (e.key === "Escape") onBackground(); // closes an open card
       }}
     >
       <div className="map-zoom" role="group" aria-label="Zoom">

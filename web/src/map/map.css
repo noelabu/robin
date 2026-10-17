@@ -1,22 +1,5 @@
-/* The Map is always dark, whatever the system theme; the Sessions view keeps its own tokens. */
+/* The Map's layout and components. Colours come from the app-wide tokens in styles.css. */
 .map {
-  --m-bg: #0c0a12;
-  --m-canvas: #100d17;
-  --m-dot: #2a2338;
-  --m-panel: #15121d;
-  --m-card: #1a1624;
-  --m-card-sub: #16131f;
-  --m-line: #2b2538;
-  --m-line-hi: #3b3350;
-  --m-ink: #eeeaf8;
-  --m-muted: #a69ec0;
-  --m-faint: #8e86a8;
-  --m-accent: #b197fc;
-  --m-amber: #e9a23b;
-  --m-ok: #6fcf8a;
-  --m-wait: #79b8ff;
-  --m-bad: #f08a8a;
-  --m-focus: #79b8ff;
   color-scheme: dark;
   display: grid;
   grid-template-rows: 56px 1fr;
@@ -57,8 +40,8 @@ button.map-pill.need { background: #251536; border: 1px solid #4a2a6b; color: #f
 .view-tabs { display: flex; gap: 2px; padding-right: 14px; }
 .view-tabs button { padding: 6px 12px; border-radius: 7px; color: var(--m-muted); font-size: 12.5px; }
 .view-tabs button[aria-selected="true"] { background: #241e31; color: var(--m-ink); box-shadow: inset 0 0 0 1px var(--m-line-hi); }
-.topbar .view-tabs button { color: var(--muted); background: none; border: 0; }
-.topbar .view-tabs button[aria-selected="true"] { color: var(--ink); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
+.topbar .view-tabs button { color: var(--m-muted); background: none; border: 0; padding: 6px 12px; }
+.topbar .view-tabs button[aria-selected="true"] { background: #241e31; color: var(--m-ink); box-shadow: inset 0 0 0 1px var(--m-line-hi); }
 
 /* -- sidebar ------------------------------------------------------------------ */
 .map-side { border-right: 1px solid var(--m-line); display: flex; flex-direction: column; min-height: 0; }
@@ -113,7 +96,6 @@ button.map-pill.need { background: #251536; border: 1px solid #4a2a6b; color: #f
 .map-card:hover { border-color: #5f5378; }
 .map-card.sub { background: var(--m-card-sub); padding-bottom: 10px; }
 .map-card.running { border-color: #6a4bc4; box-shadow: 0 0 0 1px #b197fc33, 0 8px 22px #0008; }
-.map-card[aria-pressed="true"] { border-color: var(--m-accent); }
 .map-card .meta { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
 .map-card .rt { font: 10px var(--mono); color: var(--m-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .map-card h3 {
@@ -223,3 +205,71 @@ button.map-pill.need { background: #251536; border: 1px solid #4a2a6b; color: #f
   .map-side { max-height: 28vh; border-right: 0; border-bottom: 1px solid var(--m-line); }
   .map-now, .map-hints { display: none; }
 }
+
+/* -- tasks under an open card (agenttrail style) ----------------------------------------------------- */
+.task-panel {
+  position: relative; border-radius: 9px; background: #17131f; border: 1px solid var(--m-line-hi);
+  box-shadow: 0 10px 28px #000a; overflow: hidden; cursor: default; text-align: left; z-index: 2;
+  animation: tp-drop .16s ease-out;
+}
+@keyframes tp-drop { from { opacity: 0; transform: translateY(-6px); } }
+.tp-tasks { list-style: none; margin: 0; padding: 0; }
+.tp-task { border-bottom: 1px solid var(--m-line); }
+.tp-task:last-child { border-bottom: 0; }
+.tp-task > button {
+  display: grid; grid-template-columns: 18px 1fr auto 10px; gap: 8px; align-items: center; width: 100%;
+  padding: 9px 10px; font-size: 11.5px; text-align: left;
+}
+.tp-task > button:hover { background: #1c1726; }
+.tp-task .ic { width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center; font: 600 9px var(--mono); }
+.tp-task.completed .ic { background: #2c6e3e; }
+.tp-task.in_progress .ic { border: 2px solid var(--m-accent); border-right-color: transparent; color: var(--m-accent); }
+.tp-task.pending .ic { border: 1.5px solid #6c628a; color: var(--m-faint); }
+.tp-task .tx { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.tp-task.completed .tx { color: #d9d3ea; }
+.tp-task .pill { font-size: 10px; padding: 2px 7px; border-radius: 10px; white-space: nowrap; }
+.tp-task.completed .pill { background: #16301f; color: #9fe0b1; }
+.tp-task.in_progress .pill { background: #241a3d; color: #d8ccff; }
+.tp-task.pending .pill { background: #1f1b29; color: var(--m-faint); }
+.tp-task .chev { color: var(--m-faint); font-size: 10px; transition: transform .15s; }
+.tp-task > button[aria-expanded="true"] .chev { transform: rotate(180deg); }
+.tp-files { list-style: none; margin: 0; padding: 0 10px 8px 36px; }
+.tp-plain .tp-files { padding-left: 10px; }
+.tp-files li {
+  display: flex; justify-content: space-between; gap: 8px; padding: 3px 0 3px 10px;
+  border-left: 1px solid var(--m-line-hi); font: 10.5px var(--mono); color: var(--m-muted);
+}
+.tp-plain .tp-files li { border-left: 0; padding-left: 0; }
+.tp-files li span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.tp-files li span:last-child { color: var(--m-faint); flex: none; }
+.tp-files li.hot span:first-child { color: var(--m-ink); }
+.tp-files li.none { color: var(--m-faint); }
+.tp-none { margin: 0; padding: 0 10px 8px 46px; color: var(--m-faint); font-size: 11px; }
+.tp-plain .tp-none { padding-left: 10px; }
+.tp-plain h4 {
+  margin: 0; padding: 9px 10px 6px; display: flex; justify-content: space-between; font-size: 10px; font-weight: 600;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--m-muted);
+}
+.tp-note { margin: 0; padding: 8px 10px; color: var(--m-faint); font-size: 11.5px; }
+.tp-acts { display: flex; gap: 6px; padding: 8px 10px; background: #15121d; border-top: 1px solid var(--m-line); }
+.tp-acts button { padding: 4px 9px; border-radius: 6px; border: 1px solid var(--m-line-hi); font-size: 11px; color: var(--m-muted); }
+.tp-acts button:hover { color: var(--m-ink); }
+.tp-acts button.primary { background: var(--m-ink); color: #120d1f; border-color: var(--m-ink); }
+.tp-acts button.danger { color: var(--m-bad); }
+.map-card.open { border-color: var(--m-accent); }
+.map-card.open .foot { color: var(--m-accent); }
+.map-wires path.stem { stroke: #5f5378; stroke-dasharray: 2 4; }
+
+/* -- one session's cards in the Sessions tab ------------------------------------------------------ */
+.flow { margin-top: 14px; }
+.flow-h {
+  display: flex; justify-content: space-between; gap: 12px; margin-bottom: 8px; font-size: 11px; font-weight: 600;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--m-faint);
+}
+.flow-h span:last-child { letter-spacing: 0; text-transform: none; font-weight: 400; }
+.flow-canvas {
+  position: relative; overflow-x: auto; overflow-y: hidden; border-radius: 10px; border: 1px solid var(--m-line);
+  background-color: var(--m-canvas); background-image: radial-gradient(var(--m-dot) 1px, transparent 1.2px); background-size: 22px 22px;
+}
+.flow-canvas .map-card { color: var(--m-ink); }
+.flow-canvas .task-panel { z-index: 3; }

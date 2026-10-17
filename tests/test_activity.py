@@ -463,3 +463,42 @@ def test_summaries_are_redacted(store):
     texts = [t for _, t, _ in _summaries(store, sid)]
     assert all(t and FAKE_TOKEN not in t for t in texts)
     assert sum("[REDACTED:github-pat]" in t for t in texts) >= 5
+
+
+def test_file_edits_are_credited_to_the_task_in_progress(store):
+    def todos(*statuses):
+        names = ("Plan", "Build", "Ship")
+        return {"todos": [{"content": n, "status": s} for n, s in zip(names, statuses, strict=False)]}
+
+    def edit(path):
+        return ("tool.started", {"type": "tool_started", "tool": "Edit", "input": {"file_path": path}})
+
+    observed_session_with(
+        store,
+        [
+            edit("/r/early.py"),  # no task in progress yet: unattributed
+            (
+                "tool.started",
+                {"type": "tool_started", "tool": "TodoWrite", "input": todos("in_progress", "pending")},
+            ),
+            edit("/r/plan.md"),
+            (
+                "tool.started",
+                {"type": "tool_started", "tool": "TodoWrite", "input": todos("completed", "in_progress")},
+            ),
+            edit("/r/app.py"),
+            edit("/r/app.py"),
+            edit("/r/util.py"),
+        ],
+    )
+    activity.catch_up(store)
+    main = rows(store)[""]
+    plan, build = json.loads(main.todos)
+    assert [f["path"] for f in plan["files"]] == ["/r/plan.md"]  # kept across the TodoWrite rewrite
+    assert [(f["path"], f["n"]) for f in build["files"]] == [("/r/util.py", 1), ("/r/app.py", 2)]
+    assert [f["path"] for f in json.loads(main.files)] == [
+        "/r/util.py",
+        "/r/app.py",
+        "/r/plan.md",
+        "/r/early.py",
+    ]

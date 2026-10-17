@@ -16,6 +16,7 @@ import { useWorkspace } from "./useWorkspace";
 
 const ACTIVE_FIRST = (a: Session, b: Session) => b.updated_at.localeCompare(a.updated_at);
 const VIEW_KEY = "robin.view";
+const PROJECTS_KEY = "robin.projects";
 
 type View = "map" | "sessions";
 
@@ -42,6 +43,21 @@ function ViewTabs({ view, onView }: { view: View; onView: (v: View) => void }) {
 export function App() {
   const [auth, setAuth] = useState<"checking" | "ok" | "signed_out">("checking");
   const [view, setViewState] = useState<View>(savedView);
+  const [projectsOpen, setProjectsOpen] = useState(() => {
+    try {
+      return localStorage.getItem(PROJECTS_KEY) === "open";
+    } catch {
+      return false;
+    }
+  });
+  const rememberProjects = (open: boolean) => {
+    setProjectsOpen(open);
+    try {
+      localStorage.setItem(PROJECTS_KEY, open ? "open" : "closed");
+    } catch {
+      /* not remembered */
+    }
+  };
   const setView = (v: View) => {
     setViewState(v);
     try {
@@ -160,13 +176,21 @@ export function App() {
           void ws.ensure(id).catch(() => setNotice("That session couldn't be loaded."));
         }}
         onOpenAttention={() => setView("sessions")}
+        onChanged={() => void ws.reload()}
       />
     );
 
   return (
     <div className="shell">
       <header className="topbar">
-        <h1 className="brand">Robin</h1>
+        <h1 className="brand">
+          <span className="brand-mark" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#111" strokeWidth="2.4" strokeLinecap="round">
+              <path d="M5 19 12 5l7 14M8.5 13h7" />
+            </svg>
+          </span>
+          Robin
+        </h1>
         {tabs}
         <SearchBox
           onOpenSession={(id) => {
@@ -175,6 +199,7 @@ export function App() {
           }}
           onOpenTask={(id) => choose({ kind: "task", id })}
         />
+        <span className="spacer" />
         <span className={`pill ${ws.supervisorConnected ? "ok" : "warn"}`} role="status">
           Supervisor {ws.supervisorConnected ? "connected" : "unavailable"}
         </span>
@@ -200,14 +225,21 @@ export function App() {
         </button>
       </header>
       <nav className="sidebar" aria-label="Projects and sessions">
-        <Navigator
-          projects={ws.projects}
-          tasks={ws.tasks}
-          scope={scope}
-          showArchived={showArchived}
-          onScope={choose}
-          onChanged={() => void ws.reload()}
-        />
+        <details
+          className="projects"
+          open={projectsOpen || scope.kind !== "all"}
+          onToggle={(e) => rememberProjects(e.currentTarget.open)}
+        >
+          <summary>Projects and tasks</summary>
+          <Navigator
+            projects={ws.projects}
+            tasks={ws.tasks}
+            scope={scope}
+            showArchived={showArchived}
+            onScope={choose}
+            onChanged={() => void ws.reload()}
+          />
+        </details>
         <div className="filters">
           <label className="inline">
             Runtime

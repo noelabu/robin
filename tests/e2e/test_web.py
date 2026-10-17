@@ -25,7 +25,10 @@ def launch_browser(p):
 
 def sessions_view(page):
     """These tests drive the Sessions view; the dashboard remembers it, the way a returning user has it."""
-    page.add_init_script("try { localStorage.setItem('robin.view', 'sessions') } catch (e) {}")
+    page.add_init_script(
+        "try { localStorage.setItem('robin.view', 'sessions');"
+        " localStorage.setItem('robin.projects', 'open') } catch (e) {}"
+    )
     return page
 
 
@@ -70,10 +73,10 @@ def test_sign_in_watch_and_control_a_session(running):
             },
         )
         assert r.status_code == 202
-        expect(page.locator(".session-item").first).to_contain_text("Running", timeout=10_000)
+        expect(page.locator(".session-item").first).to_contain_text("Working", timeout=10_000)
         page.locator(".session-item").first.click()
         expect(page.locator(".feed-item").first).to_be_visible(timeout=10_000)
-        expect(page.get_by_text("session.turn_started")).to_be_visible()
+        expect(page.get_by_text("Turn started").first).to_be_visible()
 
         page.get_by_role("button", name="Interrupt").click()
         expect(page.get_by_role("status").filter(has_text="Interrupt:")).to_be_visible()
@@ -137,7 +140,7 @@ def test_approve_from_the_attention_panel(running):
         expect(item).to_contain_text("make test")
         item.get_by_role("button", name="Approve").click()
         expect(page.get_by_text("Nothing is waiting on you.")).to_be_visible(timeout=10_000)
-        expect(page.get_by_text("session.turn_started").first).to_be_visible()
+        expect(page.get_by_text("Turn started").first).to_be_visible()
         browser.close()
 
 
@@ -358,7 +361,7 @@ def test_refreshing_or_closing_the_browser_leaves_running_work_alone(running):
         page = sessions_view(browser.new_page())
         page.goto(f"http://127.0.0.1:{port}/#bootstrap={auth.new_bootstrap()}")
         expect(page.locator(".session-item").first).to_contain_text(
-            re.compile("Running|Needs input"), timeout=10_000
+            re.compile("Working|Needs input"), timeout=10_000
         )
         browser.close()
     assert len(spawned()) == 1
@@ -400,13 +403,15 @@ def test_the_map_shows_sessions_and_opens_one_in_sessions(running):
                 ".then(r => r.violations.map(v => v.id + ': ' + v.nodes.map(n => n.target).join(' ')))"
             )
             assert violations == []
-        card.click()  # 1
-        drawer = page.get_by_role("complementary")
-        expect(drawer.get_by_role("list", name="Files changed")).to_contain_text("App.tsx")
+        card.click()  # 1: its tasks (here, its changed files) open below it
+        panel = page.get_by_role("region", name="Tasks: Draw the map")
+        expect(panel).to_contain_text("App.tsx")
+        expect(card).to_contain_text("Hide tasks")
         page.keyboard.press("Escape")
+        expect(panel).to_have_count(0)
         expect(card).to_be_focused()
         card.click()
-        drawer.get_by_role("button", name="Open in Sessions").click()  # 2
+        panel.get_by_role("button", name="Open in Sessions").click()  # 2
         expect(page.get_by_role("tab", name="Sessions")).to_have_attribute("aria-selected", "true")
         expect(page.locator(".detail")).to_be_visible()
         browser.close()

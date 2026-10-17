@@ -1,0 +1,191 @@
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { api, ApiError, type FileTouch, type MapCard, type MapState, type Session, type SessionActivity } from "../api";
+import { ago } from "./time";
+
+const SHOWN_FILES = 12;
+
+function FileList({ files, now, hot }: { files: FileTouch[]; now: number; hot: boolean }) {
+  return (
+    <ul className="tp-files">
+      {files.slice(0, SHOWN_FILES).map((f, i) => (
+        <li key={f.path} className={hot && i === 0 ? "hot" : undefined}>
+          <span title={f.path}>
+            {f.path}
+            {f.n && f.n > 1 ? ` ×${f.n}` : ""}
+          </span>
+          <span>{ago(f.at, now)}</span>
+        </li>
+      ))}
+      {files.length > SHOWN_FILES && <li className="none">and {files.length - SHOWN_FILES} more</li>}
+    </ul>
+  );
+}
+
+/**
+ * A card's tasks, opened right under it on the canvas: each task with its status, and the files edited
+ * while it was in progress. Sessions without a task list show their changed files instead.
+ */
+export function TaskPanel(props: {
+  card: MapCard;
+  state: MapState;
+  session?: Session;
+  now: number;
+  onHeight: (h: number) => void;
+  onOpenSession?: (sessionId: string) => void;
+  onChanged?: () => void;
+  onClose: () => void;
+  actions?: boolean; // the Sessions tab has its own controls
+}) {
+  const { card, now } = props;
+  const [detail, setDetail] = useState<SessionActivity | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  const [open, setOpen] = useState<Set<string> | null>(null); // null: the task in progress starts open
+  const box = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let live = true;
+    api
+      .sessionActivity(card.session_id)
+      .then((d) => live && (setDetail(d), setError(null)))
+      .catch((e) => live && setError(e instanceof Error ? e.message : String(e)));
+    return () => {
+      live = false;
+    };
+  }, [card.session_id, card.last_activity_at]);
+
+  // The canvas makes room below the card for whatever height this panel ends up.
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const report = () => props.onHeight(el.offsetHeight);
+    report();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(report) : null;
+    ro?.observe(el);
+    return () => ro?.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const laneId = card.parent ? card.id.slice(card.session_id.length + 1) : "";
+  const lane = detail?.lanes.find((l) => l.lane === laneId);
+  const todos = lane?.todos ?? [];
+  const expanded = open ?? new Set(todos.filter((t) => t.status === "in_progress").map((t) => t.id));
+  const toggle = (id: string) => {
+    const next = new Set(expanded);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setOpen(next);
+  };
+  const s = props.session;
+
+  async function stop() {
+    if (!s || !window.confirm(`Stop the ${s.runtime} session in ${s.execution_cwd}? This ends the runtime process.`)) return;
+    setStatus("Stopping…");
+    try {
+      const { action } = await api.act(s.session_id, { type: "stop" });
+      setStatus(`Stop: ${action.state}`);
+      props.onChanged?.();
+    } catch (e) {
+      setStatus(e instanceof ApiError ? `Stop not sent: ${e.message}` : "Stop failed");
+    }
+  }
+
+  async function archive() {
+    const archived = !!s?.archived;
+    try {
+      await api.archiveSession(card.session_id, !archived);
+      props.onChanged?.();
+      if (!archived) props.onClose(); // archived sessions leave the map
+      else setStatus("Restored");
+    } catch (e) {
+      setStatus(e instanceof ApiError ? `Archive failed: ${e.message}` : "Archive failed");
+    }
+  }
+
+  return (
+    <div
+      className="task-panel"
+      ref={box}
+      role="region"
+      aria-label={`Tasks: ${card.title ?? card.runtime}`}
+      onPointerDown={(e) => e.stopPropagation()}
+      onPointerUp={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") props.onClose();
+      }}
+    >
+      {error && <p className="tp-note">Couldn&apos;t load this session&apos;s activity: {error}</p>}
+      {!card.detail ? (
+        <p className="tp-note">Robin doesn&apos;t read tasks or file edits for {card.runtime} yet.</p>
+      ) : !detail && !error ? (
+        <p className="tp-note">Loading…</p>
+      ) : todos.length ? (
+        <ul className="tp-tasks">
+          {todos.map((t, i) => {
+            const isOpen = expanded.has(t.id);
+            const pill =
+              t.status === "completed" ? "Completed" : t.status === "in_progress" ? (props.state === "running" ? "Editing now" : "In progress") : "Pending";
+            return (
+              <li key={t.id} className={`tp-task ${t.status}`}>
+                <button aria-expanded={isOpen} onClick={() => toggle(t.id)}>
+                  <span className="ic" aria-hidden="true">
+                    {t.status === "completed" ? (
+                      <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#fff" strokeWidth="1.8">
+                        <path d="M2 5.2 4.2 7.4 8 3" />
+                      </svg>
+                    ) : (
+                      i + 1
+                    )}
+                  </span>
+                  <span className="tx">{t.text}</span>
+                  <span className="pill">{pill}</span>
+                  <span className="chev" aria-hidden="true">
+                    ⌄
+                  </span>
+                </button>
+                {isOpen &&
+                  (t.files?.length ? (
+                    <FileList files={t.files} now={now} hot={t.status === "in_progress" && props.state === "running"} />
+                  ) : (
+                    <p className="tp-none">{t.status === "pending" ? "Not started" : "No file edits"}</p>
+                  ))}
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <div className="tp-plain">
+          <h4>
+            <span>Files changed</span>
+            <span>{lane?.files_count || ""}</span>
+          </h4>
+          {lane?.files.length ? (
+            <FileList files={lane.files} now={now} hot={props.state === "running"} />
+          ) : (
+            <p className="tp-none">{lane?.current ? `Last: ${lane.current.tool} ${lane.current.target ?? ""}` : "No file edits"}</p>
+          )}
+        </div>
+      )}
+      {props.actions !== false && !card.parent && (props.onOpenSession || s) && (
+        <div className="tp-acts">
+          {props.onOpenSession && (
+            <button className="primary" onClick={() => props.onOpenSession!(card.session_id)}>
+              Open in Sessions
+            </button>
+          )}
+          {s?.controls.stop.enabled && (
+            <button className="danger" onClick={() => void stop()}>
+              Stop
+            </button>
+          )}
+          <button onClick={() => void archive()}>{s?.archived ? "Restore" : "Archive"}</button>
+        </div>
+      )}
+      {status && (
+        <p className="tp-note" role="status">
+          {status}
+        </p>
+      )}
+    </div>
+  );
+}

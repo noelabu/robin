@@ -53,9 +53,9 @@ export function Card(props: {
   const title = card.title || `${card.runtime} · ${card.session_id.slice(0, 8)}`;
   return (
     <button
-      className={`map-card ${sub ? "sub" : ""} ${state}`}
+      className={`map-card ${sub ? "sub" : ""} ${state} ${props.selected ? "open" : ""}`}
       style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
-      aria-pressed={props.selected}
+      aria-expanded={props.selected}
       data-card={card.id}
       onClick={(e) => {
         e.stopPropagation();
@@ -90,7 +90,8 @@ export function Card(props: {
             <i style={t ? { width: `${(t.done / t.total) * 100}%` } : undefined} />
           </span>
           <span className="foot">
-            Show detail ›{card.subagents_hidden > 0 && ` · ${card.subagents_hidden} more subagents`}
+            {props.selected ? "Hide tasks ↑" : "Show tasks ↓"}
+            {card.subagents_hidden > 0 && ` · ${card.subagents_hidden} more subagents`}
           </span>
         </>
       )}

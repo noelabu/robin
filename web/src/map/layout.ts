@@ -1,7 +1,8 @@
 import type { MapCard, MapCluster } from "../api";
 
-export const CARD = { w: 248, h: 128 };
-export const SUB = { w: 212, h: 86 };
+export const CARD = { w: 272, h: 128 };
+export const SUB = { w: 228, h: 86 };
+export const PANEL_GAP = 8; // between a card and its open task panel
 const GAP = 16;
 const COL_GAP = 72;
 const PAD = 24;
@@ -21,7 +22,12 @@ export type Layout = { cards: Record<string, Rect>; frames: Frame[]; edges: Edge
  * Clusters are packed left to right in rows (shelf packing), in the order given. Inside a cluster, sessions
  * stack in columns in the server's order, wrapping past COLUMN_HEIGHT; each session's subagents stack beside it.
  */
-export function layout(order: string[], clusters: MapCluster[], cards: MapCard[]): Layout {
+export function layout(
+  order: string[],
+  clusters: MapCluster[],
+  cards: MapCard[],
+  below: Record<string, number> = {}, // card id -> height of the task panel open under it
+): Layout {
   const byKey = new Map(clusters.map((c) => [c.key, c]));
   const mains = new Map<string, MapCard[]>();
   const subs = new Map<string, MapCard[]>();
@@ -56,13 +62,17 @@ export function layout(order: string[], clusters: MapCluster[], cards: MapCard[]
       bottom = Math.max(bottom, colY - GAP);
       return at;
     };
+    const room = (id: string) => (below[id] ? below[id] + PANEL_GAP : 0);
     for (const card of list) {
       const kids = subs.get(card.session_id) ?? [];
-      const at = slot(CARD.w + (kids.length ? COL_GAP + SUB.w : 0), Math.max(CARD.h, kids.length * (SUB.h + GAP) - GAP));
+      const kidsH = kids.reduce((h, k) => h + SUB.h + room(k.id) + GAP, 0) - (kids.length ? GAP : 0);
+      const at = slot(CARD.w + (kids.length ? COL_GAP + SUB.w : 0), Math.max(CARD.h + room(card.id), kidsH));
       placed[card.id] = { x: at.x, y: at.y, w: CARD.w, h: CARD.h };
-      kids.forEach((k, i) => {
-        placed[k.id] = { x: at.x + CARD.w + COL_GAP, y: at.y + i * (SUB.h + GAP), w: SUB.w, h: SUB.h };
-      });
+      let ky = at.y;
+      for (const k of kids) {
+        placed[k.id] = { x: at.x + CARD.w + COL_GAP, y: ky, w: SUB.w, h: SUB.h };
+        ky += SUB.h + room(k.id) + GAP;
+      }
     }
     const hidden = cluster.sessions - cluster.shown;
     const moreAt = hidden > 0 ? slot(CARD.w, MORE_H) : null;

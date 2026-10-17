@@ -18,6 +18,13 @@ export function liveState(card: MapCard, session: Session | undefined, now: numb
   return { state: now - last < RUNNING_WINDOW_MS ? "running" : "idle", inferred: true };
 }
 
+/** A session's state: what the runtime reported, or else inferred from its last activity. */
+export function sessionState(s: Session, now: number): { state: MapState; inferred: boolean } {
+  if (s.runtime_state !== "unknown") return { state: s.runtime_state, inferred: false };
+  const last = s.last_activity_at ? Date.parse(s.last_activity_at) : 0;
+  return { state: now - last < RUNNING_WINDOW_MS ? "running" : "idle", inferred: true };
+}
+
 /** The Map's data: a snapshot, then cards refreshed for the sessions the event stream says changed. */
 export function useMap(ws: { ready: boolean; feed: FeedItem[] }) {
   const [data, setData] = useState<MapData | null>(null);

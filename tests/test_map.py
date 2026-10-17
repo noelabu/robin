@@ -173,3 +173,15 @@ def test_the_service_derives_activity_in_the_background(api):
             break
         time.sleep(0.1)
     assert lanes and lanes[0]["title"] == "background please"
+
+
+def test_session_rows_carry_title_cluster_and_last_activity(api):
+    store, c, _, _ = api
+    sid = observed_session_with(store, [("message.user", {"type": "user_message", "text": "name me"})])
+    activity.catch_up(store)
+    row = c.get(f"/sessions/{sid}").json()
+    assert row["title"] == "name me" and row["last_activity_at"] and "cluster" in row
+    listed = {s["session_id"]: s for s in c.get("/workspace").json()["sessions"]}
+    assert listed[sid]["title"] == "name me"
+    bare = ensure_session(store, runtime="pi", mode="observed", native_session_id="bare")
+    assert c.get(f"/sessions/{bare}").json()["title"] is None

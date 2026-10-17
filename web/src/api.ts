@@ -19,6 +19,9 @@ export type Session = {
   archived: boolean;
   branch: string | null;
   shared_folder_with: string[];
+  title: string | null; // first prompt, from the Map's activity (null until derived)
+  cluster: string; // the repository the folder belongs to
+  last_activity_at: string | null;
   independence: "enforced" | "not_isolated" | null;
   created_at: string;
   updated_at: string;
@@ -249,7 +252,8 @@ export type MapNow = {
 
 export type MapSnapshot = { now: MapNow | null; clusters: MapCluster[]; cards: MapCard[]; pending_events: number };
 
-export type Todo = { id: string; text: string; status: "pending" | "in_progress" | "completed" };
+export type FileTouch = { path: string; op: string; at: string; n?: number };
+export type Todo = { id: string; text: string; status: "pending" | "in_progress" | "completed"; files?: FileTouch[] };
 
 export type SessionActivity = {
   session_id: string;
@@ -260,7 +264,7 @@ export type SessionActivity = {
     label: string | null;
     current: { tool: string; target: string | null; at: string | null } | null;
     todos: Todo[];
-    files: { path: string; op: string; at: string }[];
+    files: FileTouch[];
     files_count: number;
     last_activity_at: string | null;
   }[];

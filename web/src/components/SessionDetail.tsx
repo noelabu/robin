@@ -1,7 +1,11 @@
 import { useState } from "react";
 import { api, ApiError, type Session } from "../api";
+import { RuntimeIcon } from "../map/RuntimeIcon";
+import { ago as since } from "../map/time";
+import { SessionFlow } from "../map/SessionFlow";
 import { Runs } from "./Runs";
 import { WorktreePanel } from "./WorktreePanel";
+import { sessionState } from "../map/useMap";
 import { LABEL, StateBadge } from "./StateBadge";
 
 function ago(iso: string | null): string {
@@ -39,6 +43,16 @@ export function SessionDetail({ session, onChanged }: { session: Session; onChan
     }
   }
 
+  async function archive() {
+    try {
+      await api.archiveSession(session.session_id, !session.archived);
+      setStatus(session.archived ? "Restored" : "Archived: hidden from default views, nothing deleted");
+      onChanged?.();
+    } catch (e) {
+      setStatus(e instanceof ApiError ? `Archive failed: ${e.message}` : "Archive failed");
+    }
+  }
+
   async function handOff() {
     const running = ["running", "waiting_for_input"].includes(session.runtime_state);
     if (running && !window.confirm("A turn is running. Handing off now ends it. Continue?")) return;
@@ -69,13 +83,34 @@ export function SessionDetail({ session, onChanged }: { session: Session; onChan
     <section className="detail" aria-labelledby="detail-title">
       <div className="detail-head">
         <h2 id="detail-title" tabIndex={-1}>
-          {session.runtime} <StateBadge session={session} />
+          <RuntimeIcon runtime={session.runtime} />
+          <span className="detail-title">{session.title || `${session.runtime} · ${session.session_id.slice(0, 8)}`}</span>
+          <StateBadge session={session} />
         </h2>
+        <p className="where">
+          <span>
+            {session.runtime} · {session.mode === "managed" ? "launched by Robin" : "started outside Robin"}
+          </span>
+          <span title={session.execution_cwd ?? undefined}>{session.execution_cwd ?? "no folder"}</span>
+          {session.branch && (
+            <span>
+              ⎇ <code>{session.branch}</code>
+            </span>
+          )}
+          {session.last_activity_at && <span>last activity {since(session.last_activity_at, Date.now())} ago</span>}
+        </p>
+      </div>
+      <details className="facts-box">
+        <summary>Details</summary>
         <dl className="facts">
           <dt>Folder</dt>
           <dd>{session.execution_cwd ?? "—"}</dd>
-          <dt>Branch</dt>
-          <dd>{session.branch ?? "not a git repository"}</dd>
+          {!session.branch && (
+            <>
+              <dt>Branch</dt>
+              <dd>not a git repository</dd>
+            </>
+          )}
           <dt>Native ID</dt>
           <dd>{session.native_session_id ?? "not reported yet"}</dd>
           <dt>Evidence</dt>
@@ -99,10 +134,10 @@ export function SessionDetail({ session, onChanged }: { session: Session; onChan
             </>
           )}
         </dl>
-      </div>
+      </details>
 
       <p className="sr-only" role="status">
-        {`${session.runtime} ${LABEL[session.runtime_state]}${stale ? `, ${session.connection_state}` : ""}`}
+        {`${session.runtime} ${LABEL[sessionState(session, Date.now()).state]}${stale ? `, ${session.connection_state}` : ""}`}
       </p>
 
       {session.shared_folder_with.length > 0 && (
@@ -110,6 +145,28 @@ export function SessionDetail({ session, onChanged }: { session: Session; onChan
           {session.shared_folder_with.length === 1 ? "Another session" : `${session.shared_folder_with.length} other sessions`}{" "}
           may be editing this folder. Their changes can collide with this one&apos;s.
         </p>
+      )}
+
+      <SessionFlow session={session} onChanged={onChanged} />
+
+      {session.mode === "observed" && (
+        <div className="readonly-note">
+          <p>
+            Read-only here: Robin follows this session from its transcript and can&apos;t control it.
+            {resume && (
+              <>
+                {" "}
+                Continue it with <code>{resume}</code>.
+              </>
+            )}
+          </p>
+          <button type="button" onClick={() => void archive()}>
+            {session.archived ? "Restore" : "Archive"}
+          </button>
+          <p className="status" role="status" aria-live="polite">
+            {status}
+          </p>
+        </div>
       )}
 
       {session.mode === "managed" && (
@@ -155,77 +212,73 @@ export function SessionDetail({ session, onChanged }: { session: Session; onChan
         </div>
       )}
 
-      <form
-        className="compose"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (text.trim()) void act({ type: "message", text }, sendLabel);
-        }}
-      >
-        <label htmlFor="compose">Message</label>
-        <textarea
-          id="compose"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          disabled={!c.message.enabled}
-          rows={3}
-          placeholder={c.message.enabled ? "Instruction for this session" : (c.message.reason ?? "")}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) e.currentTarget.form?.requestSubmit();
+      {session.mode === "managed" && (
+        <form
+          className="compose"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (text.trim()) void act({ type: "message", text }, sendLabel);
           }}
-        />
-        <div className="actions">
-          <button type="submit" className="primary" disabled={!c.message.enabled || !text.trim()}>
-            {sendLabel}
-          </button>
-          <button
-            type="button"
-            disabled={!c.interrupt.enabled}
-            title={c.interrupt.reason ?? undefined}
-            onClick={() => void act({ type: "interrupt" }, "Interrupt")}
-          >
-            Interrupt
-          </button>
-          <button
-            type="button"
-            onClick={async () => {
-              try {
-                await api.archiveSession(session.session_id, !session.archived);
-                setStatus(session.archived ? "Restored" : "Archived: hidden from default views, nothing deleted");
-                onChanged?.();
-              } catch (e) {
-                setStatus(e instanceof ApiError ? `Archive failed: ${e.message}` : "Archive failed");
-              }
-            }}
-          >
-            {session.archived ? "Restore" : "Archive"}
-          </button>
-          <button
-            type="button"
-            className="danger"
-            disabled={!c.stop.enabled}
-            title={c.stop.reason ?? undefined}
-            onClick={() => {
-              if (window.confirm(`Stop the ${session.runtime} session in ${session.execution_cwd}? This ends the runtime process.`))
-                void act({ type: "stop" }, "Stop");
-            }}
-          >
-            Stop session
-          </button>
-        </div>
-        {!c.message.enabled && c.message.reason && <p className="hint">Controls unavailable: {c.message.reason}</p>}
-        {[...new Set(disabledReasons)].map((r) => (
-          <p className="hint" key={r}>
-            {r}
+        >
+          {c.message.enabled && (
+            <>
+              <label htmlFor="compose">Message</label>
+              <textarea
+                id="compose"
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                rows={3}
+                placeholder={`Message this session…${sendLabel === "Queue follow-up" ? " (a turn is running: this is queued)" : ""}  ⌘⏎ to send`}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) e.currentTarget.form?.requestSubmit();
+                }}
+              />
+            </>
+          )}
+          <div className="actions">
+            {c.message.enabled && (
+              <button type="submit" className="primary" disabled={!text.trim()}>
+                {sendLabel}
+              </button>
+            )}
+            <button
+              type="button"
+              disabled={!c.interrupt.enabled}
+              title={c.interrupt.reason ?? undefined}
+              onClick={() => void act({ type: "interrupt" }, "Interrupt")}
+            >
+              Interrupt
+            </button>
+            <button type="button" onClick={() => void archive()}>
+              {session.archived ? "Restore" : "Archive"}
+            </button>
+            <button
+              type="button"
+              className="danger"
+              disabled={!c.stop.enabled}
+              title={c.stop.reason ?? undefined}
+              onClick={() => {
+                if (window.confirm(`Stop the ${session.runtime} session in ${session.execution_cwd}? This ends the runtime process.`))
+                  void act({ type: "stop" }, "Stop");
+              }}
+            >
+              Stop session
+            </button>
+          </div>
+          {!c.message.enabled && c.message.reason && <p className="hint">Controls unavailable: {c.message.reason}</p>}
+          {[...new Set(disabledReasons)].map((r) => (
+            <p className="hint" key={r}>
+              {r}
+            </p>
+          ))}
+          {sendLabel === "Queue follow-up" && (
+            <p className="hint">{session.runtime} applies input sent during a turn after the turn ends.</p>
+          )}
+          <p className="status" role="status" aria-live="polite">
+            {status}
           </p>
-        ))}
-        {sendLabel === "Queue follow-up" && (
-          <p className="hint">{session.runtime} applies input sent during a turn after the turn ends.</p>
-        )}
-        <p className="status" role="status" aria-live="polite">
-          {status}
-        </p>
-      </form>
+        </form>
+      )}
       {session.mode === "managed" && (
         <WorktreePanel
           sessionId={session.session_id}

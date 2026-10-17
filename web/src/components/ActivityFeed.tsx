@@ -23,6 +23,7 @@ export function ActivityFeed(props: {
   const [loaded, setLoaded] = useState(false);
   const [family, setFamily] = useState("");
   const [evidence, setEvidence] = useState("");
+  const [everything, setEverything] = useState(false); // noise (unknown records, tool output) is hidden by default
   const key = JSON.stringify(props.scope);
 
   useEffect(() => {
@@ -60,7 +61,13 @@ export function ActivityFeed(props: {
   }, [props.items, history, key]);
 
   const families = useMemo(() => [...new Set(all.map((i) => i.event_family))].sort(), [all]);
-  const shown = all.filter((i) => (!family || i.event_family === family) && (!evidence || i.evidence_kind === evidence));
+  const shown = all.filter(
+    (i) =>
+      (everything || !i.noise) &&
+      (!everything || !family || i.event_family === family) &&
+      (!evidence || i.evidence_kind === evidence),
+  );
+  const turns = props.scope.session_id ? byTurn(shown) : null;
   const session = props.scope.session_id ? props.sessions[props.scope.session_id] : undefined;
   const gap = all.some((i) => i.event_type === "connection.gap");
 
@@ -69,14 +76,19 @@ export function ActivityFeed(props: {
       <div className="feed-head">
         <h2 id="feed-title">Activity</h2>
         <label className="inline">
-          Event
-          <select value={family} onChange={(e) => setFamily(e.target.value)}>
-            <option value="">all</option>
-            {families.map((f) => (
-              <option key={f}>{f}</option>
-            ))}
-          </select>
+          <input type="checkbox" checked={everything} onChange={(e) => setEverything(e.target.checked)} /> Show all events
         </label>
+        {everything && (
+          <label className="inline">
+            Event
+            <select value={family} onChange={(e) => setFamily(e.target.value)}>
+              <option value="">all</option>
+              {families.map((f) => (
+                <option key={f}>{f}</option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="inline">
           Evidence
           <select value={evidence} onChange={(e) => setEvidence(e.target.value)}>
@@ -98,25 +110,88 @@ export function ActivityFeed(props: {
         <p className="empty">Loading…</p>
       ) : !shown.length ? (
         <p className="empty">{emptyText(all.length > 0, session)}</p>
+      ) : turns ? (
+        <ol className="feed-list turns">
+          {turns.map((t) => (
+            <li key={t.items[0].event_id} className="feed-turn">
+              <h3>
+                <span>{t.prompt?.preview ?? "Turn"}</span>
+                <time dateTime={at(t.items[0])}>{when(t.items[0])}</time>
+              </h3>
+              <ol className="feed-list">
+                {t.items
+                  .filter((i) => i !== t.prompt)
+                  .map((i) => (
+                    <Item key={i.event_id} item={i} everything={everything} />
+                  ))}
+              </ol>
+            </li>
+          ))}
+        </ol>
       ) : (
         <ol className="feed-list">
           {shown.map((i) => (
-            <li key={i.event_id} className={`feed-item fam-${i.event_family}`}>
-              <time dateTime={i.source_time ?? i.ingested_at}>
-                {new Date(i.source_time ?? i.ingested_at).toLocaleTimeString()}
-              </time>
-              <span className="type">{i.event_type}</span>
-              <span className={`evidence ev-${i.evidence_kind}`} title={EVIDENCE_HELP[i.evidence_kind]}>
-                {i.evidence_kind}
-              </span>
-              {i.preview && <p className="preview">{i.preview}</p>}
-              {i.payload_ref && <p className="preview muted">Large payload stored by reference</p>}
-            </li>
+            <Item
+              key={i.event_id}
+              item={i}
+              everything={everything}
+              who={props.sessions[i.session_id]?.title ?? props.sessions[i.session_id]?.runtime}
+            />
           ))}
         </ol>
       )}
     </section>
   );
+}
+
+const at = (i: FeedItem) => i.source_time ?? i.ingested_at;
+/** The time, with the date when it wasn't today. */
+const when = (i: FeedItem) => {
+  const d = new Date(at(i));
+  const today = d.toDateString() === new Date().toDateString();
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return today ? time : `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
+};
+
+function Item({ item: i, everything, who }: { item: FeedItem; everything: boolean; who?: string }) {
+  return (
+    <li className={`feed-item fam-${i.event_family} type-${i.event_type.replace(".", "-")}`} title={i.event_type}>
+      <time dateTime={at(i)}>{when(i)}</time>
+      <span className="preview">
+        {who && <span className="who">{who}: </span>}
+        {i.preview ?? (i.payload_ref ? "Large payload stored by reference" : i.event_type)}
+      </span>
+      <span className="tags">
+        {everything && <span className="type">{i.event_type}</span>}
+        {(everything || i.evidence_kind !== "reported") && (
+          <span className={`evidence ev-${i.evidence_kind}`} title={EVIDENCE_HELP[i.evidence_kind]}>
+            {i.evidence_kind}
+          </span>
+        )}
+      </span>
+    </li>
+  );
+}
+
+type Turn = { prompt: FeedItem | null; items: FeedItem[] };
+
+/** Group a session's events into turns, newest turn first, each turn in the order things happened. A turn
+ * starts at a turn marker or at your prompt (unless the turn so far is only its marker). */
+function byTurn(newestFirst: FeedItem[]): Turn[] {
+  const turns: Turn[] = [];
+  let cur: Turn | null = null;
+  for (const i of [...newestFirst].reverse()) {
+    const marker = i.event_type === "session.turn_started";
+    const prompt = i.event_type === "message.user" && !i.noise;
+    const onlyMarker = cur !== null && cur.items.every((x) => x.event_type === "session.turn_started");
+    if (!cur || marker || (prompt && !onlyMarker) || (prompt && cur.prompt)) {
+      cur = { prompt: null, items: [] };
+      turns.push(cur);
+    }
+    if (prompt && !cur.prompt) cur.prompt = i;
+    cur.items.push(i);
+  }
+  return turns.reverse();
 }
 
 /** Say whether nothing happened or Robin couldn't see (PRD: empty states distinguish the two). */

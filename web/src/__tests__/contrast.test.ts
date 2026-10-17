@@ -1,10 +1,13 @@
 /// <reference types="vite/client" />
 import css from "../styles.css?raw";
+import mapCss from "../map/map.css?raw";
 
-// The colour tokens in styles.css keep WCAG AA contrast in both themes (NFR-08).
-const block = (re: RegExp) => Object.fromEntries([...re.exec(css)![1].matchAll(/--([a-z-]+):\s*(#[0-9a-f]{6})/gi)].map((m) => [m[1], m[2]]));
-const light = block(/^:root \{([^}]*)\}/m);
-const dark = { ...light, ...block(/prefers-color-scheme: dark\) \{\s*:root \{([^}]*)\}/) };
+// The one violet palette in styles.css keeps WCAG AA contrast (NFR-08); aliases resolve one level.
+const root = /^:root \{([^}]*)\}/m.exec(css)![1];
+const raw = Object.fromEntries([...root.matchAll(/--([a-z0-9-]+):\s*([^;]+);/gi)].map((m) => [m[1], m[2].trim()]));
+const t: Record<string, string> = Object.fromEntries(
+  Object.entries(raw).map(([k, v]) => [k, v.startsWith("var(--") ? raw[v.slice(6, -1)] : v]),
+);
 
 const lum = (hex: string) => {
   const [r, g, b] = [1, 3, 5].map((i) => {
@@ -17,15 +20,15 @@ const ratio = (a: string, b: string) => {
   const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
   return (x + 0.05) / (y + 0.05);
 };
+const SURFACES = ["bg", "panel", "card"];
 
-describe.each([["light", light], ["dark", dark]])("%s theme", (_, t) => {
-  test.each(["ink", "muted", "ok", "warn", "bad"])("%s text is at least 4.5:1", (k) => {
-    expect(ratio(t[k], t.bg)).toBeGreaterThanOrEqual(4.5);
-    expect(ratio(t[k], t.panel)).toBeGreaterThanOrEqual(4.5);
+describe("Robin's palette", () => {
+  test.each(["ink", "muted", "faint", "ok", "warn", "bad", "accent", "m-wait"])("%s text is at least 4.5:1", (k) => {
+    for (const s of SURFACES) expect(ratio(t[k], t[s])).toBeGreaterThanOrEqual(4.5);
   });
   test("primary buttons are at least 4.5:1", () => expect(ratio(t["accent-ink"], t.accent)).toBeGreaterThanOrEqual(4.5));
-  test.each(["focus", "field"])("%s is at least 3:1 against the page", (k) => {
-    expect(ratio(t[k], t.bg)).toBeGreaterThanOrEqual(3);
-    expect(ratio(t[k], t.panel)).toBeGreaterThanOrEqual(3);
+  test.each(["focus", "field"])("%s is at least 3:1 against every surface", (k) => {
+    for (const s of SURFACES) expect(ratio(t[k], t[s])).toBeGreaterThanOrEqual(3);
   });
+  test("the Map defines no colours of its own", () => expect(mapCss).not.toMatch(/--m-[a-z-]+\s*:/));
 });

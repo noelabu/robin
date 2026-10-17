@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Card tasks mockup</title>
+<style>
+:root {
+  --bg: #0c0a12; --canvas: #100d17; --dot: #2a2338; --card: #1a1624; --card-sub: #16131f; --panel: #15121d;
+  --line: #2b2538; --line-hi: #3b3350; --ink: #eeeaf8; --muted: #a69ec0; --faint: #8e86a8; --accent: #b197fc; --ok: #6fcf8a;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background-color: var(--canvas); background-image: radial-gradient(var(--dot) 1px, transparent 1.2px); background-size: 22px 22px;
+  color: var(--ink); font: 13px/1.4 -apple-system, "SF Pro Text", system-ui, sans-serif; overflow: hidden; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; text-align: left; }
+.world { position: relative; width: 1200px; height: 900px; margin: 30px 0 0 60px; }
+svg.wires { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+svg.wires path { fill: none; stroke: #5f5378; stroke-width: 1.4; }
+svg.wires path.live { stroke: var(--accent); stroke-dasharray: 5 5; }
+svg.wires path.stem { stroke: #5f5378; stroke-dasharray: 2 4; }
+.frame { position: absolute; border: 1px dashed #332b45; border-radius: 14px; }
+.frame > span { position: absolute; top: -9px; left: 14px; padding: 0 8px; background: var(--canvas); font: 11px var(--mono); color: var(--muted); }
+.frame > span b { color: var(--ink); font-weight: 500; }
+
+.card { position: absolute; width: 248px; padding: 10px 11px 0; border-radius: 7px; background: var(--card); border: 1px solid var(--line-hi);
+  box-shadow: 0 6px 18px #0006; display: flex; flex-direction: column; }
+.card.running { border-color: #6a4bc4; box-shadow: 0 0 0 1px #b197fc33, 0 8px 22px #0008; }
+.card.open { border-color: var(--accent); }
+.card.sub { width: 212px; background: var(--card-sub); padding-bottom: 10px; }
+.meta { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px; font: 10px var(--mono); color: var(--faint); }
+.st { font: 600 10px -apple-system, system-ui, sans-serif; display: inline-flex; gap: 5px; align-items: center; }
+.st.running { color: var(--accent); } .st.idle, .st.stopped { color: var(--muted); }
+.spin { width: 11px; height: 11px; border-radius: 50%; border: 2px solid #b197fc44; border-top-color: var(--accent); animation: spin .9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.tick { width: 13px; height: 13px; border-radius: 50%; background: #2c6e3e; display: grid; place-items: center; }
+h3 { margin: 0 0 4px; font-size: 12.5px; font-weight: 650; line-height: 1.3; }
+.line { display: flex; justify-content: space-between; gap: 8px; font-size: 10.5px; color: var(--muted); }
+.file { font: 10px var(--mono); color: var(--accent); white-space: nowrap; }
+.bar { height: 3px; margin: 8px 0; border-radius: 2px; background: #2e2740; overflow: hidden; }
+.bar i { display: block; height: 100%; background: #d9d2ee; }
+.card.running .bar i { background: var(--accent); }
+.foot { margin: 0 -11px; padding: 7px 11px; border-top: 1px solid #29233a; font: 600 9px var(--mono); letter-spacing: .1em; color: var(--faint); text-transform: uppercase; width: calc(100% + 22px); }
+.card.open .foot { color: var(--accent); }
+
+/* the expanded task panel, attached below its card */
+.tasks { position: absolute; width: 248px; border-radius: 9px; background: #17131f; border: 1px solid var(--line-hi); box-shadow: 0 10px 28px #000a; overflow: hidden;
+  animation: drop .18s ease-out; }
+@keyframes drop { from { opacity: 0; transform: translateY(-6px); } }
+.task { border-bottom: 1px solid var(--line); }
+.task:last-child { border-bottom: 0; }
+.task > button { display: grid; grid-template-columns: 18px 1fr auto 10px; gap: 8px; align-items: center; width: 100%; padding: 9px 10px; font-size: 11.5px; }
+.task > button:hover { background: #1c1726; }
+.task .ic { width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center; font: 600 9px var(--mono); }
+.task.completed .ic { background: #2c6e3e; }
+.task.in_progress .ic { border: 2px solid var(--accent); border-right-color: transparent; color: var(--accent); }
+.task.pending .ic { border: 1.5px solid #6c628a; color: var(--faint); }
+.task .tx { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task.completed .tx { color: #d9d3ea; }
+.pill { font-size: 10px; padding: 2px 7px; border-radius: 10px; white-space: nowrap; }
+.task.completed .pill { background: #16301f; color: #9fe0b1; }
+.task.in_progress .pill { background: #241a3d; color: #d8ccff; }
+.task.pending .pill { background: #1f1b29; color: var(--faint); }
+.chev { color: var(--faint); font-size: 10px; transition: transform .15s; }
+.task.expanded .chev { transform: rotate(180deg); }
+.files { display: none; padding: 0 10px 8px 36px; }
+.task.expanded .files { display: block; }
+.files li { list-style: none; display: flex; justify-content: space-between; gap: 8px; padding: 3px 0 3px 10px; border-left: 1px solid var(--line-hi); font: 10.5px var(--mono); color: var(--muted); }
+.files li span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.files li span:last-child { color: var(--faint); }
+.files li.hot span:first-child { color: var(--ink); }
+.files .none { color: var(--faint); font-size: 11px; padding: 2px 0 2px 10px; border-left: 1px solid var(--line-hi); }
+.acts { display: flex; gap: 6px; padding: 8px 10px; background: #15121d; border-top: 1px solid var(--line); }
+.acts button { padding: 4px 9px; border-radius: 6px; border: 1px solid var(--line-hi); font-size: 11px; color: var(--muted); }
+.acts button:hover { color: var(--ink); }
+.acts button.primary { background: var(--ink); color: #120d1f; border-color: var(--ink); }
+.acts button.danger { color: #f08a8a; }
+.hint { position: fixed; left: 24px; bottom: 18px; font-size: 12px; color: var(--muted); display: flex; gap: 20px; }
+.hint kbd { font: 11px var(--mono); padding: 3px 7px; margin-right: 8px; border-radius: 5px; border: 1px solid var(--line-hi); background: #17131f; color: #d9d3ea; }
+</style>
+</head>
+<body>
+<div class="world">
+  <div class="frame" style="left:0; top:0; width:600px; height:760px"><span><b>~/Documents/Personal/robin</b> · 3 sessions</span></div>
+  <svg class="wires" width="1200" height="900">
+    <path d="M272 84 C 315 84, 315 74, 352 74"/>
+    <path class="live" d="M272 84 C 315 84, 315 176, 352 176"/>
+    <path class="stem" d="M148 168 L148 186"/>
+  </svg>
+
+  <!-- the open card -->
+  <div class="card running open" style="left:24px; top:44px">
+    <div class="meta"><span>claude · main · 5s ago</span><span class="st running">Working <span class="spin"></span></span></div>
+    <h3>Add a Map view to Robin's dashboard</h3>
+    <div class="line"><span>3 of 5 tasks · In progress</span><span class="file">MapView.tsx ×4 · 5s</span></div>
+    <div class="bar"><i style="width:60%"></i></div>
+    <button class="foot" id="toggle">Hide tasks ↑</button>
+  </div>
+
+  <div class="tasks" id="tasks" style="left:24px; top:186px">
+    <div class="task completed"><button><span class="ic"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#fff" stroke-width="1.8"><path d="M2 5.2 4.2 7.4 8 3"/></svg></span><span class="tx">Map the codebase</span><span class="pill">Completed</span><span class="chev">⌄</span></button>
+      <ul class="files"><li class="none">No file edits</li></ul></div>
+    <div class="task completed"><button><span class="ic"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#fff" stroke-width="1.8"><path d="M2 5.2 4.2 7.4 8 3"/></svg></span><span class="tx">Activity projector and migration</span><span class="pill">Completed</span><span class="chev">⌄</span></button>
+      <ul class="files"><li><span>src/robin/activity.py ×6</span><span>31m</span></li><li><span>…/0014_session_activity.py</span><span>38m</span></li></ul></div>
+    <div class="task completed"><button><span class="ic"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#fff" stroke-width="1.8"><path d="M2 5.2 4.2 7.4 8 3"/></svg></span><span class="tx">Map API routes</span><span class="pill">Completed</span><span class="chev">⌄</span></button>
+      <ul class="files"><li><span>src/robin/service/routes_map.py</span><span>24m</span></li></ul></div>
+    <div class="task in_progress expanded"><button><span class="ic">4</span><span class="tx">Build MapView canvas</span><span class="pill">Editing now</span><span class="chev">⌄</span></button>
+      <ul class="files"><li class="hot"><span>web/src/map/MapView.tsx ×4</span><span>5s</span></li><li><span>web/src/map/Canvas.tsx ×2</span><span>3m</span></li><li><span>web/src/map/layout.ts</span><span>9m</span></li><li><span>web/src/map/map.css ×3</span><span>12m</span></li></ul></div>
+    <div class="task pending"><button><span class="ic">5</span><span class="tx">Wire live updates</span><span class="pill">Pending</span><span class="chev">⌄</span></button>
+      <ul class="files"><li class="none">Not started</li></ul></div>
+    <div class="acts"><button class="primary">Open in Sessions</button><button class="danger">Stop</button><button>Archive</button></div>
+  </div>
+
+  <!-- subagents beside it -->
+  <div class="card sub" style="left:352px; top:44px">
+    <div class="meta"><span>Plan · 11m ago</span><span class="st stopped">Stopped</span></div>
+    <h3>Plan the Map view</h3>
+    <div class="line"><span>Read docs/implementation-plan.md</span></div>
+  </div>
+  <div class="card sub running" style="left:352px; top:146px">
+    <div class="meta"><span>Explore · 40s ago</span><span class="st running">Working <span class="spin"></span></span></div>
+    <h3>Explore event ingest</h3>
+    <div class="line"><span>Grep payload_ref</span></div>
+  </div>
+
+  <!-- a closed card, pushed down below the open panel -->
+  <div class="card" style="left:24px; top:612px">
+    <div class="meta"><span>codex · 3m ago</span><span class="st idle">Idle</span></div>
+    <h3>Review threat model for the new endpoint</h3>
+    <div class="line"><span>2 of 3 tasks · In progress</span><span class="file">threat-model.md · 3m</span></div>
+    <div class="bar"><i style="width:66%"></i></div>
+    <button class="foot">Show tasks ↓</button>
+  </div>
+</div>
+<div class="hint"><span><kbd>click</kbd>Show tasks below card</span><span><kbd>drag</kbd>Move canvas</span><span><kbd>⌘</kbd>Scroll to zoom</span></div>
+<script>
+document.querySelectorAll(".task > button").forEach(b => b.onclick = () => b.parentElement.classList.toggle("expanded"));
+const t = document.getElementById("toggle"), panel = document.getElementById("tasks");
+t.onclick = () => { const open = panel.hidden; panel.hidden = !open; t.textContent = open ? "Hide tasks ↑" : "Show tasks ↓"; t.closest(".card").classList.toggle("open", open); };
+</script>
+</body>
+</html>

@@ -38,11 +38,14 @@ Robin's data lives in `~/Library/Application Support/Robin` (override with `--da
 
 ### Map
 
-The dashboard opens on the Map: every session at once, one card per session, grouped by repository (a subfolder or worktree counts as its repository). A card shows the title (the first prompt), whether it's working, the todo list's progress and the files it changed; Claude subagents get their own cards, linked to their parent. The floating card in the corner is the latest action anywhere. Click a card for its todos and changed files, then **Open in Sessions** to control it. No projects or tasks are needed: `robin scan` and `robin watch on` are enough.
+The dashboard opens on the Map: every session at once, one card per session, grouped by repository (a subfolder or worktree counts as its repository). A card shows the title (the first prompt), whether it's working, the todo list's progress and the files it changed; Claude subagents get their own cards, linked to their parent. The floating card in the corner is the latest action anywhere. Click a card and its tasks open right below it, each with the files edited while it was in progress; from there, **Open in Sessions**, **Stop** (sessions Robin launched) or **Archive**. No projects or tasks are needed: `robin scan` and `robin watch on` are enough.
 
 Tools, todos and file edits are read for Claude Code and Codex; Pi sessions show without them. For sessions started outside Robin, "Working" is inferred from activity in the last minute unless hooks are installed (`robin hooks install claude`). Large folders show their 50 newest sessions, with the rest one click away.
 
 ### Sessions
+
+The **Sessions** tab lists sessions grouped by folder, each with its title, state and age. A session shows its card and its subagents' cards (click one for its tasks), the controls Robin has for it (sessions started elsewhere are read-only, with their resume command), and a readable, redacted timeline grouped by turn; "Show all events" brings back the raw event types. Robin is always dark (violet), in both tabs.
+
 
 ```bash
 robin project add ~/code/app

@@ -166,7 +166,15 @@ describe("map view", () => {
         current: { tool: "Edit", target: "web/src/App.tsx", at: "2026-10-17T09:59:55Z" },
         todos: [
           { id: "1", text: "Plan", status: "completed" },
-          { id: "2", text: "Build", status: "in_progress" },
+          {
+            id: "2",
+            text: "Build",
+            status: "in_progress",
+            files: [
+              { path: "web/src/App.tsx", op: "edit", at: "2026-10-17T09:59:55Z", n: 4 },
+              { path: "web/src/api.ts", op: "edit", at: "2026-10-17T09:50:00Z" },
+            ],
+          },
         ],
         files: [
           { path: "web/src/App.tsx", op: "edit", at: "2026-10-17T09:59:55Z" },
@@ -220,25 +228,72 @@ describe("map view", () => {
     expect(screen.getByText("~/r/app")).toBeTruthy();
   });
 
-  test("the drawer lists todos and files, opens in Sessions, and Esc returns focus", async () => {
+  const openCard = async () => {
+    const card = (await screen.findAllByText("Build the map")).map((n) => n.closest("[data-card]")).find(Boolean) as HTMLElement;
+    fireEvent.click(card);
+    return { card, panel: await screen.findByRole("region", { name: "Tasks: Build the map" }) };
+  };
+
+  test("a card opens its tasks below it, with the files of the task in progress, and closes again", async () => {
     const onOpenSession = vi.fn();
     mount({ onOpenSession });
-    const cardButton = (await screen.findAllByText("Build the map")).map((n) => n.closest("[data-card]")).find(Boolean) as HTMLElement;
-    fireEvent.click(cardButton);
-    const drawer = await screen.findByRole("complementary");
-    await waitFor(() => expect(drawer.textContent).toContain("README.md"));
-    const list = screen.getByRole("list", { name: "Files changed" });
-    const files = [...list.querySelectorAll("li span:first-child")].map((n) => n.textContent);
-    expect(files).toEqual(["web/src/App.tsx", "README.md"]); // most recent first
-    expect(drawer.textContent).toContain("1 / 2");
+    const { card, panel } = await openCard();
+    expect(card.getAttribute("aria-expanded")).toBe("true");
+    expect(card.textContent).toContain("Hide tasks ↑");
+    await waitFor(() => expect(panel.textContent).toContain("Plan"));
+    expect(panel.textContent).toContain("Completed");
+    expect(panel.textContent).toContain("Editing now"); // the session is working
+    expect(panel.textContent).toContain("web/src/App.tsx ×4"); // in progress: open by default
+    const plan = screen.getByRole("button", { name: /Plan/ });
+    expect(plan.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(plan);
+    expect(panel.textContent).toContain("No file edits");
     fireEvent.click(screen.getByText("Open in Sessions"));
     expect(onOpenSession).toHaveBeenCalledWith("s1");
-    fireEvent.keyDown(drawer, { key: "Escape" });
+    fireEvent.keyDown(panel, { key: "Escape" });
     await act(async () => {
       await new Promise((r) => requestAnimationFrame(() => r(null)));
     });
-    expect(screen.queryByRole("complementary")).toBeNull();
+    expect(screen.queryByRole("region", { name: "Tasks: Build the map" })).toBeNull();
     expect(document.activeElement?.getAttribute("data-card")).toBe("s1");
+    fireEvent.click(card);
+    expect(await screen.findByRole("region", { name: "Tasks: Build the map" })).toBeTruthy();
+    fireEvent.click(card); // a second click closes it
+    expect(screen.queryByRole("region", { name: "Tasks: Build the map" })).toBeNull();
+  });
+
+  test("Stop asks first and is offered only when it works; Archive hides the session", async () => {
+    const calls: { method: string; url: string; body: string | null }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ method: init?.method ?? "GET", url, body: (init?.body as string) ?? null });
+        const path = url.split("?")[0];
+        if (path.endsWith("/actions")) return new Response(JSON.stringify({ action: { state: "submitted" } }), { status: 202 });
+        return new Response(JSON.stringify(replies[path] ?? { archived: true }), { status: 200 });
+      }),
+    );
+    const managed = { session_id: "s1", archived: false, runtime: "claude", execution_cwd: "/r/app",
+      controls: { stop: { enabled: true, reason: null } } } as never; // fmt: skip
+    const onChanged = vi.fn();
+    mount({ ws: { ready: true, feed: [], sessions: { s1: managed }, attentionVersion: 0, streamState: "live" }, onChanged });
+    await openCard();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    expect(calls.some((c) => c.url.endsWith("/actions"))).toBe(false); // cancelled
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(calls.find((c) => c.url.endsWith("/sessions/s1/actions"))?.body).toContain('"type":"stop"'));
+    fireEvent.click(screen.getByRole("button", { name: "Archive" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "PATCH")?.body).toContain('"archived":true'));
+    expect(onChanged).toHaveBeenCalled();
+    confirm.mockRestore();
+  });
+
+  test("Stop isn't offered for a session Robin can't control", async () => {
+    mount();
+    await openCard();
+    expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Archive" })).toBeTruthy();
   });
 
   test("zoom buttons change the level", async () => {

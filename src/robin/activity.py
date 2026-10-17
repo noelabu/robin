@@ -25,7 +25,7 @@ from robin.store import Store
 from robin.store.models import Event, Meta, SessionActivity
 from robin.store.models import Session as SessionRow
 
-VERSION = "3"  # bump when extraction changes: the table is rebuilt from the events
+VERSION = "4"  # bump when extraction changes: the table is rebuilt from the events
 CURSOR_KEY = "activity_cursor"
 RULES_KEY = "activity_rules"
 BATCH = 500
@@ -33,6 +33,7 @@ TEXT_LIMIT = 120
 TODO_LIMIT = 140
 MAX_TODOS = 50
 MAX_FILES = 500
+TODO_FILES = 20  # files shown under one task
 RESULT_LIMIT = 8192  # tool results are read only to learn a new task's id
 EVENT_TYPES = (
     "message.user",
@@ -69,8 +70,8 @@ class Lane:
     action_at: datetime | None = None
     turn_started_at: datetime | None = None
     last_activity_at: datetime | None = None
-    todos: list[dict[str, str]] = field(default_factory=list)
-    files: list[dict[str, str]] = field(default_factory=list)
+    todos: list[dict[str, Any]] = field(default_factory=list)  # {id, text, status, files?}
+    files: list[dict[str, Any]] = field(default_factory=list)  # {path, op, at, n}, most recent first
     pending: dict[str, str] = field(default_factory=dict)  # TaskCreate tool_use id -> local task id
 
 
@@ -139,17 +140,37 @@ def _title(lane: Lane, ctx: Ctx, text: Any) -> None:
         lane.title = summarize(ctx.rules, text)
 
 
+def _touch_file(files: list[dict[str, Any]], rel: str, op: str, at: str, cap: int) -> list[dict[str, Any]]:
+    """Move the file to the front with a fresh time, counting repeated edits."""
+    seen = next((f for f in files if f["path"] == rel), None)
+    entry = {"path": rel, "op": op, "at": at, "n": (seen.get("n", 1) + 1) if seen else 1}
+    return [entry, *(f for f in files if f["path"] != rel)][:cap]
+
+
 def _files(lane: Lane, ctx: Ctx, paths: list[tuple[str, str]]) -> None:
+    # An edit is credited to the task in progress at the time, which is what agenttrail-style task
+    # panels show under each task. Agents that never mark a task in progress leave it unattributed.
+    current = next((t for t in lane.todos if t["status"] == "in_progress"), None)
     for path, op in paths:
         if not path:
             continue
         rel = _rel(ctx, path)
-        lane.files = [f for f in lane.files if f["path"] != rel]
-        lane.files.insert(0, {"path": rel, "op": op, "at": ctx.at.isoformat()})
-    del lane.files[MAX_FILES:]
+        at = ctx.at.isoformat()
+        lane.files = _touch_file(lane.files, rel, op, at, MAX_FILES)
+        if current is not None:
+            current["files"] = _touch_file(current.get("files", []), rel, op, at, TODO_FILES)
 
 
-def _todo(ctx: Ctx, tid: str, text: Any, status: Any) -> dict[str, str]:
+def _replace_todos(lane: Lane, todos: list[dict[str, Any]]) -> None:
+    """A new list (TodoWrite, update_plan) keeps each surviving task's files, matched by its text."""
+    kept = {t["text"]: t["files"] for t in lane.todos if t.get("files")}
+    for t in todos:
+        if t["text"] in kept:
+            t["files"] = kept[t["text"]]
+    lane.todos = todos
+
+
+def _todo(ctx: Ctx, tid: str, text: Any, status: Any) -> dict[str, Any]:
     return {
         "id": tid,
         "text": summarize(ctx.rules, text or "", TODO_LIMIT),
@@ -188,11 +209,14 @@ def _tool(lane: Lane, ctx: Ctx, name: Any, inp: Any, call_id: str | None = None)
     if name in EDIT_TOOLS and isinstance(edited, str):
         _files(lane, ctx, [(edited, EDIT_TOOLS[name])])
     elif name == "TodoWrite" and isinstance(inp.get("todos"), list):
-        lane.todos = [
-            _todo(ctx, str(i), t.get("content"), t.get("status"))
-            for i, t in enumerate(inp["todos"][:MAX_TODOS], 1)
-            if isinstance(t, dict)
-        ]
+        _replace_todos(
+            lane,
+            [
+                _todo(ctx, str(i), t.get("content"), t.get("status"))
+                for i, t in enumerate(inp["todos"][:MAX_TODOS], 1)
+                if isinstance(t, dict)
+            ],
+        )
     elif name == "update_plan" and isinstance(inp.get("plan"), list):
         _plan(lane, ctx, inp["plan"])
     elif name == "TaskCreate" and len(lane.todos) < MAX_TODOS:
@@ -214,11 +238,14 @@ def _tool(lane: Lane, ctx: Ctx, name: Any, inp: Any, call_id: str | None = None)
 
 
 def _plan(lane: Lane, ctx: Ctx, plan: list[Any]) -> None:
-    lane.todos = [
-        _todo(ctx, str(i), t.get("step"), t.get("status"))
-        for i, t in enumerate(plan[:MAX_TODOS], 1)
-        if isinstance(t, dict)
-    ]
+    _replace_todos(
+        lane,
+        [
+            _todo(ctx, str(i), t.get("step"), t.get("status"))
+            for i, t in enumerate(plan[:MAX_TODOS], 1)
+            if isinstance(t, dict)
+        ],
+    )
 
 
 def _task_result(lane: Lane, rec: dict[str, Any]) -> None:

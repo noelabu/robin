@@ -3,9 +3,9 @@ import { api, type MapCard, type Session } from "../api";
 import type { FeedItem } from "../useWorkspace";
 import { Canvas, type CanvasHandle } from "./Canvas";
 import { Card } from "./Card";
-import { Drawer } from "./Drawer";
-import { layout } from "./layout";
+import { layout, PANEL_GAP } from "./layout";
 import { RuntimeIcon } from "./RuntimeIcon";
+import { TaskPanel } from "./TaskPanel";
 import { ago } from "./time";
 import { liveState, useMap, useTick } from "./useMap";
 
@@ -20,12 +20,14 @@ export function MapView(props: {
   tabs: ReactNode;
   onOpenSession: (sessionId: string) => void;
   onOpenAttention: () => void;
+  onChanged?: () => void;
 }) {
   const { ws } = props;
   const map = useMap(ws);
   const now = useTick();
   const canvas = useRef<CanvasHandle>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [panelH, setPanelH] = useState(0);
   const [watching, setWatching] = useState<boolean | null>(null);
   const [needs, setNeeds] = useState(0);
 
@@ -38,7 +40,10 @@ export function MapView(props: {
 
   const data = map.data;
   const cards = data?.cards ?? [];
-  const lay = useMemo(() => layout(map.order, data?.clusters ?? [], cards), [map.order, data?.clusters, cards]);
+  const lay = useMemo(
+    () => layout(map.order, data?.clusters ?? [], cards, selected && panelH ? { [selected]: panelH } : {}),
+    [map.order, data?.clusters, cards, selected, panelH],
+  );
   const state = (c: MapCard) => liveState(c, ws.sessions[c.session_id], now);
   const mains = cards.filter((c) => !c.parent);
   const working = mains.filter((c) => state(c).state === "running");
@@ -52,18 +57,20 @@ export function MapView(props: {
   const nowCard = data?.now;
 
   const open = (id: string) => {
+    if (selected === id) return close();
+    setPanelH(0);
     setSelected(id);
     const r = lay.cards[id];
     if (r) canvas.current?.reveal(r);
   };
-  const close = () => {
+  function close() {
     const id = selected;
     setSelected(null);
     if (id)
       requestAnimationFrame(() =>
         [...document.querySelectorAll<HTMLElement>("[data-card]")].find((el) => el.dataset.card === id)?.focus({ preventScroll: true }),
       );
-  };
+  }
 
   return (
     <div className="map">
@@ -203,7 +210,7 @@ export function MapView(props: {
             )}
             <div className="map-hints" aria-hidden="true">
               <span>
-                <kbd>click</kbd>Show detail
+                <kbd>click</kbd>Show tasks below card
               </span>
               <span>
                 <kbd>drag</kbd>Move canvas
@@ -212,18 +219,6 @@ export function MapView(props: {
                 <kbd>⌘</kbd>Scroll to zoom
               </span>
             </div>
-            {sel && (
-              <Drawer
-                key={sel.id}
-                card={sel}
-                {...state(sel)}
-                path={clusterPath(sel.cluster)}
-                subagents={sel.parent ? [] : cards.filter((c) => c.parent === sel.session_id)}
-                now={now}
-                onOpenSession={props.onOpenSession}
-                onClose={close}
-              />
-            )}
           </>
         }
       >
@@ -269,6 +264,31 @@ export function MapView(props: {
                 />
               );
             })}
+            {sel && lay.cards[sel.id] && (
+              <div
+                style={{
+                  position: "absolute",
+                  left: lay.cards[sel.id].x,
+                  top: lay.cards[sel.id].y + lay.cards[sel.id].h + PANEL_GAP,
+                  width: Math.max(lay.cards[sel.id].w, 272),
+                }}
+              >
+                <TaskPanel
+                  key={sel.id}
+                  card={sel}
+                  state={state(sel).state}
+                  session={ws.sessions[sel.session_id]}
+                  now={now}
+                  onHeight={setPanelH}
+                  onOpenSession={props.onOpenSession}
+                  onChanged={() => {
+                    void map.reload();
+                    props.onChanged?.();
+                  }}
+                  onClose={close}
+                />
+              </div>
+            )}
           </>
         )}
       </Canvas>
