@@ -93,6 +93,31 @@ async def test_takeover_refuses_while_a_terminal_holds_the_session(supervised):
     await asyncio.wait_for(task, 5)
 
 
+async def test_takeover_refuses_a_claude_started_without_the_id_on_its_command_line(
+    supervised, tmp_path, monkeypatch
+):
+    # `claude` typed in a terminal: no session id to pgrep, but Claude Code registers it by pid.
+    store = supervised
+    sid = observed(store)
+    registry = tmp_path / "sessions"
+    registry.mkdir()
+    monkeypatch.setenv("ROBIN_CLAUDE_SESSIONS", str(registry))
+    terminal = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    (registry / f"{terminal.pid}.json").write_text(json.dumps({"pid": terminal.pid, "sessionId": "obs-1"}))
+    (registry / "1.json").write_text(json.dumps({"pid": 999999, "sessionId": "obs-1"}))  # stale entry
+    (registry / "2.json").write_text("{not json")
+    manager, client, task = await connect(store)
+    try:
+        with pytest.raises(ActionRejected, match=f"process {terminal.pid}"):
+            await manager.takeover(sid, "hi", action_id="tk-1")
+    finally:
+        terminal.kill()
+        terminal.wait()
+    assert session_row(store, sid)["mode"] == "observed"
+    await client.close()
+    await asyncio.wait_for(task, 5)
+
+
 async def test_takeover_refuses_a_transcript_written_moments_ago(supervised, tmp_path):
     store = supervised
     sid = observed(store)

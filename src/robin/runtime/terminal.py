@@ -5,6 +5,7 @@ session stays on disk) and the user continues it with the runtime's own resume c
 built as argument arrays from validated values; a shell string is only produced, quoted, for Terminal.app.
 """
 
+import json
 import os
 import re
 import shlex
@@ -33,15 +34,45 @@ def resume_command(runtime: str, native_id: str, skip_permissions: bool = False)
 
 
 def holders(native_id: str) -> list[int]:
-    """Processes whose command line names this native session: a terminal that may still be writing it.
+    """Processes that may still be writing this native session: one whose command line names it, or a live
+    Claude Code that registered it (a plain `claude` started in a terminal has no id in its command line).
 
-    A heuristic (it can't see a session reopened by other means), so reclaiming also reports what it found.
+    A heuristic (it can't see a Codex or Pi session opened without its id), so reclaiming also reports what
+    it found.
     """
     if not NATIVE_ID.match(native_id):
         return []
     out = subprocess.run(["pgrep", "-f", "--", native_id], capture_output=True, text=True)
     me = os.getpid()
-    return [int(p) for p in out.stdout.split() if p.isdigit() and int(p) != me]
+    found = {int(p) for p in out.stdout.split() if p.isdigit()} | set(_claude_registered(native_id))
+    return sorted(p for p in found if p != me)
+
+
+def _claude_registered(native_id: str) -> list[int]:
+    """Live processes in Claude Code's registry (`~/.claude/sessions/<pid>.json`) on this session."""
+    root = Path(os.environ.get("ROBIN_CLAUDE_SESSIONS") or Path.home() / ".claude" / "sessions")
+    pids = []
+    for path in root.glob("*.json"):
+        try:
+            entry = json.loads(path.read_text())
+            pid = int(entry["pid"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if entry.get("sessionId") == native_id and _alive(pid):
+            pids.append(pid)
+    return pids
+
+
+def _alive(pid: int) -> bool:
+    if pid <= 0:  # kill(0) and kill(-n) signal process groups, not one process
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def open_in_terminal_app(command: list[str], cwd: str) -> None:

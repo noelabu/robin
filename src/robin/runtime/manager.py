@@ -290,7 +290,8 @@ class RuntimeManager:
             if _recently_written(self.store, session_id):
                 raise ActionRejected(
                     "terminal_still_open",
-                    "it looks like it's still running in a terminal; close it there first",
+                    "it looks like it's still running in a terminal; close it there, then try again "
+                    "once it has been quiet for two minutes",
                 )
 
         async def flip() -> None:
