@@ -164,7 +164,14 @@ export function SessionList(props: { sessions: Session[]; selected: string | nul
                     {s.branch ? ` · ${s.branch}` : ""}
                     {s.archived ? " · archived" : ""}
                   </span>
-                  {s.shared_folder_with.length > 0 && <span className="shared"> · shared folder</span>}
+                  {(s.shared_folder_with.length > 0 || s.skip_permissions) && (
+                    <span className="shared">
+                      {" · "}
+                      {[s.shared_folder_with.length > 0 && "shared folder", s.skip_permissions && "skip permissions"]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                  )}
                 </span>
                 <span className="sr-only">, in {folder}</span>
               </button>

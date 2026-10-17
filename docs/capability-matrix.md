@@ -30,6 +30,7 @@ Dated evidence for each runtime against the PRD §16 minimum capability floor (T
 | Terminal mode | **Handoff works** (`claude --resume <id>`) | **Handoff works** (`codex resume <id>`). **Attach possible** if Robin hosts Codex behind a listener; every client can drive, so it's shared control | **Handoff works** (`pi --session <id>`); no attach |
 | Review independence | **Enforced with deny rules**: sandbox `denyRead` for shell + `Read(//…)` deny for file tools (defaults do not isolate) | **Enforced with a deny profile** on the artifact store (default read-only sandbox does not isolate) | **Not isolated**: Pi has no sandbox |
 | Hook mechanism (WP-2.6) | `hooks` in `~/.claude/settings.json` | `~/.codex/hooks.json` (confirmed: 15 hook runs per session) | Extensions in `~/.pi/agent/extensions` |
+| Skip permission prompts (opt-in per session) | `permission_mode=bypassPermissions`; deny rules and the sandbox still apply | `approvalPolicy: never`; the sandbox is unchanged, so blocked commands fail instead of asking | Refused: Pi has no permission prompts |
 | Approvals pre-empted by user config | Allow rules skip `can_use_tool` | Policy from `~/.codex/config.toml` | Only Robin's extension asks |
 
 Per-runtime details: `claude/findings.md`, `codex/findings.md`, `pi/findings.md`.

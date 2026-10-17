@@ -116,6 +116,11 @@ export function Card(props: {
         <span className="rt">
           {meta}
           {!mini && card.last_activity_at && ` · ${ago(ended ?? card.last_activity_at, now)} ago`}
+          {card.skip_permissions && (
+            <span className="skip" title="Permission prompts skipped for this session">
+              {" · skip permissions"}
+            </span>
+          )}
         </span>
         {props.permission ? (
           <span className="map-chip permission">Needs permission</span>

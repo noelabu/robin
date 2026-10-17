@@ -118,6 +118,7 @@ export function SessionDetail({
               ⎇ <code>{session.branch}</code>
             </span>
           )}
+          {session.skip_permissions && <span className="warn-text">skip permissions</span>}
           {session.last_activity_at && <span>last activity {since(session.last_activity_at, Date.now())} ago</span>}
           {session.mode === "observed" && c.takeover?.enabled && (
             <button type="button" className="link" onClick={() => void archive()}>
@@ -149,6 +150,12 @@ export function SessionDetail({
                   ? "Independent: can't read other agents' findings"
                   : "Not isolated: this runtime can't be kept from Robin's findings"}
               </dd>
+            </>
+          )}
+          {session.skip_permissions && (
+            <>
+              <dt>Permissions</dt>
+              <dd className="warn-text">Prompts skipped (chosen at launch)</dd>
             </>
           )}
           <dt>Mode</dt>

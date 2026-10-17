@@ -1,7 +1,8 @@
 """The Codex runtime host, through `codex app-server` over stdio JSON-RPC (Phase 0: codex/findings.md).
 
 Uses the owner's existing Codex login. Sends no approval policy or sandbox, so ~/.codex/config.toml applies;
-only ever asks for something stricter (FR-012). Steering applies mid-turn (turn/steer).
+only ever asks for something stricter (FR-012), or for no approvals when the user opted in for this session.
+The sandbox is never loosened. Steering applies mid-turn (turn/steer).
 """
 
 import argparse
@@ -9,6 +10,7 @@ import asyncio
 import json
 import os
 import sys
+from collections.abc import Mapping
 from typing import Any
 
 from robin.adapters.codex.translate import translate
@@ -21,6 +23,14 @@ APPROVAL_METHODS = {
     "execCommandApproval",
     "applyPatchApproval",
 }
+
+
+def approval_policy(env: Mapping[str, str]) -> str | None:
+    """A stricter override wins; otherwise no approvals if the user opted in; otherwise the user's default."""
+    stricter = env.get("ROBIN_CODEX_APPROVAL_POLICY")
+    if stricter in ("untrusted", "on-request"):  # only ever stricter than the user's default
+        return stricter
+    return "never" if env.get("ROBIN_SKIP_PERMISSIONS") == "1" else None
 
 
 class Rpc:
@@ -108,9 +118,8 @@ async def run_codex(args: argparse.Namespace) -> None:
         raise SystemExit(2)
     await rpc.write({"method": "initialized"})
     start: dict[str, Any] = {"cwd": args.cwd}
-    stricter = os.environ.get("ROBIN_CODEX_APPROVAL_POLICY")
-    if stricter in ("untrusted", "on-request"):  # only ever stricter than the user's default
-        start["approvalPolicy"] = stricter
+    if policy := approval_policy(os.environ):
+        start["approvalPolicy"] = policy
     if os.environ.get("ROBIN_DENY_READ"):
         start["config"] = deny_read_config(os.environ["ROBIN_DENY_READ"])
     if "tool" in os.environ.get("ROBIN_FINDINGS", ""):  # finding publication for task-bound sessions

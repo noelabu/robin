@@ -94,6 +94,7 @@ button.map-pill.need { background: #2a1d12; border: 1px solid #4a3218; color: #f
 .map-card.running { border-color: var(--m-accent); box-shadow: 0 0 0 1px #b48cff33, 0 8px 22px #0008; }
 .map-card .meta { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
 .map-card .rt { font: 10px var(--mono); color: var(--m-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.map-card .rt .skip { color: var(--m-amber); }
 .map-card h3 {
   margin: 0 0 4px; font-size: 12.5px; font-weight: 650; line-height: 1.3; overflow: hidden; color: var(--m-ink);
   max-height: calc(2 * 1.3em);

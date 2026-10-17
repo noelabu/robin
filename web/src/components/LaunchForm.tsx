@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, type Session, type Task } from "../api";
 
+const SKIPS = new Set(["claude", "codex"]); // runtimes that can run without permission prompts
+
 function overlaps(a: string, b: string): boolean {
   const norm = (p: string) => p.replace(/\/+$/, "");
   const [x, y] = [norm(a), norm(b)];
@@ -21,6 +23,7 @@ export function LaunchForm(props: {
   const [prompt, setPrompt] = useState("");
   const [independent, setIndependent] = useState(false);
   const [worktree, setWorktree] = useState(false);
+  const [skipPermissions, setSkipPermissions] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const first = useRef<HTMLSelectElement>(null);
@@ -49,6 +52,7 @@ export function LaunchForm(props: {
             props.task?.task_id ?? null,
             independent,
             worktree,
+            skipPermissions && SKIPS.has(runtime),
           );
           props.onLaunched(r.session_id, r.warnings);
         } catch (err) {
@@ -91,6 +95,17 @@ export function LaunchForm(props: {
       {independent && runtime === "pi" && (
         <p className="hint warn" role="status">
           Pi has no sandbox, so this review will be labelled not isolated.
+        </p>
+      )}
+      {SKIPS.has(runtime) && (
+        <label className="inline check">
+          <input type="checkbox" checked={skipPermissions} onChange={(e) => setSkipPermissions(e.target.checked)} />{" "}
+          Skip permission prompts: the agent runs tools without asking you
+        </label>
+      )}
+      {skipPermissions && SKIPS.has(runtime) && (
+        <p className="hint warn" role="status">
+          Deny rules and the sandbox still apply.
         </p>
       )}
       <label htmlFor="prompt">First instruction (optional)</label>

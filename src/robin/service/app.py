@@ -79,6 +79,7 @@ class LaunchBody(BaseModel):
     finding_tool: bool = True  # False: publish by final-message block only (MCP stays optional, TR-066)
     independent: bool = False  # a reviewer that can't read other agents' findings (FR-032, TR-064)
     worktree: bool = False  # run in a new Git worktree on its own branch (FR-051)
+    skip_permissions: bool = False  # run without permission prompts (claude, codex), kept across relaunches
 
 
 class ActionBody(BaseModel):
@@ -175,6 +176,7 @@ def session_view(r: Any, shared: list[str] | None = None) -> dict[str, Any]:
         "pending_task_id": r["pending_task_id"],
         "archived": bool(r["archived"]),
         "independence": r["independence"],
+        "skip_permissions": bool(r["skip_permissions"]),
         "branch": None if r["archived"] else folders.branch_of(r["execution_cwd"]),
         "shared_folder_with": shared or [],
         "title": r.get("title"),
@@ -534,6 +536,13 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         ok, reason = caps.allows("launch")
         if not ok:
             raise ApiError(409, "unsupported", reason or "unsupported")
+        if body.skip_permissions and not caps.skip_permissions:
+            raise ApiError(
+                422,
+                "unsupported",
+                caps.unsupported.get("skip_permissions", f"{body.runtime} can't skip permission prompts"),
+                "fix_request",
+            )
         worktree = None
         if body.worktree:
             label = task["title"] if task else body.runtime
@@ -570,6 +579,9 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         if body.independent:
             independence = runtime.manager.independence_env(body.runtime, env)
             await asyncio.to_thread(ws.set_independence, store, sid, independence)
+        if body.skip_permissions:
+            env["ROBIN_SKIP_PERMISSIONS"] = "1"
+            await asyncio.to_thread(ws.set_skip_permissions, store, sid, True)
         # Work for a task always starts a new native session bound to it (FR-013).
         await asyncio.to_thread(
             ws.bind_new_session,

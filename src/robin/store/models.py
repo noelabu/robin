@@ -111,6 +111,8 @@ class Session(Base):
     # An independent reviewer (TR-064): "enforced" when the sandbox excludes Robin's store, "not_isolated"
     # when the runtime can't; NULL for ordinary sessions.
     independence: Mapped[str | None] = mapped_column(String)
+    # Launched with permission prompts skipped (an explicit opt-in); applied again on every relaunch.
+    skip_permissions: Mapped[int] = mapped_column(Integer, server_default=text("0"))
 
 
 class Run(Base):

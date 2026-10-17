@@ -1117,6 +1117,7 @@ def _card(s: Any, lane: Any, now: datetime, parent: str | None = None) -> dict[s
         "last_activity_at": _iso(last),
         "created_at": _iso(s.created_at),
         "subagents_hidden": 0,
+        "skip_permissions": not parent and bool(s.skip_permissions),
     }
 
 
@@ -1155,6 +1156,7 @@ def _rows(conn: Connection, session_ids: list[str] | None) -> list[Any]:
             SessionRow.execution_cwd,
             SessionRow.created_at,
             SessionRow.updated_at,
+            SessionRow.skip_permissions,
             SessionActivity.lane,
             SessionActivity.title,
             SessionActivity.label,

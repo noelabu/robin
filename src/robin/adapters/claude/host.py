@@ -2,7 +2,8 @@
 
 Runs inside a per-session runtime host under the supervisor. Uses the owner's own `claude` login through
 the unmodified bundled Claude Code binary; Robin never reads the token. Loads the user's Claude Code
-settings and never chooses a permission mode more permissive than the harness default (FR-012).
+settings and never chooses a permission mode more permissive than the harness default (FR-012), unless the
+user opted in to skipping permission prompts for this session.
 
 Input sent during a turn is queued by Claude Code until the turn ends; Robin labels it "queued".
 """
@@ -12,7 +13,9 @@ import asyncio
 import json
 import os
 import uuid
-from typing import Any
+import warnings
+from collections.abc import Mapping
+from typing import Any, Literal
 
 from robin import __version__, agent_client
 from robin.adapters.claude.translate import translate
@@ -34,9 +37,15 @@ def deny_read_settings(store: str) -> str:
     )
 
 
+def permission_mode(env: Mapping[str, str]) -> Literal["default", "bypassPermissions"]:
+    """The harness default, or bypass when the user opted in for this session. Deny rules still apply."""
+    return "bypassPermissions" if env.get("ROBIN_SKIP_PERMISSIONS") == "1" else "default"
+
+
 @runtime("claude")
 async def run_claude(args: argparse.Namespace) -> None:
     from claude_agent_sdk import (
+        CanUseToolShadowedWarning,
         ClaudeAgentOptions,
         ClaudeSDKClient,
         PermissionResultAllow,
@@ -45,6 +54,8 @@ async def run_claude(args: argparse.Namespace) -> None:
         tool,
     )
 
+    # Under bypass the callback still catches what needs the user's input; the SDK warns it's mostly unused.
+    warnings.filterwarnings("ignore", category=CanUseToolShadowedWarning)
     approvals = Approvals()
     state = {"busy": False, "interrupted": False}
 
@@ -87,7 +98,7 @@ async def run_claude(args: argparse.Namespace) -> None:
         allowed_tools=[f"mcp__robin__{t.name}" for t in tools] if publish_tool else [],
         cwd=args.cwd,
         setting_sources=["user", "project", "local"],
-        permission_mode="default",
+        permission_mode=permission_mode(os.environ),
         can_use_tool=can_use_tool,
         resume=os.environ.get("ROBIN_RESUME_NATIVE_ID") or None,
         settings=deny_read_settings(deny) if deny else None,

@@ -176,7 +176,7 @@ A minimal detached process holding one runtime child over a Unix socket. Kill an
 
 - `AgentAdapter` protocol and capability model with per-operation support, unsupported reasons, terminal mode, publication path and independence flag.
 - Fake adapter (see layout).
-- First real adapter, Claude Agent SDK, using the owner's existing `claude` login: probe, launch, events, send (`query()` on the open client; input during a turn is queued), interrupt, approval callback (`can_use_tool`), resume (`resume=`), reconcile. Set `setting_sources` explicitly so the user's Claude Code settings load; don't rely on the SDK default. Record permission mode, sandbox, settings sources and `apiKeySource` at launch. Never choose a mode more permissive than the harness default.
+- First real adapter, Claude Agent SDK, using the owner's existing `claude` login: probe, launch, events, send (`query()` on the open client; input during a turn is queued), interrupt, approval callback (`can_use_tool`), resume (`resume=`), reconcile. Set `setting_sources` explicitly so the user's Claude Code settings load; don't rely on the SDK default. Record permission mode, sandbox, settings sources and `apiKeySource` at launch. Never choose a mode more permissive than the harness default, unless the user opts in for that session (`--skip-permissions`).
 - Process launch through an executable allowlist and argument arrays only (TR-070).
 
 ### WP-1.6 HTTP API, auth and SSE (TR-050–052, 034–035)

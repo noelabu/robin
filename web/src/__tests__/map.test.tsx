@@ -127,6 +127,15 @@ describe("card", () => {
     expect(onOpen).toHaveBeenCalled();
   });
 
+  test("marks a session that skips permission prompts", () => {
+    const { container, rerender } = show(card({ skip_permissions: true }));
+    expect(container.querySelector(".rt .skip")?.textContent).toBe(" · skip permissions");
+    rerender(
+      <Card card={card()} rect={{ x: 0, y: 0, w: 248, h: 128 }} state="running" inferred now={NOW} selected={false} onOpen={() => {}} onFocus={() => {}} />,
+    );
+    expect(container.querySelector(".rt .skip")).toBeNull();
+  });
+
   test("says when a runtime has no detail", () => {
     show(card({ runtime: "pi", detail: false, todos: null, files: 0, last_file: null }));
     expect(screen.getByText("No detail for this runtime")).toBeTruthy();

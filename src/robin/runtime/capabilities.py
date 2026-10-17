@@ -22,6 +22,7 @@ class Capabilities:
     terminal_mode: str = "handoff"  # attach | handoff | unavailable
     finding_paths: tuple[str, ...] = ("tool", "message")
     review_independence: str = "enforced_with_deny_rules"  # enforced_with_deny_rules | not_isolated
+    skip_permissions: bool = True  # can launch with permission prompts skipped (opt-in per session)
     # How sessions started outside Robin are seen: opt-in hooks (`robin hooks install`) or transcripts only.
     observation: str = "hooks_or_transcripts"  # hooks_or_transcripts | transcripts_only
     level: str = "live"  # live | observed_only
@@ -60,7 +61,11 @@ RUNTIME_CAPABILITIES: dict[str, Capabilities] = {
         "pi-coding-agent 1.2.0",
         approvals="robin_extension",
         review_independence="not_isolated",
-        unsupported={"review_independence": "Pi has no sandbox"},
+        skip_permissions=False,
+        unsupported={
+            "review_independence": "Pi has no sandbox",
+            "skip_permissions": "Pi has no permission prompts",
+        },
     ),
     "fake": Capabilities("fake", "test runtime"),
 }
@@ -79,6 +84,7 @@ def capabilities_for(runtime: str) -> Capabilities:
         terminal_mode="unavailable",
         finding_paths=(),
         review_independence="not_isolated",
+        skip_permissions=False,
         observation="transcripts_only",
         level="observed_only",
         unsupported={"live": f"no Robin adapter for {runtime}"},

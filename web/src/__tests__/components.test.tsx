@@ -1,7 +1,8 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, vi } from "vitest";
 import { api, ApiError, type Session } from "../api";
 import { ActivityFeed } from "../components/ActivityFeed";
+import { LaunchForm } from "../components/LaunchForm";
 import { Prose } from "../components/Prose";
 import { SessionDetail } from "../components/SessionDetail";
 import { GROUP, ROW, SessionList } from "../components/SessionList";
@@ -28,6 +29,7 @@ const session = (over: Partial<Session> = {}): Session => ({
   cluster: "/work/app",
   last_activity_at: null,
   independence: null,
+  skip_permissions: false,
   created_at: "2026-10-15T00:00:00Z",
   updated_at: "2026-10-15T00:00:00Z",
   controls: {
@@ -141,6 +143,45 @@ test("an independent review says whether it is isolated", () => {
   expect(screen.getByText("Independent: can't read other agents' findings")).toBeTruthy();
   rerender(<SessionDetail session={session({ runtime: "pi", independence: "not_isolated" })} />);
   expect(screen.getByText(/Not isolated/)).toBeTruthy();
+});
+
+test("a session launched with prompts skipped says so", () => {
+  render(<SessionDetail session={session({ skip_permissions: true })} />);
+  expect(screen.getByText("skip permissions")).toBeTruthy();
+  expect(screen.getByText("Prompts skipped (chosen at launch)")).toBeTruthy();
+});
+
+test("the session list marks a session that skips permission prompts", () => {
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(640);
+  const list = [
+    session({ session_id: "a", title: "Unchecked", skip_permissions: true, shared_folder_with: ["b"] }),
+    session({ session_id: "b", title: "Ordinary" }),
+  ];
+  render(<SessionList sessions={list} selected={null} onSelect={() => {}} />);
+  expect(screen.getByText("Unchecked").closest("button")!.textContent).toContain("shared folder · skip permissions");
+  expect(screen.getByText("Ordinary").closest("button")!.textContent).not.toContain("skip permissions");
+  vi.restoreAllMocks();
+});
+
+test("the launch form offers skipping permission prompts for claude and codex only", async () => {
+  vi.spyOn(api, "adapters").mockResolvedValue({
+    adapters: ["claude", "codex", "pi"].map((runtime) => ({ runtime, level: "live" })),
+  } as unknown as Awaited<ReturnType<typeof api.adapters>>);
+  const launch = vi.spyOn(api, "launch").mockResolvedValue({ action: {} as never, session_id: "s9", warnings: [] });
+  render(<LaunchForm task={null} defaultCwd="/work/app" writers={[]} onCancel={() => {}} onLaunched={() => {}} />);
+  const box = screen.getByLabelText(/Skip permission prompts/);
+  fireEvent.click(box);
+  expect(screen.getByText("Deny rules and the sandbox still apply.")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Runtime"), { target: { value: "pi" } });
+  expect(screen.queryByLabelText(/Skip permission prompts/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+  await waitFor(() => expect(launch).toHaveBeenCalled());
+  expect(launch.mock.calls[0][6]).toBe(false); // a stale tick never reaches pi
+  fireEvent.change(screen.getByLabelText("Runtime"), { target: { value: "claude" } });
+  fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+  await waitFor(() => expect(launch).toHaveBeenCalledTimes(2));
+  expect(launch.mock.calls[1][6]).toBe(true);
+  vi.restoreAllMocks();
 });
 
 test("a long session list renders only the rows in view, and scrolling moves the window", () => {

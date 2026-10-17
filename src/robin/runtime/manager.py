@@ -317,7 +317,8 @@ class RuntimeManager:
         )
 
     async def _relaunch_env(self, session_id: str, row: Any) -> dict[str, str]:
-        """What a new host for an existing session needs: native ID, finding tools, credential, isolation."""
+        """What a new host for an existing session needs: native ID, finding tools, credential, isolation,
+        permission mode."""
         env = {"ROBIN_RESUME_NATIVE_ID": (row["native_session_id"] or "") if row else ""}
         if row and row["current_task_id"]:
             env["ROBIN_FINDINGS"] = "tool,message"
@@ -329,6 +330,8 @@ class RuntimeManager:
                 env["ROBIN_SERVICE_URL"] = url
         if row and row["independence"] == "enforced":  # a reviewer stays a reviewer
             self.independence_env(row["runtime"], env)
+        if row and row["skip_permissions"]:  # the opt-in made at launch outlives the host
+            env["ROBIN_SKIP_PERMISSIONS"] = "1"
         return env
 
     def _row(self, session_id: str) -> Any:

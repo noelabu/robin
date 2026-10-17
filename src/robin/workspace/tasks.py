@@ -467,6 +467,14 @@ def set_independence(store: Store, session_id: str, independence: str | None) ->
     )
 
 
+def set_skip_permissions(store: Store, session_id: str, on: bool) -> None:
+    store.writer.call(
+        lambda c: c.execute(
+            update(SessionRow).where(SessionRow.session_id == session_id).values(skip_permissions=int(on))
+        )
+    )
+
+
 DISPLAY_LIMIT = 64 * 1024  # TR-082: display limit for inline text
 
 

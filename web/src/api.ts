@@ -23,6 +23,7 @@ export type Session = {
   cluster: string; // the repository the folder belongs to
   last_activity_at: string | null;
   independence: "enforced" | "not_isolated" | null;
+  skip_permissions: boolean; // launched with permission prompts skipped
   created_at: string;
   updated_at: string;
   controls: Record<"message" | "interrupt" | "stop" | "approval" | "handoff" | "reclaim" | "takeover", Control>;
@@ -239,6 +240,7 @@ export type MapCard = {
   last_activity_at: string | null;
   created_at: string | null;
   subagents_hidden: number;
+  skip_permissions?: boolean; // a session launched with permission prompts skipped
   // a session: skills/workflows and background shells that finished a while ago, folded into its panel
   shells_done?: number;
   groups_done?: number;
@@ -384,6 +386,7 @@ export const api = {
     taskId: string | null = null,
     independent = false,
     worktree = false,
+    skipPermissions = false,
   ) =>
     request<{ action: Action; session_id: string; warnings: string[] }>("POST", "/sessions/launch", {
       runtime,
@@ -392,6 +395,7 @@ export const api = {
       task_id: taskId,
       independent,
       worktree,
+      skip_permissions: skipPermissions,
       action_id: newActionId(),
     }),
   history: (scope: { session_id?: string; task_id?: string; project_id?: string }, limit = 200) =>

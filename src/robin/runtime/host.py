@@ -119,6 +119,7 @@ async def run_fake(args: argparse.Namespace) -> None:
             "launch_token": os.environ.get("ROBIN_LAUNCH_TOKEN"),
             # What a real adapter would enforce or offer, so tests can see the launch env took effect.
             "deny_read": os.environ.get("ROBIN_DENY_READ"),
+            "skip_permissions": os.environ.get("ROBIN_SKIP_PERMISSIONS"),
             "agent_tools": bool(os.environ.get("ROBIN_AGENT_TOKEN") and os.environ.get("ROBIN_SERVICE_URL")),
         }
     )

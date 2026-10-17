@@ -174,9 +174,12 @@ def cmd_run(args: argparse.Namespace) -> None:
                 "task_id": args.task,
                 "independent": args.independent,
                 "worktree": args.worktree,
+                "skip_permissions": args.skip_permissions,
             },
         )
         print(f"session {r['session_id']}")
+        if args.skip_permissions:
+            print("permission prompts: skipped")
         if args.worktree:
             (w,) = call(c, "GET", f"/worktrees?session_id={r['session_id']}")["worktrees"]
             print(f"worktree {w['worktree_id']}: {w['path']} on branch {w['branch']}")
@@ -1223,6 +1226,11 @@ def parser() -> argparse.ArgumentParser:
         "--independent", action="store_true", help="a reviewer that can't read other agents' findings"
     )
     p.add_argument("--worktree", action="store_true", help="run in a new Git worktree on its own branch")
+    p.add_argument(
+        "--skip-permissions",
+        action="store_true",
+        help="run tools without asking (claude, codex); deny rules and the sandbox still apply",
+    )
     p.set_defaults(func=cmd_run)
 
     for control, help_text in (
