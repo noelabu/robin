@@ -96,6 +96,79 @@ def project(conn: Connection, session_id: str, cursor: int, at: datetime, ev: di
         _failure(conn, session_id, cursor, at, ev)
 
 
+# Hook names that end an observed session's open questions: the turn ended, a new prompt came, it stopped.
+HOOK_TURN_ENDS = {"Stop", "agent_end", "UserPromptSubmit", "turn_start", "SessionEnd", "session_shutdown"}
+QUESTION_TOOLS = {"AskUserQuestion"}
+
+
+def project_hook(
+    conn: Connection, session_id: str, cursor: int, at: datetime, payload: dict[str, Any]
+) -> None:
+    """One hook from a session started outside Robin. Its questions show here, answered in its terminal."""
+    name = payload.get("hook_event_name")
+    tool_use = payload.get("tool_use_id")
+    if name == "PreToolUse" and payload.get("tool_name") in QUESTION_TOOLS and tool_use:
+        questions = _questions(payload.get("tool_input"))
+        task = conn.execute(
+            select(SessionRow.current_task_id).where(SessionRow.session_id == session_id)
+        ).scalar()
+        conn.execute(
+            sqlite_insert(AttentionItem)
+            .values(
+                attention_id=new_id(),
+                kind="question",
+                session_id=session_id,
+                task_id=task,
+                native_request_id=str(tool_use),
+                state="open",
+                title=questions[0]["question"] if questions else "Question",
+                detail=json.dumps(
+                    {"tool": payload.get("tool_name"), "questions": questions, "answer_in": "terminal"},
+                    ensure_ascii=False,
+                ),
+                allowed_responses=json.dumps([]),
+                originating_cursor=cursor,
+                created_at=at,
+                updated_at=at,
+            )
+            .on_conflict_do_nothing(index_elements=["session_id", "native_request_id"])
+        )
+    elif name == "PostToolUse" and tool_use:
+        _set_request(conn, session_id, tool_use, "resolved", at, resolution="answered")
+    elif name in HOOK_TURN_ENDS:
+        conn.execute(
+            update(AttentionItem)
+            .where(
+                AttentionItem.session_id == session_id,
+                AttentionItem.kind == "question",
+                AttentionItem.state.in_(ACTIVE),
+            )
+            .values(state="expired", resolution="turn ended", updated_at=at)
+        )
+
+
+def _questions(tool_input: Any) -> list[dict[str, Any]]:
+    raw = tool_input.get("questions") if isinstance(tool_input, dict) else None
+    out = []
+    for q in raw if isinstance(raw, list) else []:
+        if not isinstance(q, dict) or not q.get("question"):
+            continue
+        options = q.get("options") if isinstance(q.get("options"), list) else []
+        out.append(
+            {
+                "question": str(q["question"]),
+                "header": str(q.get("header") or ""),
+                "multi": bool(q.get("multiSelect")),
+                "options": [
+                    {"label": str(o.get("label") or ""), "description": str(o.get("description") or "")}
+                    for o in options
+                    if isinstance(o, dict)
+                ],
+            }
+        )
+    return out
+
+
 def _set_request(
     conn: Connection, session_id: str, request_id: Any, state: str, at: datetime, resolution: str
 ) -> None:

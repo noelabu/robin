@@ -321,3 +321,47 @@ def test_uninstall_after_a_reinstall_still_removes_the_event_lists_robin_created
     hooks.apply(hooks.plan_install("claude", data), data)  # repairs the moved relay
     hooks.apply(hooks.plan_uninstall("claude", data), data)
     assert paths["claude"].read_text() == original
+
+
+def test_an_outside_sessions_question_waits_in_attention_until_answered(served):
+    from robin.runtime import attention
+
+    store = served
+    ask = {
+        "session_id": "ext-q",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "AskUserQuestion",
+        "tool_use_id": "toolu_1",
+        "tool_input": {
+            "questions": [
+                {
+                    "question": "How should a workflow appear?",
+                    "header": "Workflows",
+                    "multiSelect": False,
+                    "options": [{"label": "Card + its agents", "description": "Agents under it"}],
+                }
+            ]
+        },
+    }
+    body = {"relay_id": "q1", "relayed_at": time.time(), "payload": ask}
+    hook_ingest.record(store, "claude", body)
+    hook_ingest.record(store, "claude", body)  # a repeat opens nothing new
+    sid = session_by_native(store, "ext-q")["session_id"]
+    [item] = attention.list_items(store, session_id=sid)
+    assert item["kind"] == "question" and item["title"] == "How should a workflow appear?"
+    assert item["detail"]["questions"][0]["options"][0]["label"] == "Card + its agents"
+    assert item["allowed_responses"] == []
+
+    answered = {**ask, "hook_event_name": "PostToolUse"}
+    hook_ingest.record(store, "claude", {"relay_id": "q2", "relayed_at": time.time(), "payload": answered})
+    assert attention.list_items(store, session_id=sid) == []
+
+    hook_ingest.record(
+        store,
+        "claude",
+        {"relay_id": "q3", "relayed_at": time.time(), "payload": {**ask, "tool_use_id": "toolu_2"}},
+    )
+    hook_ingest.record(
+        store, "claude", {"relay_id": "q4", "payload": {"session_id": "ext-q", "hook_event_name": "Stop"}}
+    )
+    assert attention.list_items(store, session_id=sid) == []  # an unanswered question ends with the turn

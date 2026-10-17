@@ -20,12 +20,14 @@ from sqlalchemy import Connection, select, update
 from robin.events.envelope import EvidenceKind, NewEvent
 from robin.events.ingest import (
     CheckpointAdvance,
+    Inserted,
     ensure_session,
     ingest_batch,
     open_generation,
     read_checkpoint,
 )
 from robin.ids import utc_now
+from robin.runtime import attention
 from robin.store import Store
 from robin.store.models import Session as SessionRow
 from robin.workspace import tasks as ws
@@ -95,7 +97,7 @@ def record(store: Store, runtime: str, body: dict[str, Any]) -> dict[str, Any]:
             evidence_kind=EvidenceKind.REPORTED,
             payload=json.dumps({"hook": name, **payload}, ensure_ascii=False).encode(),
         )
-        ingest_batch(store, [event], [], CheckpointAdvance(source_id, 0, seq, None))
+        result = ingest_batch(store, [event], [], CheckpointAdvance(source_id, 0, seq, None))
     projects = ws.project_paths(store)
 
     def observe(conn: Connection) -> None:
@@ -103,6 +105,10 @@ def record(store: Store, runtime: str, body: dict[str, Any]) -> dict[str, Any]:
         if state:
             values["runtime_state"] = state
         conn.execute(update(SessionRow).where(SessionRow.session_id == sid).values(**values))
+        if result and isinstance(result[0], Inserted):  # a repeated delivery was already projected
+            attention.project_hook(
+                conn, sid, result[0].global_cursor, at, {"hook_event_name": name, **payload}
+            )
         project = ws.project_for(cwd, projects)
         if project:
             conn.execute(
