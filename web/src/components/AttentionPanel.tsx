@@ -1,13 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, type AttentionItem } from "../api";
-
-function describe(item: AttentionItem): string {
-  const input = item.detail.input;
-  if (input && typeof input === "object" && "command" in (input as Record<string, unknown>))
-    return String((input as Record<string, unknown>).command);
-  if (input !== undefined) return JSON.stringify(input);
-  return item.detail.reason ? String(item.detail.reason) : "";
-}
+import { describe } from "./Approval";
 
 /** Questions, approvals and failures. Only Approve/Deny answer the agent; Dismiss only hides the notice. */
 export function AttentionPanel(props: { refreshKey: number; onOpenSession: (id: string) => void }) {

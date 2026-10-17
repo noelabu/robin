@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type MapCard, type MapCluster, type Session } from "../api";
+import { useApprovals } from "../components/Approval";
 import { Card } from "./Card";
 import { layout, PANEL_GAP } from "./layout";
 import { TaskPanel } from "./TaskPanel";
@@ -15,6 +16,8 @@ export function SessionFlow({ session, onChanged }: { session: Session; onChange
   const [panelH, setPanelH] = useState(0);
   const now = useTick();
   const sid = session.session_id;
+  const approvals = useApprovals(session.updated_at);
+  const waiting = approvals.bySession.get(sid);
 
   useEffect(() => {
     let live = true;
@@ -80,6 +83,7 @@ export function SessionFlow({ session, onChanged }: { session: Session; onChange
               inferred={s.inferred}
               now={now}
               selected={open === c.id}
+              permission={!c.parent && !!waiting}
               onOpen={(card) => toggle(card.id)}
               onFocus={() => {}}
             />
@@ -104,6 +108,8 @@ export function SessionFlow({ session, onChanged }: { session: Session; onChange
               onChanged={onChanged}
               onClose={() => setOpen(null)}
               actions={false}
+              approvals={sel.parent ? undefined : waiting}
+              onAnswered={approvals.reload}
             />
           </div>
         )}

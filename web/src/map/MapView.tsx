@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, type MapCard, type MapCluster, type Session } from "../api";
+import { useApprovals } from "../components/Approval";
 import { RecencySwitch, WIDER } from "../components/RecencySwitch";
 import { inRecency, type Recency } from "../recency";
 import type { FeedItem } from "../useWorkspace";
@@ -35,6 +36,7 @@ export function MapView(props: {
   const [panelH, setPanelH] = useState(0);
   const [watching, setWatching] = useState<boolean | null>(null);
   const [needs, setNeeds] = useState(0);
+  const approvals = useApprovals(ws.attentionVersion);
 
   useEffect(() => {
     void api.watch().then((w) => setWatching(w.enabled)).catch(() => setWatching(null));
@@ -295,6 +297,7 @@ export function MapView(props: {
                   inferred={s.inferred}
                   now={now}
                   selected={selected === c.id}
+                  permission={!c.parent && approvals.bySession.has(c.session_id)}
                   onOpen={(card) => open(card.id)}
                   onFocus={(rect) => canvas.current?.reveal(rect)}
                 />
@@ -322,6 +325,11 @@ export function MapView(props: {
                     props.onChanged?.();
                   }}
                   onClose={close}
+                  approvals={sel.parent ? undefined : approvals.bySession.get(sel.session_id)}
+                  onAnswered={() => {
+                    approvals.reload();
+                    props.onChanged?.();
+                  }}
                 />
               </div>
             )}

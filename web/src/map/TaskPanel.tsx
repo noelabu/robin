@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api, ApiError, type FileTouch, type MapCard, type MapState, type Session, type SessionActivity } from "../api";
+import { api, ApiError, type AttentionItem, type FileTouch, type MapCard, type MapState, type Session, type SessionActivity } from "../api";
+import { ApprovalBox } from "../components/Approval";
 import { ago } from "./time";
 
 const SHOWN_FILES = 12;
@@ -35,6 +36,8 @@ export function TaskPanel(props: {
   onChanged?: () => void;
   onClose: () => void;
   actions?: boolean; // the Sessions tab has its own controls
+  approvals?: AttentionItem[]; // permission requests waiting on the user, shown first
+  onAnswered?: () => void;
 }) {
   const { card, now } = props;
   const [detail, setDetail] = useState<SessionActivity | null>(null);
@@ -114,6 +117,9 @@ export function TaskPanel(props: {
         if (e.key === "Escape") props.onClose();
       }}
     >
+      {props.approvals?.map((a) => (
+        <ApprovalBox key={a.attention_id} item={a} onAnswered={props.onAnswered} />
+      ))}
       {error && <p className="tp-note">Couldn&apos;t load this session&apos;s activity: {error}</p>}
       {!card.detail ? (
         <p className="tp-note">Robin doesn&apos;t read tasks or file edits for {card.runtime} yet.</p>

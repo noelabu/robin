@@ -38,6 +38,7 @@ export function Card(props: {
   inferred: boolean;
   now: number;
   selected: boolean;
+  permission?: boolean; // a permission request is waiting on the user
   onOpen: (card: MapCard) => void;
   onFocus: (rect: Rect) => void;
 }) {
@@ -55,7 +56,7 @@ export function Card(props: {
   const title = card.title || `${card.runtime} · ${card.session_id.slice(0, 8)}`;
   return (
     <button
-      className={`map-card ${sub ? "sub" : ""} ${state} ${props.selected ? "open" : ""}`}
+      className={`map-card ${sub ? "sub" : ""} ${state} ${props.selected ? "open" : ""} ${props.permission ? "permission" : ""}`}
       style={{ ...hue(card.cluster), left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
       aria-expanded={props.selected}
       data-card={card.id}
@@ -75,7 +76,11 @@ export function Card(props: {
           {sub ? (card.label ?? "subagent") : card.runtime}
           {card.last_activity_at && ` · ${ago(card.last_activity_at, now)} ago`}
         </span>
-        <StateChip state={state} inferred={inferred} complete={complete} />
+        {props.permission ? (
+          <span className="map-chip permission">Needs permission</span>
+        ) : (
+          <StateChip state={state} inferred={inferred} complete={complete} />
+        )}
       </span>
       <h3>{title}</h3>
       <span className="line">
@@ -97,7 +102,7 @@ export function Card(props: {
             <i style={t ? { width: `${(t.done / t.total) * 100}%` } : undefined} />
           </span>
           <span className="foot">
-            {props.selected ? "Hide tasks ↑" : "Show tasks ↓"}
+            {props.selected ? "Hide tasks ↑" : props.permission ? "Review request ↓" : "Show tasks ↓"}
             {card.subagents_hidden > 0 && ` · ${card.subagents_hidden} more subagents`}
           </span>
         </>

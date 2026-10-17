@@ -382,3 +382,23 @@ button.map-pill.need { background: #2a1d12; border: 1px solid #4a3218; color: #f
 }
 @keyframes map-scan { from { background-position: 0 100%; } to { background-position: 0 0; } }
 @media (prefers-reduced-motion: reduce) { .map-ping { animation: none; } .map-card.running::after { display: none; } }
+
+/* -- a permission request waiting on the user: the card turns red until it's answered --------------- */
+.map-card.permission {
+  border-color: var(--m-bad);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--m-bad) 14%, var(--m-card)), var(--m-card));
+  box-shadow: 0 0 0 1px var(--m-bad), 0 0 24px color-mix(in srgb, var(--m-bad) 35%, transparent);
+  animation: map-alert 1.6s ease-in-out infinite;
+}
+.map-card.permission h3 { color: var(--m-ink); }
+.map-card.permission .foot { color: var(--m-bad); }
+.map-chip.permission { color: var(--m-bad); text-shadow: 0 0 10px color-mix(in srgb, var(--m-bad) 50%, transparent); }
+@keyframes map-alert { 50% { box-shadow: 0 0 0 1px var(--m-bad), 0 0 10px color-mix(in srgb, var(--m-bad) 20%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .map-card.permission { animation: none; } }
+.approval-box { padding: 10px; border-bottom: 1px solid var(--m-line); background: color-mix(in srgb, var(--m-bad) 8%, transparent); }
+.approval-box .approval-head { display: flex; gap: 8px; align-items: baseline; font-size: 12px; }
+.approval-box .kind { font: 600 9.5px var(--disp); letter-spacing: .14em; text-transform: uppercase; color: var(--m-bad); }
+.approval-box .attention-detail { display: block; margin-top: 6px; max-height: 12em; overflow: auto; font-size: 11px; }
+.approval-box .actions { margin-top: 8px; }
+.approval-box .actions button { padding: 4px 10px; font-size: 11px; border: 1px solid var(--m-line-hi); border-radius: 3px; }
+.approval-box .actions button.primary { background: var(--m-cta); color: #1a0f00; border-color: var(--m-cta); }
