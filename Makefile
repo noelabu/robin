@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help sync install reinstall run serve open doctor test web-install web-build web-dev web-test e2e packaging live lint format typecheck check
+.PHONY: help sync install reinstall run serve open doctor test web-install web-build web-dev web-test e2e packaging live mac mac-run mac-test lint format typecheck check
 
 help: ## List targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -48,6 +48,15 @@ packaging: ## Build the wheel and run it from a clean venv
 
 live: ## Real Claude, Codex and Pi sessions (uses your logins)
 	ROBIN_LIVE=1 uv run pytest tests/live
+
+mac: ## Build the menu bar app into mac/build
+	xcodebuild -project mac/Robin.xcodeproj -scheme Robin -configuration Debug -derivedDataPath mac/build build
+
+mac-run: mac ## Build and launch the menu bar app
+	open mac/build/Build/Products/Debug/Robin.app
+
+mac-test: ## Menu bar app unit tests
+	xcodebuild -project mac/Robin.xcodeproj -scheme Robin -derivedDataPath mac/build -destination 'platform=macOS' test
 
 lint: ## Ruff lint and format check
 	uv run ruff check .

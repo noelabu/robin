@@ -9,3 +9,5 @@ dist/
 web/node_modules/
 !src/robin/web/dist/
 .DS_STORE
+mac/build/
+xcuserdata/
