@@ -8,3 +8,4 @@ __pycache__/
 dist/
 web/node_modules/
 !src/robin/web/dist/
+.DS_STORE
