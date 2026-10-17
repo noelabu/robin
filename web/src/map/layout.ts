@@ -3,7 +3,7 @@ import type { MapCard, MapCluster } from "../api";
 export const CARD = { w: 272, h: 128 };
 export const SUB = { w: 228, h: 86 };
 export const GROUP = { w: 248, h: 96 }; // a skill or a workflow
-export const SHELL = { w: 228, h: 72 };
+export const SHELL = { w: 228, h: 90 }; // room for a two-line title and the command
 export const MINI = { w: 208, h: 60 }; // a workflow's agent
 export const PANEL_GAP = 8; // between a card and its open task panel
 const GAP = 16;
