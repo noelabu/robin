@@ -45,6 +45,7 @@ Every command except `serve` and `doctor` talks to the running service, so start
 ```bash
 make mac-run                 # build mac/build/.../Robin.app and launch it
 make mac-test                # its unit tests
+make update                  # after any change: rebuild the dashboard, reinstall robin, rebuild and relaunch the app
 ```
 
 - It lives in the menu bar: a dot (green running, yellow starting, red failing, hollow when `robin` isn't installed) and the number of items waiting on you. It has no Dock icon until the dashboard window is open.

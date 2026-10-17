@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help sync install reinstall run serve open doctor test web-install web-build web-dev web-test e2e packaging live mac mac-run mac-test lint format typecheck check
+.PHONY: help sync install reinstall run serve open doctor test web-install web-build web-dev web-test e2e packaging live mac mac-run mac-test update lint format typecheck check
 
 help: ## List targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -57,6 +57,15 @@ mac-run: mac ## Build and launch the menu bar app
 
 mac-test: ## Menu bar app unit tests
 	xcodebuild -project mac/Robin.xcodeproj -scheme Robin -derivedDataPath mac/build -destination 'platform=macOS' test
+
+update: web-build reinstall mac ## Rebuild the dashboard, robin and the app, then relaunch the app
+	-@osascript -e 'tell application id "personalprojects.robin" to quit' 2>/dev/null
+	@while pgrep -f "Robin.app/Contents/MacOS/Robin" >/dev/null; do sleep 1; done
+	@if [ -d /Applications/Robin.app ]; then \
+		ditto mac/build/Build/Products/Debug/Robin.app /Applications/Robin.app && open /Applications/Robin.app; \
+	else \
+		open mac/build/Build/Products/Debug/Robin.app; \
+	fi
 
 lint: ## Ruff lint and format check
 	uv run ruff check .
