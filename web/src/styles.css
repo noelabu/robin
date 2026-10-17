@@ -89,11 +89,7 @@ code { font-family: var(--mono); }
   grid-column: 1 / -1; display: flex; gap: 10px; align-items: center; padding: 0 16px 0 18px;
   border-bottom: 1px solid var(--line); background: var(--bg);
 }
-.brand { display: flex; gap: 10px; align-items: center; font-size: 14px; margin: 0 8px 0 0; font-weight: 650; }
-.brand-mark {
-  width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; flex: none;
-  background: transparent; border: 1px solid var(--m-accent); box-shadow: 0 0 14px #b48cff55, inset 0 0 10px #b48cff33;
-}
+.brand { margin: 0 8px 0 0; white-space: nowrap; }
 .topbar .spacer { flex: 1; }
 .pill { font-size: 12px; padding: 4px 10px; border-radius: 7px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
 .pill.ok { color: #c4e8cc; background: #142219; border-color: #24432c; }
