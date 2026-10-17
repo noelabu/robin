@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { api, type Project, type RobinEvent, type Session, type Task, type Workspace } from "./api";
 
-export type FeedItem = RobinEvent & { preview: string | null };
+/** A readable, redacted one-line summary; noise is hidden unless all events are shown. */
+export type FeedItem = RobinEvent & { preview: string | null; noise: boolean };
 
 type State = {
   ready: boolean;
@@ -23,7 +24,7 @@ type Msg =
   | { kind: "snapshot"; ws: Workspace }
   | { kind: "older"; sessions: Session[]; done: boolean }
   | { kind: "session"; session: Session }
-  | { kind: "event"; event: RobinEvent; session: Session; preview: string | null }
+  | { kind: "event"; event: RobinEvent; session: Session; preview: string | null; noise: boolean }
   | { kind: "stream"; state: State["streamState"] };
 
 const FEED_LIMIT = 500; // bounded rendering; full history stays on the server
@@ -46,7 +47,7 @@ function reducer(s: State, m: Msg): State {
       if (s.seen.has(m.event.event_id)) return s; // dedupe replays by event id (TR-034)
       const seen = new Set(s.seen);
       seen.add(m.event.event_id);
-      const feed = [{ ...m.event, preview: m.preview }, ...s.feed].slice(0, FEED_LIMIT);
+      const feed = [{ ...m.event, preview: m.preview, noise: m.noise }, ...s.feed].slice(0, FEED_LIMIT);
       return {
         ...s,
         seen,
@@ -104,7 +105,7 @@ export function useWorkspace(enabled: boolean) {
     es.onerror = () => dispatch({ kind: "stream", state: "reconnecting" });
     es.addEventListener("event", (e) => {
       const data = JSON.parse((e as MessageEvent).data);
-      dispatch({ kind: "event", event: data.event, session: data.session, preview: data.preview });
+      dispatch({ kind: "event", event: data.event, session: data.session, preview: data.preview, noise: !!data.noise });
     });
     es.addEventListener("resync_required", () => void connect());
   }, []);

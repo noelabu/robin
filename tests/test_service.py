@@ -498,12 +498,37 @@ def test_launch_warns_when_sessions_share_a_folder_and_history_is_filtered(servi
     latest = c.get(f"/api/v1/events?session_id={a}&latest=true&limit=2&previews=true").json()["events"]
     every = c.get(f"/api/v1/events?session_id={a}&limit=500").json()["events"]
     assert [e["global_cursor"] for e in latest] == [e["global_cursor"] for e in every[-2:]]
-    assert all("preview" in e and e["session_id"] == a for e in latest)
+    assert all("preview" in e and "noise" in e and e["session_id"] == a for e in latest)
     for sid in (a, b):
         c.post(f"/api/v1/sessions/{sid}/actions", json={"type": "stop", "action_id": aid()})
     # an archived or stopped session no longer counts
     c.patch(f"/api/v1/sessions/{b}", json={"archived": True})
     assert c.get(f"/api/v1/sessions/{a}").json()["shared_folder_with"] == []
+
+
+def test_event_previews_are_redacted_in_events_and_stream(service):
+    from test_context import FAKE_TOKEN, observed_session_with
+
+    store, port, auth = service
+    c = browser(port, auth)
+    watermark = c.get("/api/v1/workspace").json()["watermark"]
+    sid = observed_session_with(
+        store,
+        [
+            ("message.completed", {"type": "message_completed", "text": f"the key is {FAKE_TOKEN}"}),
+            (
+                "tool.started",
+                {"type": "tool_started", "tool": "Bash", "input": {"command": f"echo {FAKE_TOKEN}"}},
+            ),
+        ],
+    )
+    events = c.get(f"/api/v1/events?session_id={sid}&previews=true").json()["events"]
+    frames = sse_events(c, f"/api/v1/stream?after={watermark}", want=2)
+    previews = [e["preview"] for e in events] + [
+        f["data"]["preview"] for f in frames if f.get("event") == "event"
+    ]
+    assert len(previews) == 4 and all(p and "[REDACTED:github-pat]" in p for p in previews)
+    assert FAKE_TOKEN not in json.dumps(events) + json.dumps(frames)
 
 
 def test_session_list_pages_and_snapshot_is_bounded(service, monkeypatch):

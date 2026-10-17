@@ -24,8 +24,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import Connection, func, select
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from robin import retrieval
-from robin.events.ingest import ensure_session, read_events, read_payload_json
+from robin import activity, retrieval
+from robin.events.ingest import ensure_session, read_events
 from robin.paths import ExecutionCwd, secure_mkdir
 from robin.runtime.capabilities import RUNTIME_CAPABILITIES, capabilities_for
 from robin.runtime.ledger import Action, ActionConflict, ActionRejected
@@ -43,7 +43,6 @@ HOOK_BODY_MAX = 1024 * 1024
 SNAPSHOT_SESSIONS = 500  # observed sessions in the workspace snapshot; older ones page in
 
 log = logging.getLogger(__name__)
-PREVIEW_CHARS = 500
 WEB_DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
 
 
@@ -797,8 +796,9 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         )
         items = [e.model_dump(mode="json") for e in evs]
         if previews:
-            for item, e in zip(items, evs, strict=True):
-                item["preview"] = await asyncio.to_thread(_preview, e.global_cursor, e.payload_ref)
+            sums = await asyncio.to_thread(activity.summaries, store, evs)
+            for item, (text, noise) in zip(items, sums, strict=True):
+                item["preview"], item["noise"] = text, noise
         return {"events": items, "next_after": items[-1]["global_cursor"] if items else after}
 
     @app.get(f"{API}/stream")
@@ -830,40 +830,19 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
                 with store.reader.connect() as conn:
                     writers = _writers(conn)
                     views = {s: _sessions(conn, s, writers)[0] for s in touched}
-                for e in evs:
+                sums = await asyncio.to_thread(activity.summaries, store, evs)
+                for e, (text, noise) in zip(evs, sums, strict=True):
                     data = {
                         "event": e.model_dump(mode="json"),
                         "session": views[e.session_id],
-                        "preview": await asyncio.to_thread(_preview, e.global_cursor, e.payload_ref),
+                        "preview": text,
+                        "noise": noise,
                     }
                     yield _frame("event", data, event_id=e.global_cursor)
                 cursor = evs[-1].global_cursor
                 continue
             if await runtime.wait_change(seen, HEARTBEAT_S) == seen:
                 yield b": heartbeat\n\n"  # proves the Robin connection is alive, not that agents work
-
-    def _preview(cursor: int, payload_ref: str | None) -> str | None:
-        """A short plain-text summary for the activity feed. Large payloads stay behind their reference."""
-        if payload_ref is not None:
-            return None
-        try:
-            payload = read_payload_json(store, cursor)
-        except ValueError:
-            return None
-        if not isinstance(payload, dict):
-            return None
-        if payload.get("_robin_pruned"):
-            return "Pruned to stay under the storage cap; no longer available."
-        for key in ("text", "reason", "result", "output"):
-            value = payload.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()[:PREVIEW_CHARS]
-        tool = payload.get("tool")
-        if isinstance(tool, str):
-            detail = payload.get("input")
-            command = detail.get("command") if isinstance(detail, dict) else None
-            return f"{tool}: {command}"[:PREVIEW_CHARS] if isinstance(command, str) else tool
-        return None
 
     def _frame(kind: str, data: dict[str, Any], event_id: int | None = None) -> bytes:
         head = f"id: {event_id}\n" if event_id is not None else ""

@@ -312,6 +312,166 @@ def fold(lane: Lane, ctx: Ctx, event_type: str, payload: Any) -> None:
         _plan(lane, ctx, payload["plan"])
 
 
+# -- event summaries (the activity timeline) ----------------------------------------------------------
+
+NOISE_TYPES = {
+    "unknown.raw",
+    "message.delta",
+    "tool.output",
+    "tool.result",
+    "file.read",
+    "control.submitted",
+    "control.acknowledged",
+}
+GENERIC = {
+    "session.started": "Session started",
+    "session.turn_started": "Turn started",
+    "session.turn_completed": "Turn completed",
+    "session.stopped": "Session stopped",
+    "session.idle": "Idle",
+    "session.resumed": "Resumed",
+    "connection.connected": "Robin connected",
+    "connection.reconnecting": "Reconnecting",
+    "connection.stale": "Connection stale",
+    "connection.recovered": "Reconnected",
+    "connection.gap": "Gap in coverage: some events weren't observed",
+    "finding.published": "Published a finding",
+    "control.outcome_unknown": "Control outcome unknown",
+}
+NO_PAYLOAD = set(GENERIC) | {"tool.output", "message.delta", "file.read"}
+
+
+def _first_line(rules: RuleSet, text: Any, limit: int = TEXT_LIMIT) -> str | None:
+    """Redact the window first, then take its first line: a line cut before redacting could split a
+    multi-line secret. The output limit is far below the 4096-character window."""
+    if not isinstance(text, str):
+        return None
+    masked = rules.redact(text[:4096])[0]
+    line = next((x.strip() for x in masked.splitlines() if x.strip()), "")
+    if not line:
+        return None
+    return line if len(line) <= limit else line[: limit - 1] + "…"
+
+
+def _assistant_text(payload: dict[str, Any]) -> str | None:
+    kind = payload.get("type")
+    if kind == "assistant" and isinstance(payload.get("message"), dict):  # Claude transcript
+        blocks = payload["message"].get("content")
+        if isinstance(blocks, str):
+            return blocks
+        texts = [b.get("text", "") for b in blocks or [] if isinstance(b, dict) and b.get("type") == "text"]
+        return "\n".join(texts) or None
+    if kind == "event_msg" and isinstance(payload.get("payload"), dict):  # Codex
+        p = payload["payload"]
+        return p.get("message") if p.get("type") == "agent_message" else None
+    if kind == "message" and isinstance(payload.get("message"), dict):  # Pi transcript
+        content = payload["message"].get("content")
+        if isinstance(content, list):
+            return "\n".join(c.get("text", "") for c in content if isinstance(c, dict)) or None
+        return content if isinstance(content, str) else None
+    text = payload.get("text")  # host events
+    return text if isinstance(text, str) else None
+
+
+def summary(
+    rules: RuleSet, cwd: str | None, runtime: str, event_type: str, payload: Any, at: datetime
+) -> tuple[str | None, bool]:
+    """One readable, redacted line for an event, and whether it's noise (hidden by default)."""
+    if event_type in GENERIC:
+        return GENERIC[event_type], False
+    if isinstance(payload, dict) and payload.get("_robin_pruned"):
+        return "Pruned to stay under the storage cap; no longer available.", False
+    if not isinstance(payload, dict):
+        return None, True
+    name = runtime.capitalize()
+    ctx = Ctx(rules, cwd, at)
+    lane = Lane()
+    if event_type == "message.user":
+        if payload.get("type") == "response_item":  # Codex repeats the prompt as an event_msg
+            return None, True
+        fold(lane, ctx, event_type, payload)
+        return (f"You: {lane.title}", False) if lane.title else (None, True)
+    if event_type == "message.completed":
+        if payload.get("type") == "response_item":
+            return None, True
+        line = _first_line(rules, _assistant_text(payload))
+        return (f"{name}: {line}", False) if line else (None, True)
+    if event_type == "tool.started":
+        fold(lane, ctx, event_type, payload)
+        if lane.tool:
+            return (f"{lane.tool} {lane.target}" if lane.target else lane.tool), False
+        if lane.todos:
+            return (
+                f"Plan: {sum(t['status'] == 'completed' for t in lane.todos)} of {len(lane.todos)} done",
+                False,
+            )
+        return None, True
+    if event_type == "tool.error":
+        tool = summarize(rules, payload.get("tool") or "Tool", 60)
+        line = _first_line(rules, payload.get("output") or payload.get("error") or "")
+        return (f"{tool} failed: {line}" if line else f"{tool} failed"), False
+    if event_type == "file.change":
+        fold(lane, ctx, event_type, payload)
+        names = [Path(f["path"]).name for f in lane.files]
+        if not names:
+            return None, True
+        more = f" (+{len(names) - 2})" if len(names) > 2 else ""
+        return f"Changed {', '.join(names[:2])}{more}", False
+    if event_type == "session.plan_updated":
+        fold(lane, ctx, event_type, payload)
+        return f"Plan: {sum(t['status'] == 'completed' for t in lane.todos)} of {len(lane.todos)} done", False
+    if event_type == "session.failed":
+        line = _first_line(rules, payload.get("reason") or payload.get("message") or payload.get("error"))
+        return (f"Failed: {line}" if line else "Failed"), False
+    if event_type == "attention.approval_requested":
+        approve = payload.get("tool")
+        target = _target(ctx, str(approve), payload.get("input")) if approve else None
+        what = " ".join(x for x in (summarize(rules, approve, 60) if approve else None, target) if x)
+        return f"Approval requested: {what}" if what else "Approval requested", False
+    if event_type == "attention.question":
+        line = _first_line(rules, payload.get("text") or payload.get("question"))
+        return (f"Question: {line}" if line else "Question"), False
+    if event_type == "control.rejected":
+        line = _first_line(rules, payload.get("reason"))
+        return (f"Rejected: {line}" if line else "Rejected"), False
+    if event_type in NOISE_TYPES:
+        return None, True
+    return None, True
+
+
+def summaries(store: Store, events: list[Any]) -> list[tuple[str | None, bool]]:
+    """Summaries for a list of events (anything with global_cursor, session_id, runtime, event_type,
+    payload_ref and a time). Payloads are read only where the summary needs them."""
+    rules = for_data_dir(store.data_dir)
+    ids = {e.session_id for e in events}
+    with store.reader.connect() as conn:
+        cwd = dict(
+            conn.execute(
+                select(SessionRow.session_id, SessionRow.execution_cwd).where(SessionRow.session_id.in_(ids))
+            ).all()
+        )
+    out: list[tuple[str | None, bool]] = []
+    for e in events:
+        at = e.source_time or e.ingested_at
+        if e.event_type in NO_PAYLOAD:
+            out.append(summary(rules, None, e.runtime, e.event_type, None, at))
+            continue
+        if e.payload_ref is not None:  # large payloads stay behind their reference
+            text = (
+                f"{e.runtime.capitalize()} replied (long message)"
+                if e.event_type == "message.completed"
+                else None
+            )
+            out.append((text, text is None))
+            continue
+        try:
+            payload = read_payload_json(store, e.global_cursor)
+        except (ValueError, OSError):
+            payload = None
+        out.append(summary(rules, cwd.get(e.session_id), e.runtime, e.event_type, payload, at))
+    return out
+
+
 # -- lanes ---------------------------------------------------------------------------------------------------
 
 

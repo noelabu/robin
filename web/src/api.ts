@@ -357,7 +357,7 @@ export const api = {
       action_id: newActionId(),
     }),
   history: (scope: { session_id?: string; task_id?: string; project_id?: string }, limit = 200) =>
-    request<{ events: (RobinEvent & { preview: string | null })[] }>(
+    request<{ events: (RobinEvent & { preview: string | null; noise: boolean })[] }>(
       "GET",
       `/events?${new URLSearchParams({ ...scope, latest: "true", previews: "true", limit: String(limit) })}`,
     ),

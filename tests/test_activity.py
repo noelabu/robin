@@ -396,3 +396,70 @@ def test_new_lines_fold_onto_the_stored_lane(store, tmp_path):
     activity.catch_up(store)
     main = rows(store)[""]
     assert main.title == "First prompt" and [f["path"] for f in json.loads(main.files)] == ["x.py"]
+
+
+def _summaries(store, sid):
+    from robin.events.ingest import read_events
+
+    evs = read_events(store, session_id=sid, limit=100)
+    return [(e.event_type, *s) for e, s in zip(evs, activity.summaries(store, evs), strict=True)]
+
+
+def test_event_summaries(store):
+    approval = {"type": "approval_request", "tool": "Bash", "input": {"command": "make clean"}}
+    sid = observed_session_with(
+        store,
+        [
+            ("message.user", {"type": "user_message", "text": "fix the login test"}),
+            (
+                "message.user",
+                {"type": "user", "message": {"content": "<system-reminder>x</system-reminder>"}},
+            ),
+            ("message.completed", {"type": "message_completed", "text": "\nDone.\nThree files changed."}),
+            ("tool.started", {"type": "tool_started", "tool": "Bash", "input": {"command": "npm test"}}),
+            ("tool.error", {"type": "tool_error", "tool": "Bash", "output": "1 failed\nmore"}),
+            ("file.change", {"type": "file_changed", "paths": ["/a/x.py", "/a/y.py", "/a/z.py"]}),
+            ("session.turn_completed", {"type": "turn_completed"}),
+            ("attention.approval_requested", approval),
+            ("unknown.raw", {"type": "whatever"}),
+            ("tool.result", {"type": "tool_result", "output": "ok"}),
+            ("message.user", {"type": "response_item", "payload": {"type": "message", "role": "user"}}),
+            ("tool.started", {"_robin_pruned": True}),
+        ],
+    )
+    assert _summaries(store, sid) == [
+        ("message.user", "You: fix the login test", False),
+        ("message.user", None, True),
+        ("message.completed", "Claude: Done.", False),
+        ("tool.started", "Bash npm test", False),
+        ("tool.error", "Bash failed: 1 failed", False),
+        ("file.change", "Changed z.py, y.py (+1)", False),
+        ("session.turn_completed", "Turn completed", False),
+        ("attention.approval_requested", "Approval requested: Bash make clean", False),
+        ("unknown.raw", None, True),
+        ("tool.result", None, True),
+        ("message.user", None, True),
+        ("tool.started", "Pruned to stay under the storage cap; no longer available.", False),
+    ]
+
+
+def test_summaries_are_redacted(store):
+    long_line = "x" * 10 + FAKE_TOKEN + "y" * 6000
+    approval = {"type": "approval_request", "tool": "Bash", "input": {"command": FAKE_TOKEN}}
+    sid = observed_session_with(
+        store,
+        [
+            ("message.user", {"type": "user_message", "text": f"token {FAKE_TOKEN}"}),
+            ("message.completed", {"type": "message_completed", "text": long_line}),
+            (
+                "tool.started",
+                {"type": "tool_started", "tool": "Bash", "input": {"command": f"echo {FAKE_TOKEN}"}},
+            ),
+            ("file.change", {"type": "file_changed", "paths": [f"/tmp/{FAKE_TOKEN}.txt"]}),
+            ("attention.approval_requested", approval),
+            ("session.failed", {"type": "turn_failed", "reason": f"bad {FAKE_TOKEN}"}),
+        ],
+    )
+    texts = [t for _, t, _ in _summaries(store, sid)]
+    assert all(t and FAKE_TOKEN not in t for t in texts)
+    assert sum("[REDACTED:github-pat]" in t for t in texts) >= 5

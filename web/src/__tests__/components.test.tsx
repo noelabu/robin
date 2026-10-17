@@ -44,6 +44,7 @@ test("agent text renders as text, never as markup", async () => {
     event_type: "message.completed", evidence_kind: "reported", source_time: null,
     ingested_at: "2026-10-15T00:00:00Z", payload_ref: null, task_id: null,
     preview: '<img src=x onerror="alert(1)"><script>alert(2)</script>',
+    noise: false,
   };
   const { container } = render(<ActivityFeed items={[item]} scope={{}} sessions={{}} ready />);
   expect(await screen.findByText(/onerror/)).toBeTruthy();
@@ -86,7 +87,7 @@ test("a handed-off session shows the resume command and only Take back control",
 const feedItem = (over: Partial<FeedItem>): FeedItem => ({
   global_cursor: 1, event_id: "e1", session_id: "s1", runtime: "claude", event_family: "message",
   event_type: "message.completed", evidence_kind: "reported", source_time: null,
-  ingested_at: "2026-10-15T00:00:00Z", payload_ref: null, task_id: null, preview: null, ...over,
+  ingested_at: "2026-10-15T00:00:00Z", payload_ref: null, task_id: null, preview: null, noise: false, ...over,
 });
 
 beforeEach(() => {
