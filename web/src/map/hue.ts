@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 
+// Violet is last: it is close to the background, so a folder gets it only when every other hue is taken.
 const HUES = [
-  "--h-violet",
   "--h-cyan",
   "--h-green",
   "--h-blue",
@@ -10,12 +10,13 @@ const HUES = [
   "--h-lime",
   "--h-peach",
   "--h-yellow",
+  "--h-violet",
 ];
 
 const hash = (key: string) => {
   let h = 0;
   for (const ch of key) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  return h % HUES.length;
+  return h % (HUES.length - 1);
 };
 
 /** The hue each folder was last given; a folder keeps it for as long as no other shown folder holds it. */

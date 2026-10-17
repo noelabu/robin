@@ -16,3 +16,11 @@ describe("folder hues", () => {
     expect(colour("/b/other")).not.toBe(before);
   });
 });
+
+test("violet goes only to a folder that finds every other hue taken", () => {
+  const keys = Array.from({ length: 8 }, (_, i) => `/v/folder-${i}`);
+  assignHues(keys);
+  expect(keys.map(colour)).not.toContain("var(--h-violet)");
+  assignHues([...keys, "/v/ninth"]);
+  expect(colour("/v/ninth")).toBe("var(--h-violet)");
+});
