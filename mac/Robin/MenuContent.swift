@@ -11,7 +11,8 @@ struct MenuLabel: View {
     let controller: ServiceController
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 3) {
+            Image(nsImage: RobinIcon.bird())
             Image(nsImage: StatusDot.image(color: StatusDot.color(controller)))
             if controller.isRunning && controller.attentionCount > 0 {
                 Text("\(controller.attentionCount)")
@@ -32,7 +33,7 @@ enum StatusDot {
 
     /// A filled dot in color, or a hollow one for "not installed". Not a template, so the menu bar keeps the color.
     static func image(color: NSColor?) -> NSImage {
-        let image = NSImage(size: NSSize(width: 10, height: 10), flipped: false) { rect in
+        let image = NSImage(size: NSSize(width: 8, height: 8), flipped: false) { rect in
             let path = NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1))
             if let color {
                 color.setFill()
