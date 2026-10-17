@@ -16,14 +16,17 @@ from pathlib import Path
 NATIVE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
-def resume_command(runtime: str, native_id: str) -> list[str]:
+def resume_command(runtime: str, native_id: str, skip_permissions: bool = False) -> list[str]:
+    """The runtime's own resume command. A session launched with prompts skipped keeps them skipped, with the
+    same setting Robin used: bypass mode for Claude, approval policy `never` (sandbox unchanged) for Codex."""
     if not NATIVE_ID.match(native_id):
         raise ValueError("native session id has unexpected characters")
     match runtime:
         case "claude":
-            return ["claude", "--resume", native_id]
+            skip = ["--permission-mode", "bypassPermissions"] if skip_permissions else []
+            return ["claude", "--resume", native_id, *skip]
         case "codex":
-            return ["codex", "resume", native_id]
+            return ["codex", "resume", native_id, *(["-a", "never"] if skip_permissions else [])]
         case "pi":
             return ["pi", "--session", native_id]
     raise ValueError(f"no terminal command for {runtime}")

@@ -679,7 +679,7 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         if not s["native_session_id"]:
             raise ApiError(409, "no_native_id", "the runtime hasn't reported its session id yet")
         try:
-            command = resume_command(s["runtime"], s["native_session_id"])
+            command = resume_command(s["runtime"], s["native_session_id"], s["skip_permissions"])
         except ValueError as exc:
             raise ApiError(409, "unsupported", str(exc)) from exc
         return {

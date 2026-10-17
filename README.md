@@ -132,7 +132,7 @@ robin stop <session>
 robin runs <session>         # each run's branch, base commit, working-tree state and the files it changed
 ```
 
-`robin run claude --skip-permissions` (or **Skip permission prompts** in the dashboard's launch form) starts a session that runs tools without asking you: Claude in `bypassPermissions` mode, Codex with approval policy `never`. Deny rules and the sandbox still apply, so `--independent` stays enforced. Pi is refused; it has no permission prompts. The choice is kept when Robin resumes or reclaims the session, but not after `robin open`, where your own CLI defaults apply. Such sessions show **skip permissions** on their card and in Sessions.
+`robin run claude --skip-permissions` (or **Skip permission prompts** in the dashboard's launch form) starts a session that runs tools without asking you: Claude in `bypassPermissions` mode, Codex with approval policy `never`. Deny rules and the sandbox still apply, so `--independent` stays enforced. Pi is refused; it has no permission prompts. The choice is kept when Robin resumes or reclaims the session, and `robin open` resumes it in your terminal the same way (`claude --resume <id> --permission-mode bypassPermissions`, `codex resume <id> -a never`). Such sessions show **skip permissions** on their card and in Sessions.
 
 `robin run --worktree` starts the session in a new Git worktree on its own `robin/...` branch, under `~/robin-worktrees` (or `ROBIN_WORKTREES`), so parallel sessions in one repository don't edit the same files. `robin worktree list` shows them; `robin worktree remove <id>` shows what removal would lose, refuses while the session runs, needs `--discard-changes` for uncommitted files, and always keeps the branch and its commits.
 

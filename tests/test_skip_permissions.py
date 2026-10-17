@@ -114,3 +114,16 @@ def test_cli_run_skip_permissions(served, capsys):  # noqa: F811
     sid = session_id(out)
     with store.reader.connect() as conn:
         assert conn.execute(select(SessionRow.skip_permissions).where(SessionRow.session_id == sid)).scalar()
+
+
+def test_the_terminal_command_keeps_prompts_skipped(api):
+    store, c, task_id, _ = api
+    sid = skipping(c, task_id)
+    wait(lambda: c.get(f"/sessions/{sid}").json()["native_session_id"])
+    store.writer.call(
+        lambda conn: conn.execute(
+            update(SessionRow).where(SessionRow.session_id == sid).values(runtime="claude")
+        )
+    )
+    command = c.get(f"/sessions/{sid}/terminal").json()["command"]
+    assert command[-2:] == ["--permission-mode", "bypassPermissions"]

@@ -97,6 +97,21 @@ def test_resume_commands_are_argument_arrays_with_validated_ids():
     assert resume_command("claude", "abc-123") == ["claude", "--resume", "abc-123"]
     assert resume_command("codex", "019a-1") == ["codex", "resume", "019a-1"]
     assert resume_command("pi", "x") == ["pi", "--session", "x"]
+    # a session launched with prompts skipped keeps them skipped in the terminal
+    assert resume_command("claude", "abc-123", skip_permissions=True) == [
+        "claude",
+        "--resume",
+        "abc-123",
+        "--permission-mode",
+        "bypassPermissions",
+    ]
+    assert resume_command("codex", "019a-1", skip_permissions=True) == [
+        "codex",
+        "resume",
+        "019a-1",
+        "-a",
+        "never",
+    ]
     with pytest.raises(ValueError):
         resume_command("claude", "abc; echo injected")
 
