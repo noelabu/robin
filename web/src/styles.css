@@ -178,6 +178,10 @@ h2 { font-size: 15px; margin: 0 0 8px; display: flex; gap: 8px; align-items: bas
 .attention-head { display: flex; gap: 8px; align-items: baseline; }
 .attention-head .kind { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 .attention-detail { display: block; margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.question { margin-top: 6px; font-size: 12px; }
+.question-options { margin: 4px 0 0; padding-left: 20px; font-size: 12px; }
+.question-options li { margin: 2px 0; }
+.question-where { margin: 6px 0 0; font-size: 11px; }
 .muted { color: var(--muted); }
 
 .navigator { display: grid; gap: 6px; margin-bottom: 10px; }

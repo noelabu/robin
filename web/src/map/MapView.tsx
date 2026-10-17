@@ -52,22 +52,28 @@ export function MapView(props: {
   const allCards = useMemo(() => data?.cards ?? [], [data]);
   const { counts, mains, cards, clusters } = useMemo(() => {
     const allMains = allCards.filter((c) => !c.parent);
+    // A session whose workflow, shell or subagent still runs counts as working, even between its own turns.
+    const busy = new Set(
+      allCards.filter((c) => c.parent && liveState(c, undefined, filterNow).state === "running").map((c) => c.session_id),
+    );
     const recent = (c: MapCard, r: Recency) =>
-      c.id === selected || inRecency(liveState(c, ws.sessions[c.session_id], filterNow).state, c.last_activity_at, filterNow, r);
+      c.id === selected ||
+      busy.has(c.session_id) ||
+      inRecency(liveState(c, ws.sessions[c.session_id], filterNow).state, c.last_activity_at, filterNow, r);
     const counts = {
       active: allMains.filter((c) => recent(c, "active")).length,
       today: allMains.filter((c) => recent(c, "today")).length,
       all: (data?.clusters ?? []).reduce((n, c) => n + c.sessions, 0),
     };
     if (recency === "all") return { counts, mains: allMains, cards: allCards, clusters: data?.clusters ?? [] };
-    // A session's subagents show with it; a narrowed view has no "+N more", which would page in older sessions.
+    // Whatever a session started shows with it; a narrowed view has no "+N more", which would page in older sessions.
     const mains = allMains.filter((c) => recent(c, recency));
     const kept = new Set(mains.map((c) => c.session_id));
     const clusters: MapCluster[] = (data?.clusters ?? []).flatMap((cl) => {
       const n = mains.filter((c) => c.cluster === cl.key).length;
       return n ? [{ ...cl, sessions: n, shown: n }] : [];
     });
-    return { counts, mains, cards: allCards.filter((c) => kept.has(c.parent ?? c.session_id)), clusters };
+    return { counts, mains, cards: allCards.filter((c) => kept.has(c.session_id)), clusters };
   }, [data, allCards, recency, filterNow, ws.sessions, selected]);
   const lay = useMemo(
     () => layout(map.order, clusters, cards, selected && panelH ? { [selected]: panelH } : {}),
@@ -235,7 +241,7 @@ export function MapView(props: {
               <div className="map-empty">
                 <div>
                   <b>Nothing {recency === "active" ? "active" : "from today"}</b>
-                  No session has worked in the last {recency === "active" ? "two hours" : "day"}.
+                  {recency === "active" ? "No session is working or waiting on you." : "No session has worked in the last day."}
                   <br />
                   <button onClick={() => props.onRecency?.(WIDER[recency].to)}>{WIDER[recency].label}</button>
                 </div>
@@ -298,6 +304,7 @@ export function MapView(props: {
                   now={now}
                   selected={selected === c.id}
                   permission={!c.parent && approvals.bySession.has(c.session_id)}
+                  question={!c.parent && approvals.questions.has(c.session_id)}
                   onOpen={(card) => open(card.id)}
                   onFocus={(rect) => canvas.current?.reveal(rect)}
                 />
@@ -326,6 +333,7 @@ export function MapView(props: {
                   }}
                   onClose={close}
                   approvals={sel.parent ? undefined : approvals.bySession.get(sel.session_id)}
+                  questions={sel.parent ? undefined : approvals.questions.get(sel.session_id)}
                   onAnswered={() => {
                     approvals.reload();
                     props.onChanged?.();

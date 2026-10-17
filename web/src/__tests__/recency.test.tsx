@@ -12,17 +12,18 @@ describe("inRecency", () => {
     expect(inRecency("running", ago(500), NOW, "active")).toBe(true);
     expect(inRecency("waiting_for_input", null, NOW, "active")).toBe(true);
   });
-  test("idle counts for two hours as active and a day as today", () => {
-    expect(inRecency("idle", ago(1), NOW, "active")).toBe(true);
-    expect(inRecency("idle", ago(3), NOW, "active")).toBe(false);
+  test("active is only working or waiting; idle counts for a day as today", () => {
+    expect(inRecency("idle", ago(0), NOW, "active")).toBe(false);
+    expect(inRecency("stopped", ago(0), NOW, "active")).toBe(false);
     expect(inRecency("idle", ago(3), NOW, "today")).toBe(true);
     expect(inRecency("idle", ago(30), NOW, "today")).toBe(false);
     expect(inRecency("idle", ago(30), NOW, "all")).toBe(true);
     expect(inRecency("stopped", null, NOW, "today")).toBe(false);
   });
-  test("a failure stays active for a day", () => {
-    expect(inRecency("failed", ago(10), NOW, "active")).toBe(true);
-    expect(inRecency("failed", ago(30), NOW, "active")).toBe(false);
+  test("a failure is not active and counts for a day as today", () => {
+    expect(inRecency("failed", ago(0), NOW, "active")).toBe(false);
+    expect(inRecency("failed", ago(10), NOW, "today")).toBe(true);
+    expect(inRecency("failed", ago(30), NOW, "today")).toBe(false);
   });
 });
 
@@ -66,7 +67,8 @@ describe("Map recency", () => {
     pending_events: 0,
     clusters: [cluster("/r/app", 9, 2), cluster("/r/legacy", 1, 1)],
     cards: [
-      card("fresh", "/r/app", 0.5),
+      card("fresh", "/r/app", 0.5, { state: "running" }),
+      card("idle", "/r/app", 0.5),
       card("fresh:agent", "/r/app", 0.5, { session_id: "fresh", parent: "fresh" }),
       card("stale", "/r/app", 5),
       card("ancient", "/r/legacy", 100),
@@ -97,16 +99,17 @@ describe("Map recency", () => {
       />,
     );
 
-  test("Active shows recent sessions with their subagents, drops empty folders and the +more", async () => {
+  test("Active shows working sessions with their subagents, drops empty folders and the +more", async () => {
     const onRecency = vi.fn();
     mount("active", onRecency);
     expect((await screen.findAllByText("Session fresh")).length).toBeGreaterThan(0);
     expect(screen.queryByText("Session stale")).toBeNull();
+    expect(screen.queryByText("Session idle")).toBeNull(); // just finished is Today, not Active
     expect(document.querySelector('[data-card="fresh:agent"]')).toBeTruthy();
     expect(screen.getByRole("navigation", { name: "Folders" }).textContent).not.toContain("legacy");
     expect(screen.queryByText(/more$/)).toBeNull();
     expect(screen.getByRole("button", { name: "Active 1" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: "Today 2" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Today 3" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "All 10" }));
     expect(onRecency).toHaveBeenCalledWith("all");
   });

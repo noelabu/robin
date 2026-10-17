@@ -6,18 +6,17 @@ export type Recency = "active" | "today" | "all";
 
 const KEY = "robin.recency";
 const HOUR = 3_600_000;
-const ACTIVE_MS = 2 * HOUR;
 const TODAY_MS = 24 * HOUR;
 
 /**
- * Working and waiting sessions are always active: a session blocked on you must not drop out of view.
- * A failure counts for a day; anything else, for two hours after its last activity.
+ * Active is only what's working now or waiting on you. Today adds anything that ran in the last day;
+ * working and waiting sessions are in every view, whatever their age.
  */
 export function inRecency(state: MapState, lastActivity: string | null, now: number, r: Recency): boolean {
   if (r === "all" || state === "running" || state === "waiting_for_input") return true;
+  if (r === "active") return false;
   const age = lastActivity ? now - Date.parse(lastActivity) : Infinity;
-  if (r === "today" || state === "failed") return age < TODAY_MS;
-  return age < ACTIVE_MS;
+  return age < TODAY_MS;
 }
 
 function saved(): Recency {

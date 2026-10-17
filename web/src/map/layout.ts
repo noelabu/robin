@@ -2,6 +2,9 @@ import type { MapCard, MapCluster } from "../api";
 
 export const CARD = { w: 272, h: 128 };
 export const SUB = { w: 228, h: 86 };
+export const GROUP = { w: 248, h: 96 }; // a skill or a workflow
+export const SHELL = { w: 228, h: 72 };
+export const MINI = { w: 208, h: 60 }; // a workflow's agent
 export const PANEL_GAP = 8; // between a card and its open task panel
 const GAP = 16;
 const COL_GAP = 72;
@@ -18,9 +21,19 @@ export type Frame = Rect & { key: string; more: (Rect & { count: number }) | nul
 export type Edge = { from: string; to: string; d: string; live: boolean; cluster: string };
 export type Layout = { cards: Record<string, Rect>; frames: Frame[]; edges: Edge[]; bounds: { w: number; h: number } };
 
+/** A card's size on the canvas, by what it is. */
+export function size(card: MapCard, parent: MapCard | undefined): { w: number; h: number } {
+  if (!card.parent) return CARD;
+  if (card.kind === "skill" || card.kind === "workflow") return GROUP;
+  if (card.kind === "shell") return SHELL;
+  return parent?.kind === "workflow" ? MINI : SUB;
+}
+
 /**
  * Clusters are packed left to right in rows (shelf packing), in the order given. Inside a cluster, sessions
- * stack in columns in the server's order, wrapping past COLUMN_HEIGHT; each session's subagents stack beside it.
+ * stack in columns in the server's order, wrapping past COLUMN_HEIGHT. Whatever a card started (subagents,
+ * skills, workflows, shells) stacks in a column beside it, and so on for theirs: session → skill → workflow →
+ * its agents.
  */
 export function layout(
   order: string[],
@@ -31,6 +44,7 @@ export function layout(
   const byKey = new Map(clusters.map((c) => [c.key, c]));
   const mains = new Map<string, MapCard[]>();
   const subs = new Map<string, MapCard[]>();
+  const byId = new Map(cards.map((c) => [c.id, c]));
   for (const c of cards) {
     if (c.parent) subs.set(c.parent, [...(subs.get(c.parent) ?? []), c]);
     else mains.set(c.cluster, [...(mains.get(c.cluster) ?? []), c]);
@@ -63,16 +77,28 @@ export function layout(
       return at;
     };
     const room = (id: string) => (below[id] ? below[id] + PANEL_GAP : 0);
-    for (const card of list) {
-      const kids = subs.get(card.session_id) ?? [];
-      const kidsH = kids.reduce((h, k) => h + SUB.h + room(k.id) + GAP, 0) - (kids.length ? GAP : 0);
-      const at = slot(CARD.w + (kids.length ? COL_GAP + SUB.w : 0), Math.max(CARD.h + room(card.id), kidsH));
-      placed[card.id] = { x: at.x, y: at.y, w: CARD.w, h: CARD.h };
-      let ky = at.y;
+    // A card and everything under it: its size, then where each card goes relative to its top left.
+    const tree = (card: MapCard, seen: Set<string>): { w: number; h: number; at: Record<string, Rect> } => {
+      const own = size(card, card.parent ? byId.get(card.parent) : undefined);
+      let kids = (subs.get(card.id) ?? []).filter((k) => !seen.has(k.id));
+      if (card.kind === "workflow") kids = byPhase(card, kids);
+      kids.forEach((k) => seen.add(k.id));
+      const at: Record<string, Rect> = { [card.id]: { x: 0, y: 0, ...own } };
+      let ky = 0;
+      let kw = 0;
       for (const k of kids) {
-        placed[k.id] = { x: at.x + CARD.w + COL_GAP, y: ky, w: SUB.w, h: SUB.h };
-        ky += SUB.h + room(k.id) + GAP;
+        const t = tree(k, seen);
+        for (const [id, r] of Object.entries(t.at)) at[id] = { ...r, x: r.x + own.w + COL_GAP, y: r.y + ky };
+        ky += t.h + GAP;
+        kw = Math.max(kw, t.w);
       }
+      const kidsH = kids.length ? ky - GAP : 0;
+      return { w: own.w + (kids.length ? COL_GAP + kw : 0), h: Math.max(own.h + room(card.id), kidsH), at };
+    };
+    for (const card of list) {
+      const t = tree(card, new Set([card.id]));
+      const at = slot(t.w, t.h);
+      for (const [id, r] of Object.entries(t.at)) placed[id] = { ...r, x: r.x + at.x, y: r.y + at.y };
     }
     const hidden = cluster.sessions - cluster.shown;
     const moreAt = hidden > 0 ? slot(CARD.w, MORE_H) : null;
@@ -97,13 +123,20 @@ export function layout(
     const b = out.cards[c.id];
     if (!a || !b) continue;
     const x1 = a.x + a.w;
-    const y1 = a.y + 40;
+    const y1 = a.y + Math.min(40, a.h / 2);
     const x2 = b.x;
     const y2 = b.y + b.h / 2;
     const mx = (x1 + x2) / 2;
     out.edges.push({ from: c.parent!, to: c.id, d: `M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`, live: c.state === "running", cluster: c.cluster });
   }
   return out;
+}
+
+/** A workflow's agents in the order its phases ran (Context, Find, Verify), oldest first within a phase. */
+function byPhase(workflow: MapCard, agents: MapCard[]): MapCard[] {
+  const order = (workflow.phases ?? []).map((p) => p.name);
+  const rank = (a: MapCard) => (order.includes(a.phase ?? "") ? order.indexOf(a.phase ?? "") : order.length);
+  return [...agents].sort((a, b) => rank(a) - rank(b) || (a.last_activity_at ?? "").localeCompare(b.last_activity_at ?? ""));
 }
 
 /** Keep the first-seen cluster order so cards don't jump under the cursor; new clusters go at the end. */

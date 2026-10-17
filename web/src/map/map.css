@@ -250,6 +250,11 @@ button.map-pill.need { background: #2a1d12; border: 1px solid #4a3218; color: #f
   margin: 0; padding: 9px 10px 6px; display: flex; justify-content: space-between; font-size: 10px; font-weight: 600;
   letter-spacing: .12em; text-transform: uppercase; color: var(--m-muted);
 }
+.tp-done {
+  margin: 0; padding: 8px 10px; display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: #9fe0b1;
+  background: #16301f; border-bottom: 1px solid var(--m-line);
+}
+.tp-done span:last-child { margin-left: auto; color: var(--m-faint); font: 10.5px var(--mono); }
 .tp-note { margin: 0; padding: 8px 10px; color: var(--m-faint); font-size: 11.5px; }
 .tp-acts { display: flex; gap: 6px; padding: 8px 10px; background: #0d0a16; border-top: 1px solid var(--m-line); }
 .tp-acts button { padding: 4px 9px; border-radius: 6px; border: 1px solid var(--m-line-hi); font-size: 11px; color: var(--m-muted); }
@@ -402,3 +407,43 @@ button.map-pill.need { background: #2a1d12; border: 1px solid #4a3218; color: #f
 .approval-box .actions { margin-top: 8px; }
 .approval-box .actions button { padding: 4px 10px; font-size: 11px; border: 1px solid var(--m-line-hi); border-radius: 3px; }
 .approval-box .actions button.primary { background: var(--m-cta); color: #1a0f00; border-color: var(--m-cta); }
+
+/* -- a question the agent asked: amber, answered in the session's terminal ---------------------------- */
+.map-card.question {
+  border-color: var(--m-amber);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--m-amber) 12%, var(--m-card)), var(--m-card));
+  box-shadow: 0 0 0 1px var(--m-amber), 0 0 22px color-mix(in srgb, var(--m-amber) 30%, transparent);
+}
+.map-card.question h3 { color: var(--m-ink); }
+.map-card.question .foot { color: var(--m-amber); }
+.map-chip.question { color: var(--m-amber); text-shadow: 0 0 10px color-mix(in srgb, var(--m-amber) 50%, transparent); }
+.question-box { background: color-mix(in srgb, var(--m-amber) 8%, transparent); }
+.question-box .kind { color: var(--m-amber); }
+
+/* -- skills, workflows and background shells: cards beside the session that started them ------------- */
+.map-card.skill, .map-card.workflow { background: var(--m-card-sub); padding-bottom: 10px; }
+.map-card.skill { border-left: 3px solid var(--hue, var(--m-accent)); }
+.map-card.workflow { border-left: 3px solid #7aa7ff; }
+.map-card.shell { background: #0d0a16; padding-bottom: 9px; }
+.map-card .cmd { display: block; font: 10px var(--mono); color: var(--m-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.map-card.mini { padding: 8px 10px; }
+.map-card.mini h3 { font-size: 11.5px; -webkit-line-clamp: 1; max-height: 1.3em; margin: 0; }
+.map-card.mini .meta { margin-bottom: 4px; }
+.map-card.sub.failed, .map-card.skill.failed, .map-card.workflow.failed, .map-card.shell.failed { border-color: var(--m-bad); }
+.map-card .phases { display: block; font: 10px var(--mono); color: var(--m-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.map-card .phases b { color: var(--m-ink); font-weight: 500; }
+.map-card .phases .bad { color: var(--m-bad); }
+.map-card .inner { display: block; font: 10px var(--mono); color: var(--m-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.map-chip.done { color: #9fe0b1; }
+.map-chip.killed { color: var(--m-muted); }
+.tp-kv { margin: 0; padding: 8px 10px; display: grid; grid-template-columns: 70px 1fr; gap: 4px 8px; font-size: 11px; }
+.tp-kv dt { color: var(--m-faint); }
+.tp-kv dd { margin: 0; color: var(--m-ink-2); font-family: var(--mono); overflow-wrap: anywhere; }
+.tp-phase { padding: 6px 10px 2px; display: flex; justify-content: space-between; font: 600 10px var(--disp); letter-spacing: .14em; text-transform: uppercase; color: var(--m-muted); }
+.tp-agents { list-style: none; margin: 0; padding: 0 10px 6px; }
+.tp-agents li { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; font: 10.5px var(--mono); color: var(--m-muted); }
+.tp-agents li span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-agents .ok { color: #9fe0b1; }
+.tp-agents .run { color: var(--m-accent); }
+.tp-agents .bad { color: var(--m-bad); }
+.tp-pad { padding: 8px 10px; }

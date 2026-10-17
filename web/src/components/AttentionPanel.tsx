@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, type AttentionItem } from "../api";
-import { describe } from "./Approval";
+import { describe, QuestionList } from "./Approval";
 
 /** Questions, approvals and failures. Only Approve/Deny answer the agent; Dismiss only hides the notice. */
 export function AttentionPanel(props: { refreshKey: number; onOpenSession: (id: string) => void }) {
@@ -39,7 +39,11 @@ export function AttentionPanel(props: { refreshKey: number; onOpenSession: (id: 
                 <strong>{i.title}</strong>
                 {i.state === "acknowledged" && <span className="muted"> · acknowledged</span>}
               </div>
-              {describe(i) && <code className="attention-detail">{describe(i)}</code>}
+              {i.detail.questions ? (
+                <QuestionList item={i} />
+              ) : (
+                describe(i) && <code className="attention-detail">{describe(i)}</code>
+              )}
               <div className="actions">
                 {i.allowed_responses.includes("allow") && (
                   <>

@@ -9,7 +9,7 @@ import { liveState, useTick } from "./useMap";
 
 const INSET = { x: 24, y: 44 }; // where layout puts a cluster's first card; the flow has no frame
 
-/** One session's card and its subagents' cards, as on the Map; a card opens its tasks below it. */
+/** One session's card and what it started (subagents, skills, workflows, shells), as on the Map; a card opens its tasks below it. */
 export function SessionFlow({ session, onChanged }: { session: Session; onChanged?: () => void }) {
   const [cards, setCards] = useState<MapCard[]>([]);
   const [open, setOpen] = useState<string | null>(null);
@@ -18,6 +18,7 @@ export function SessionFlow({ session, onChanged }: { session: Session; onChange
   const sid = session.session_id;
   const approvals = useApprovals(session.updated_at);
   const waiting = approvals.bySession.get(sid);
+  const asked = approvals.questions.get(sid);
 
   useEffect(() => {
     let live = true;
@@ -45,7 +46,15 @@ export function SessionFlow({ session, onChanged }: { session: Session; onChange
   }, [cards, open, panelH]);
 
   if (!cards.length) return null;
-  const subagents = cards.length - 1;
+  const count = (k: string) => cards.filter((c) => (c.kind ?? (c.parent ? "subagent" : "session")) === k).length;
+  const parts = [
+    [count("skill"), "skill"],
+    [count("workflow"), "workflow"],
+    [count("subagent"), "subagent"],
+    [count("shell"), "shell"],
+  ]
+    .filter(([n]) => n)
+    .map(([n, w]) => `${n} ${w}${n === 1 ? "" : "s"}`);
   const sel = open ? cards.find((c) => c.id === open) : undefined;
   const at = (id: string) => {
     const r = lay.cards[id];
@@ -59,9 +68,9 @@ export function SessionFlow({ session, onChanged }: { session: Session; onChange
   return (
     <div className="flow">
       <div className="flow-h">
-        <span>Session{subagents ? " & subagents" : ""}</span>
+        <span>Session{parts.length ? " & what it started" : ""}</span>
         <span>
-          {subagents ? `${subagents} subagent${subagents === 1 ? "" : "s"} · ` : ""}click a card for its tasks and files
+          {parts.length ? `${parts.join(" · ")} · ` : ""}click a card for its tasks and files
         </span>
       </div>
       <div className="flow-canvas" style={{ height: lay.bounds.h - INSET.y + 8 }}>
@@ -84,6 +93,7 @@ export function SessionFlow({ session, onChanged }: { session: Session; onChange
               now={now}
               selected={open === c.id}
               permission={!c.parent && !!waiting}
+              question={!c.parent && !!asked}
               onOpen={(card) => toggle(card.id)}
               onFocus={() => {}}
             />
@@ -109,6 +119,7 @@ export function SessionFlow({ session, onChanged }: { session: Session; onChange
               onClose={() => setOpen(null)}
               actions={false}
               approvals={sel.parent ? undefined : waiting}
+              questions={sel.parent ? undefined : asked}
               onAnswered={approvals.reload}
             />
           </div>

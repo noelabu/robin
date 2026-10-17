@@ -75,6 +75,13 @@ export type Action = {
   error: { code: string; message: string } | null;
 };
 
+export type Question = {
+  question: string;
+  header: string;
+  multi: boolean;
+  options: { label: string; description: string }[];
+};
+
 export type AttentionItem = {
   attention_id: string;
   kind: "question" | "approval" | "failure" | "finding_review";
@@ -82,7 +89,7 @@ export type AttentionItem = {
   task_id: string | null;
   state: "open" | "acknowledged" | "resolved" | "dismissed" | "expired" | "handed_off";
   title: string;
-  detail: { tool?: string; input?: unknown; reason?: unknown; event?: string };
+  detail: { tool?: string; input?: unknown; reason?: unknown; event?: string; questions?: Question[]; answer_in?: string };
   allowed_responses: string[];
   created_at: string;
 };
@@ -203,8 +210,15 @@ export type Workspace = {
 
 export type MapState = "running" | "waiting_for_input" | "idle" | "failed" | "stopped";
 
+export type CardKind = "session" | "subagent" | "skill" | "workflow" | "shell";
+export type JobStatus = "completed" | "failed" | "killed";
+export type Phase = { name: string; done: number; failed: number; total: number };
+
 export type MapCard = {
   id: string;
+  kind?: CardKind; // absent from older servers: a session, or a subagent when it has a parent
+  ref?: string; // the subagent's lane, or the tool call that started a skill, workflow or shell
+  status?: JobStatus | null; // how it ended, when the runtime said
   session_id: string;
   parent: string | null;
   cluster: string;
@@ -225,6 +239,17 @@ export type MapCard = {
   last_activity_at: string | null;
   created_at: string | null;
   subagents_hidden: number;
+  // a session: skills/workflows and background shells that finished a while ago, folded into its panel
+  shells_done?: number;
+  groups_done?: number;
+  phase?: string | null; // a workflow's agent: the phase it ran in
+  phases?: Phase[]; // a workflow: its agents by phase
+  args?: string | null; // a skill
+  inner?: string[]; // a skill: the skills it called in turn
+  summary?: string | null; // a job: what its end notification said
+  run?: string | null; // a workflow: its run id
+  started_at?: string | null;
+  ended_at?: string | null;
 };
 
 export type MapCluster = {
@@ -271,7 +296,12 @@ export type SessionActivity = {
     files: FileTouch[];
     files_count: number;
     last_activity_at: string | null;
+    status?: JobStatus | null;
+    phase?: string | null;
+    parent?: string | null;
   }[];
+  jobs?: (MapCard & { hidden: "folded" | "capped" | null })[]; // skills, workflows and shells, folded ones too
+  runs?: Record<string, Record<string, { phase: string | null; label: string | null; status: JobStatus | null }>>;
 };
 
 export class ApiError extends Error {

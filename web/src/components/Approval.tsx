@@ -9,8 +9,12 @@ export function describe(item: AttentionItem): string {
   return item.detail.reason ? String(item.detail.reason) : "";
 }
 
-/** Open permission requests by session, reloaded whenever `refreshKey` changes. */
-export function useApprovals(refreshKey: unknown): { bySession: Map<string, AttentionItem[]>; reload: () => void } {
+/** Open permission requests and questions by session, reloaded whenever `refreshKey` changes. */
+export function useApprovals(refreshKey: unknown): {
+  bySession: Map<string, AttentionItem[]>;
+  questions: Map<string, AttentionItem[]>;
+  reload: () => void;
+} {
   const [items, setItems] = useState<AttentionItem[]>([]);
   const reload = useCallback(() => {
     void api
@@ -20,10 +24,12 @@ export function useApprovals(refreshKey: unknown): { bySession: Map<string, Atte
   }, []);
   useEffect(reload, [reload, refreshKey]);
   const bySession = new Map<string, AttentionItem[]>();
+  const questions = new Map<string, AttentionItem[]>();
   for (const i of items)
     if (i.kind === "approval" && i.allowed_responses.includes("allow"))
       bySession.set(i.session_id, [...(bySession.get(i.session_id) ?? []), i]);
-  return { bySession, reload };
+    else if (i.kind === "question") questions.set(i.session_id, [...(questions.get(i.session_id) ?? []), i]);
+  return { bySession, questions, reload };
 }
 
 /** One permission request with its answer buttons. Approve and Deny answer the agent. */
@@ -58,6 +64,42 @@ export function ApprovalBox({ item, onAnswered }: { item: AttentionItem; onAnswe
           {status}
         </p>
       )}
+    </div>
+  );
+}
+
+/** The questions an agent asked and their options. Answered where the session runs, not here. */
+export function QuestionList({ item }: { item: AttentionItem }) {
+  const qs = item.detail.questions ?? [];
+  return (
+    <>
+      {qs.map((q, n) => (
+        <div key={n} className="question">
+          {n > 0 && <strong>{q.question}</strong>}
+          <ol className="question-options">
+            {q.options.map((o) => (
+              <li key={o.label}>
+                {o.label}
+                {o.description && <span className="muted"> — {o.description}</span>}
+              </li>
+            ))}
+          </ol>
+        </div>
+      ))}
+      {item.detail.answer_in === "terminal" && <p className="muted question-where">Answer it in the session&apos;s terminal.</p>}
+    </>
+  );
+}
+
+/** A question waiting on the user, shown at the top of its card's panel. */
+export function QuestionBox({ item }: { item: AttentionItem }) {
+  return (
+    <div className="approval-box question-box">
+      <div className="approval-head">
+        <span className="kind">Needs an answer</span>
+        <strong>{item.title}</strong>
+      </div>
+      <QuestionList item={item} />
     </div>
   );
 }

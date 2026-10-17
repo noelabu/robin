@@ -1,6 +1,16 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api, ApiError, type AttentionItem, type FileTouch, type MapCard, type MapState, type Session, type SessionActivity } from "../api";
-import { ApprovalBox } from "../components/Approval";
+import {
+  api,
+  ApiError,
+  type AttentionItem,
+  type FileTouch,
+  type JobStatus,
+  type MapCard,
+  type MapState,
+  type Session,
+  type SessionActivity,
+} from "../api";
+import { ApprovalBox, QuestionBox } from "../components/Approval";
 import { ago } from "./time";
 
 const SHOWN_FILES = 12;
@@ -22,6 +32,120 @@ function FileList({ files, now, hot }: { files: FileTouch[]; now: number; hot: b
   );
 }
 
+const STATUS: Record<JobStatus, [string, string]> = {
+  completed: ["Completed", "ok"],
+  failed: ["Failed", "bad"],
+  killed: ["Killed", ""],
+};
+
+/** How a job or agent is doing, in words: how it ended, else working (while its parent runs) or not started. */
+function statusText(status: JobStatus | null | undefined, running: boolean): [string, string] {
+  if (status) return STATUS[status];
+  return running ? ["Working", "run"] : ["No end reported", ""];
+}
+
+/** A workflow opened: its agents by phase, each with how it ended. */
+function WorkflowAgents({ card, detail, running }: { card: MapCard; detail: SessionActivity; running: boolean }) {
+  const agents = Object.values((card.run && detail.runs?.[card.run]) || {});
+  if (!agents.length) return <p className="tp-none tp-pad">No agents have started yet</p>;
+  const phases = new Map<string, typeof agents>();
+  for (const a of agents) phases.set(a.phase ?? "", [...(phases.get(a.phase ?? "") ?? []), a]);
+  return (
+    <>
+      {[...phases].map(([name, list]) => {
+        const done = list.filter((a) => a.status === "completed").length;
+        const failed = list.filter((a) => a.status === "failed").length;
+        return (
+          <div key={name}>
+            <div className="tp-phase">
+              <span>{name || "Agents"}</span>
+              <span>
+                {done}/{list.length}
+                {failed > 0 && ` · ${failed} failed`}
+              </span>
+            </div>
+            <ul className="tp-agents">
+              {list.map((a, i) => {
+                const [text, cls] = statusText(a.status, running);
+                return (
+                  <li key={`${a.label}-${i}`}>
+                    <span>{a.label ?? "agent"}</span>
+                    <span className={cls}>{text}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+/** A skill or background shell opened: what it was asked to do and how it ended. */
+function JobFacts({ card, state, now }: { card: MapCard; state: MapState; now: number }) {
+  const [text] = statusText(card.status, state === "running");
+  const when = card.ended_at && card.status ? `ended ${ago(card.ended_at, now)} ago` : card.started_at ? `started ${ago(card.started_at, now)} ago` : "";
+  return (
+    <dl className="tp-kv">
+      {card.kind === "shell" && card.target && (
+        <>
+          <dt>Command</dt>
+          <dd>{card.target}</dd>
+        </>
+      )}
+      {card.kind === "skill" && card.args && (
+        <>
+          <dt>Args</dt>
+          <dd>{card.args}</dd>
+        </>
+      )}
+      {card.kind === "skill" && !!card.inner?.length && (
+        <>
+          <dt>Called</dt>
+          <dd>{card.inner.join(" → ")}</dd>
+        </>
+      )}
+      <dt>Status</dt>
+      <dd>
+        {state === "failed" && !card.status ? "Failed" : text}
+        {when && ` · ${when}`}
+      </dd>
+      {card.summary && (
+        <>
+          <dt>Result</dt>
+          <dd>{card.summary}</dd>
+        </>
+      )}
+    </dl>
+  );
+}
+
+/** A session opened: its skills, workflows and background shells, the finished ones too. */
+function BackgroundWork({ detail, sessionId, now }: { detail: SessionActivity; sessionId: string; now: number }) {
+  const jobs = (detail.jobs ?? []).filter((j) => j.parent === sessionId);
+  if (!jobs.length) return null;
+  return (
+    <div className="tp-plain">
+      <h4>
+        <span>Skills, workflows &amp; shells</span>
+        <span>{jobs.length}</span>
+      </h4>
+      <ul className="tp-files">
+        {jobs.slice(0, SHOWN_FILES).map((j) => (
+          <li key={j.id} className={j.state === "running" ? "hot" : undefined}>
+            <span title={j.target ?? undefined}>
+              {j.title ?? j.label} · {j.status ? STATUS[j.status][0].toLowerCase() : j.state === "running" ? "working" : j.state}
+            </span>
+            <span>{ago(j.ended_at ?? j.started_at, now)}</span>
+          </li>
+        ))}
+        {jobs.length > SHOWN_FILES && <li className="none">and {jobs.length - SHOWN_FILES} more</li>}
+      </ul>
+    </div>
+  );
+}
+
 /**
  * A card's tasks, opened right under it on the canvas: each task with its status, and the files edited
  * while it was in progress. Sessions without a task list show their changed files instead.
@@ -37,6 +161,7 @@ export function TaskPanel(props: {
   onClose: () => void;
   actions?: boolean; // the Sessions tab has its own controls
   approvals?: AttentionItem[]; // permission requests waiting on the user, shown first
+  questions?: AttentionItem[]; // questions the agent asked, answered in its terminal
   onAnswered?: () => void;
 }) {
   const { card, now } = props;
@@ -69,6 +194,8 @@ export function TaskPanel(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const kind = card.kind ?? (card.parent ? "subagent" : "session");
+  const job = kind === "skill" || kind === "workflow" || kind === "shell";
   const laneId = card.parent ? card.id.slice(card.session_id.length + 1) : "";
   const lane = detail?.lanes.find((l) => l.lane === laneId);
   const todos = lane?.todos ?? [];
@@ -80,6 +207,10 @@ export function TaskPanel(props: {
     setOpen(next);
   };
   const s = props.session;
+  // Finished: nothing running or waiting, and every task (if it kept a list) checked off.
+  const done =
+    !!detail && !job && (props.state === "idle" || props.state === "stopped") && todos.every((t) => t.status === "completed");
+  const doneAt = lane?.last_activity_at ?? card.last_activity_at;
 
   async function stop() {
     if (!s || !window.confirm(`Stop the ${s.runtime} session in ${s.execution_cwd}? This ends the runtime process.`)) return;
@@ -120,11 +251,27 @@ export function TaskPanel(props: {
       {props.approvals?.map((a) => (
         <ApprovalBox key={a.attention_id} item={a} onAnswered={props.onAnswered} />
       ))}
+      {props.questions?.map((q) => <QuestionBox key={q.attention_id} item={q} />)}
+      {done && (
+        <p className="tp-done" role="status">
+          <span className="map-tick" aria-hidden="true">
+            <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#fff" strokeWidth="1.8">
+              <path d="M2 5.2 4.2 7.4 8 3" />
+            </svg>
+          </span>
+          <span>Completed</span>
+          {doneAt && <span>{ago(doneAt, now)} ago</span>}
+        </p>
+      )}
       {error && <p className="tp-note">Couldn&apos;t load this session&apos;s activity: {error}</p>}
       {!card.detail ? (
         <p className="tp-note">Robin doesn&apos;t read tasks or file edits for {card.runtime} yet.</p>
       ) : !detail && !error ? (
         <p className="tp-note">Loading…</p>
+      ) : kind === "workflow" ? (
+        detail && <WorkflowAgents card={card} detail={detail} running={props.state === "running"} />
+      ) : job ? (
+        <JobFacts card={card} state={props.state} now={now} />
       ) : todos.length ? (
         <ul className="tp-tasks">
           {todos.map((t, i) => {
@@ -172,6 +319,7 @@ export function TaskPanel(props: {
           )}
         </div>
       )}
+      {detail && kind === "session" && <BackgroundWork detail={detail} sessionId={card.session_id} now={now} />}
       {props.actions !== false && !card.parent && (props.onOpenSession || s) && (
         <div className="tp-acts">
           {props.onOpenSession && (

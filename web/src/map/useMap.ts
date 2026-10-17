@@ -13,6 +13,8 @@ type MapData = { clusters: MapCluster[]; cards: MapCard[]; now: MapNow | null; p
 export function liveState(card: MapCard, session: Session | undefined, now: number): { state: MapState; inferred: boolean } {
   if (!card.parent && session && session.runtime_state !== "unknown") return { state: session.runtime_state, inferred: false };
   if (card.state_evidence === "reported") return { state: card.state, inferred: false };
+  // Skills, workflows and shells: the server weighs their children and end signals, not just recency.
+  if (card.kind === "skill" || card.kind === "workflow" || card.kind === "shell") return { state: card.state, inferred: true };
   if (card.state === "stopped") return { state: "stopped", inferred: true };
   const last = card.last_activity_at ? Date.parse(card.last_activity_at) : 0;
   return { state: now - last < RUNNING_WINDOW_MS ? "running" : "idle", inferred: true };

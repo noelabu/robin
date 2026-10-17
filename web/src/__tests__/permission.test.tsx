@@ -82,3 +82,62 @@ test("a session waiting on a permission turns its card red, and the card answers
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
+
+test("a session asking a question turns its card amber and its panel shows the question and options", async () => {
+  vi.useFakeTimers({ toFake: ["Date"], now: NOW });
+  const question: AttentionItem = {
+    attention_id: "att-2",
+    kind: "question",
+    session_id: "s1",
+    task_id: null,
+    state: "open",
+    title: "How should a workflow appear?",
+    detail: {
+      tool: "AskUserQuestion",
+      answer_in: "terminal",
+      questions: [
+        {
+          question: "How should a workflow appear?",
+          header: "Workflows",
+          multi: false,
+          options: [{ label: "Card + its agents", description: "Agents appear under it" }],
+        },
+      ],
+    },
+    allowed_responses: [],
+    created_at: "2026-10-17T09:59:30Z",
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      const path = url.split("?")[0];
+      const reply =
+        path === "/api/v1/map"
+          ? { now: null, pending_events: 0, cards: [card], clusters: [{ key: "/r/app", label: "app", path: "~/r/app", sessions: 1, shown: 1, running: 0, waiting: 1, last_activity_at: null }] }
+          : path === "/api/v1/attention"
+            ? { items: [question] }
+            : path === "/api/v1/sessions/s1/activity"
+              ? { session_id: "s1", cluster: "/r/app", lanes: [] }
+              : {};
+      return new Response(JSON.stringify(reply), { status: 200 });
+    }),
+  );
+  render(
+    <MapView
+      ws={{ ready: true, feed: [], sessions: {}, attentionVersion: 0, streamState: "live" }}
+      tabs={null}
+      onOpenSession={() => {}}
+      onOpenAttention={() => {}}
+    />,
+  );
+  const chip = await screen.findByText("Needs an answer");
+  const el = chip.closest("[data-card]") as HTMLElement;
+  expect(el.className).toContain("question");
+  expect(el.textContent).toContain("See question ↓");
+  fireEvent.click(el);
+  expect(await screen.findByText("Card + its agents")).toBeTruthy();
+  expect(screen.getByText("Answer it in the session's terminal.")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
