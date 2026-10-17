@@ -250,3 +250,32 @@ def test_claude_folder_is_found_after_leading_metadata_records(store, tmp_path):
     scan(store, runtimes=["claude"], roots={"claude": root})
     with store.reader.connect() as conn:
         assert conn.execute(select(SessionRow.execution_cwd)).scalars().all() == ["/Users/me/app"]
+
+
+def test_claude_workflow_runs_are_part_of_their_session(tmp_path):
+    from robin.adapters.history import HISTORY, claude_main, claude_mapper
+    from robin.events.tailer import MapperContext
+
+    main = claude_store(tmp_path, "/Users/me/app")
+    run = main.parent / main.stem / "subagents" / "workflows" / "wf_1"
+    agent = jl(run / "agent-w1.jsonl", {"type": "user", "uuid": "u", "message": {"content": "go"}})
+    journal = jl(run / "journal.jsonl", {"type": "launched"}, {"type": "started", "agentId": "w1"})
+    assert claude_main(agent) == main and claude_main(journal) == main
+    (native,) = claude_discover(tmp_path)
+    assert {agent, journal} <= set(native.extra_files)
+    assert {agent, journal} <= set(HISTORY["claude"].files(tmp_path))
+
+    def mapped(rec, path=main):
+        return claude_mapper(rec, MapperContext(f"file:{path}", 1, 0, 0, "claude")).event_type
+
+    assert mapped({"type": "started", "agentId": "w1"}, journal) == "tool.progress"
+    assert mapped({"type": "result", "agentId": "w1"}, journal) == "tool.progress"
+    assert mapped({"type": "launched"}, journal) == "unknown.raw"  # not a session start
+    note = "<task-notification>\n<status>completed</status>\n</task-notification>"
+    assert (
+        mapped({"type": "attachment", "attachment": {"type": "queued_command", "prompt": note}})
+        == "tool.finished"
+    )
+    assert mapped({"type": "queue-operation", "operation": "enqueue", "content": note}) == "tool.finished"
+    assert mapped({"type": "queue-operation", "operation": "remove", "content": note}) == "unknown.raw"
+    assert mapped({"type": "user", "message": {"content": note}}) == "message.user"

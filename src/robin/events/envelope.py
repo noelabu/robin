@@ -47,7 +47,10 @@ KNOWN_EVENT_TYPES: dict[str, EventFamily] = {
         )
     },
     **{f"message.{n}": EventFamily.MESSAGE for n in ("user", "delta", "completed")},
-    **{f"tool.{n}": EventFamily.TOOL for n in ("started", "output", "result", "error")},
+    **{
+        f"tool.{n}": EventFamily.TOOL
+        for n in ("started", "output", "result", "error", "finished", "progress")
+    },
     **{f"file.{n}": EventFamily.FILE for n in ("read", "write", "change")},
     **{
         t: EventFamily.ATTENTION

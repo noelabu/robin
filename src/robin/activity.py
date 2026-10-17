@@ -7,11 +7,12 @@ stored string is secret-scanned and truncated first (TR-070), and the table is r
 the extractor or the redaction rules change.
 """
 
+import html
 import json
 import os
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,7 @@ from typing import Any
 from sqlalchemy import Connection, delete, func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from robin.adapters.history import claude_workflow_file
 from robin.events.ingest import read_events, read_payload_json
 from robin.redact.scanner import RuleSet, for_data_dir
 from robin.runtime import ledger
@@ -26,7 +28,7 @@ from robin.store import Store
 from robin.store.models import Event, Meta, SessionActivity
 from robin.store.models import Session as SessionRow
 
-VERSION = "4"  # bump when extraction changes: the table is rebuilt from the events
+VERSION = "5"  # bump when extraction changes: the table is rebuilt from the events
 CURSOR_KEY = "activity_cursor"
 RULES_KEY = "activity_rules"
 BATCH = 500
@@ -36,6 +38,11 @@ MAX_TODOS = 50
 MAX_FILES = 500
 TODO_FILES = 20  # files shown under one task
 RESULT_LIMIT = 8192  # tool results are read only to learn a new task's id
+AWAIT_LIMIT = 65536  # ... or a background job's id, or how a sync subagent ended
+AWAIT_TTL = timedelta(hours=1)  # stop waiting for a result that never came (or was too big to read)
+NOTE_LIMIT = 262_144  # notifications and journal lines can embed a workflow's whole result
+MAX_JOBS = 200
+MAX_RUNS = 20
 EVENT_TYPES = (
     "message.user",
     "message.completed",
@@ -46,6 +53,8 @@ EVENT_TYPES = (
     "session.turn_started",
     "session.turn_completed",
     "session.plan_updated",
+    "tool.finished",
+    "tool.progress",
 )
 PAYLOAD_TYPES = {
     "message.user",
@@ -53,12 +62,18 @@ PAYLOAD_TYPES = {
     "file.change",
     "session.turn_started",
     "session.plan_updated",
+    "tool.finished",
+    "tool.progress",
 }
 EDIT_TOOLS = {"Edit": "edit", "MultiEdit": "edit", "Write": "write", "NotebookEdit": "edit"}
 STATUSES = {"pending": "pending", "in_progress": "in_progress", "inProgress": "in_progress",
             "completed": "completed", "done": "completed"}  # fmt: skip
 WRAPPED = re.compile(r"<([A-Za-z][\w-]*)\b[^>]*>.*?</\1>", re.S)  # <system-reminder>…</system-reminder>
 PASTED = re.compile(r"<pasted_content\b[^>]*>.*?(</pasted_content>|$)", re.S)  # may be cut off unclosed
+COMMAND = re.compile(r"<command-name>/?([^<\s]+)</command-name>")
+NOTE_FIELD = re.compile(r"<(task-id|tool-use-id|status|summary|event)>(.*?)</\1>", re.S)
+STOPPED_IDS = re.compile(r"Task ids?: ([\w, -]+)")
+NOTE_STATUS = {"completed": "completed", "failed": "failed", "killed": "killed", "stopped": "killed"}
 PATCH_LINE = re.compile(r"^\*\*\* (Add|Update|Delete) File: (.+)$|^\*\*\* Move to: (.+)$", re.M)
 
 
@@ -75,6 +90,14 @@ class Lane:
     todos: list[dict[str, Any]] = field(default_factory=list)  # {id, text, status, files?}
     files: list[dict[str, Any]] = field(default_factory=list)  # {path, op, at, n}, most recent first
     pending: dict[str, str] = field(default_factory=dict)  # TaskCreate tool_use id -> local task id
+    # Background work: tool_use id -> job (skill, workflow, shell, monitor, agent), and the results still
+    # to read for them (tool_use id -> when it was called).
+    jobs: dict[str, dict[str, Any]] = field(default_factory=dict)
+    awaiting: dict[str, str] = field(default_factory=dict)
+    skill: str | None = None  # the job key of the skill the current prompt is running, if any
+    cmd: str | None = None  # a slash command waiting for its skill body
+    runs: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)  # workflow run -> agent -> state
+    link: dict[str, Any] | None = None  # a subagent: the Agent call or workflow run that started it
 
 
 @dataclass
@@ -131,16 +154,18 @@ def _touch(lane: Lane, ctx: Ctx) -> None:
         lane.last_activity_at = ctx.at
 
 
-def _title(lane: Lane, ctx: Ctx, text: Any) -> None:
+def _title(lane: Lane, ctx: Ctx, text: Any) -> bool:
+    """Take a real prompt as the lane's title and current turn; says whether it was one."""
     if not isinstance(text, str):
-        return
+        return False
     text = PASTED.sub(" [pasted] ", WRAPPED.sub("", text)).strip()
     if not text or text.startswith("<"):  # command wrappers, caveats, injected context
-        return
+        return False
     lane.turn_started_at = ctx.at
     lane.prompt = text
     if lane.title is None:
         lane.title = summarize(ctx.rules, text)
+    return True
 
 
 def _touch_file(files: list[dict[str, Any]], rel: str, op: str, at: str, cap: int) -> list[dict[str, Any]]:
@@ -208,6 +233,8 @@ def _tool(lane: Lane, ctx: Ctx, name: Any, inp: Any, call_id: str | None = None)
             _files(lane, ctx, paths)
             lane.target = _rel(ctx, paths[0][0]) if paths else None
         return
+    if call_id:
+        _job(lane, ctx, name, inp, call_id)
     edited = inp.get("file_path", inp.get("notebook_path"))
     if name in EDIT_TOOLS and isinstance(edited, str):
         _files(lane, ctx, [(edited, EDIT_TOOLS[name])])
@@ -240,6 +267,127 @@ def _tool(lane: Lane, ctx: Ctx, name: Any, inp: Any, call_id: str | None = None)
                     t["text"] = summarize(ctx.rules, inp["subject"], TODO_LIMIT)
 
 
+def _add_job(lane: Lane, ctx: Ctx, key: str, job: dict[str, Any], awaiting: bool = True) -> None:
+    job.update(status=None, started_at=ctx.at.isoformat(), ended_at=None)
+    lane.jobs[key] = job
+    if awaiting:
+        lane.awaiting[key] = ctx.at.isoformat()
+    if len(lane.jobs) > MAX_JOBS:  # drop the oldest finished job, else the oldest
+        drop = next((k for k, j in lane.jobs.items() if j["status"]), next(iter(lane.jobs)))
+        del lane.jobs[drop]
+        lane.awaiting.pop(drop, None)
+
+
+def _job(lane: Lane, ctx: Ctx, name: str, inp: dict[str, Any], call_id: str) -> None:
+    """Skills, workflows, subagents and background shells become jobs the Map shows as their own cards."""
+    open_skill = lane.skill if lane.skill in lane.jobs else None
+
+    def text(key: str, limit: int = TEXT_LIMIT) -> str | None:
+        return summarize(ctx.rules, inp[key], limit) if isinstance(inp.get(key), str) else None
+
+    if name == "Skill" and isinstance(inp.get("skill"), str):
+        if open_skill:  # a skill calling another: one card for the chain, named by the outermost
+            inner = lane.jobs[open_skill].setdefault("inner", [])
+            skill = summarize(ctx.rules, inp["skill"], 60)
+            if skill not in inner and len(inner) < 5:
+                inner.append(skill)
+            return
+        _add_job(
+            lane, ctx, call_id, {"kind": "skill", "name": text("skill", 60), "args": text("args")}, False
+        )
+        lane.skill = call_id
+    elif name in ("Agent", "Task") and ("prompt" in inp or "subagent_type" in inp):
+        _add_job(
+            lane,
+            ctx,
+            call_id,
+            {
+                "kind": "agent",
+                "name": text("subagent_type", 40),
+                "title": text("description"),
+                "parent": open_skill,
+            },
+        )
+    elif name == "Workflow":
+        script = inp.get("scriptPath")
+        wf = (
+            inp.get("name")
+            if isinstance(inp.get("name"), str)
+            else Path(script).stem
+            if isinstance(script, str)
+            else None
+        )
+        _add_job(
+            lane,
+            ctx,
+            call_id,
+            {"kind": "workflow", "name": summarize(ctx.rules, wf, 60) if wf else None, "parent": open_skill},
+        )
+    elif (name == "Bash" and inp.get("run_in_background") is True) or name == "Monitor":
+        command = inp.get("command")
+        first = command.strip().splitlines()[0] if isinstance(command, str) and command.strip() else None
+        _add_job(
+            lane,
+            ctx,
+            call_id,
+            {
+                "kind": "shell" if name == "Bash" else "monitor",
+                "title": text("description") or (summarize(ctx.rules, first) if first else None),
+                "command": summarize(ctx.rules, command, 300) if isinstance(command, str) else None,
+                "parent": open_skill,
+            },
+        )
+    elif name in ("TaskStop", "KillShell"):
+        task = inp.get("task_id", inp.get("shell_id"))
+        for job in lane.jobs.values():
+            if task is not None and job.get("task") == str(task) and not job["status"]:
+                job.update(status="killed", ended_at=ctx.at.isoformat())
+
+
+def _note(text: str) -> dict[str, str]:
+    """The fields of a <task-notification>."""
+    return {m.group(1): html.unescape(m.group(2).strip()) for m in NOTE_FIELD.finditer(text[:NOTE_LIMIT])}
+
+
+def _notify(lane: Lane, ctx: Ctx, text: str) -> None:
+    """Background work finished (or a monitor saw an event). Repeats of the same notification are harmless."""
+    note = _note(text)
+    jobs = []
+    if note.get("tool-use-id") in lane.jobs:
+        jobs = [lane.jobs[note["tool-use-id"]]]
+    elif note.get("task-id"):
+        jobs = [j for j in lane.jobs.values() if j.get("task") == note["task-id"]]
+    elif note.get("status") == "stopped":  # the session ended under them: "Task ids: a, b"
+        m = STOPPED_IDS.search(note.get("summary", ""))
+        ids = {x.strip() for x in m.group(1).split(",")} if m else set()
+        jobs = [j for j in lane.jobs.values() if j.get("task") in ids]
+    status = NOTE_STATUS.get(note.get("status", ""))
+    for job in jobs:
+        if status:
+            job.update(status=status, ended_at=ctx.at.isoformat())
+            if note.get("summary"):
+                job["summary"] = summarize(ctx.rules, note["summary"])
+        elif note.get("event"):
+            job["event"] = summarize(ctx.rules, note["event"])
+
+
+def _journal(lane: Lane, run: str, rec: Any) -> None:
+    """A workflow run's journal line: an agent started in a phase, or ended."""
+    if not isinstance(rec, dict) or not isinstance(rec.get("agentId"), str):
+        return
+    agents = lane.runs.setdefault(run, {})
+    while len(lane.runs) > MAX_RUNS:
+        del lane.runs[next(iter(lane.runs))]
+    agent = agents.setdefault(rec["agentId"], {"phase": None, "label": None, "status": None})
+    if rec.get("type") == "started":
+        agent["phase"] = str(rec["phase"])[:60] if rec.get("phase") else None
+        agent["label"] = str(rec["label"])[:120] if rec.get("label") else None
+    elif rec.get("type") == "result":
+        agent["status"] = "completed"
+    elif rec.get("type") == "failed":
+        agent["status"] = "failed"
+
+
 def _plan(lane: Lane, ctx: Ctx, plan: list[Any]) -> None:
     _replace_todos(
         lane,
@@ -251,10 +399,39 @@ def _plan(lane: Lane, ctx: Ctx, plan: list[Any]) -> None:
     )
 
 
-def _task_result(lane: Lane, rec: dict[str, Any]) -> None:
+def _job_result(lane: Lane, ctx: Ctx, b: dict[str, Any], tur: Any) -> None:
+    """A job's launch result: the id its notification will use, a workflow's run, or a sync agent's end."""
+    job = lane.jobs.get(b["tool_use_id"])
+    lane.awaiting.pop(b["tool_use_id"], None)
+    if job is None:
+        return
+    tur = tur if isinstance(tur, dict) else {}
+    task = tur.get("backgroundTaskId") or tur.get("taskId") or tur.get("agentId")
+    if task:
+        job["task"] = str(task)[:80]
+    if job["kind"] == "workflow":
+        if tur.get("runId"):
+            job["run"] = str(tur["runId"])[:80]
+        if tur.get("workflowName"):
+            job["name"] = summarize(ctx.rules, tur["workflowName"], 60)
+    if b.get("is_error"):
+        job.update(status="failed", ended_at=ctx.at.isoformat())
+    elif job["kind"] == "agent" and tur.get("status") != "async_launched":
+        job.update(status="completed", ended_at=ctx.at.isoformat())
+
+
+def _task_result(lane: Lane, rec: dict[str, Any], ctx: Ctx | None = None) -> None:
     """A TaskCreate result names the task's real id; renumber the todo created for it."""
     blocks = (rec.get("message") or {}).get("content")
     for b in blocks if isinstance(blocks, list) else []:
+        if (
+            ctx
+            and isinstance(b, dict)
+            and b.get("type") == "tool_result"
+            and b.get("tool_use_id") in lane.awaiting
+        ):
+            _job_result(lane, ctx, b, rec.get("toolUseResult"))
+            continue
         if not (
             isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id") in lane.pending
         ):
@@ -287,17 +464,40 @@ def fold(lane: Lane, ctx: Ctx, event_type: str, payload: Any) -> None:
         elif payload.get("hook") == "UserPromptSubmit":
             _title(lane, ctx, payload.get("prompt"))
         return
+    if event_type == "tool.finished":  # a notification only seen in Claude's queue records
+        note = (
+            (payload.get("attachment") or {}).get("prompt")
+            if kind == "attachment"
+            else payload.get("content")
+        )
+        if isinstance(note, str):
+            _notify(lane, ctx, note)
+        return
     if kind in ("assistant", "user") and isinstance(payload.get("message"), dict):  # Claude transcript
         content = payload["message"].get("content")
         if kind == "user":
             if event_type == "tool.result":
-                _task_result(lane, payload)
-            elif not payload.get("isMeta"):
-                if isinstance(content, list):
-                    content = " ".join(
-                        b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
+                _task_result(lane, payload, ctx)
+                return
+            if isinstance(content, list):
+                content = " ".join(
+                    b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
+                )
+            if not isinstance(content, str):
+                return
+            if content.lstrip().startswith("<task-notification>"):
+                _notify(lane, ctx, content)
+            elif payload.get("isMeta"):
+                if lane.cmd and lane.skill is None and content.startswith("Base directory for this skill"):
+                    key = f"cmd-{payload.get('uuid') or ctx.at.isoformat()}"
+                    _add_job(
+                        lane, ctx, key, {"kind": "skill", "name": summarize(ctx.rules, lane.cmd, 60)}, False
                     )
-                _title(lane, ctx, content)
+                    lane.skill, lane.cmd = key, None
+            elif m := COMMAND.search(content):  # a slash command: a new prompt, maybe a skill
+                lane.skill, lane.cmd = None, m.group(1)
+            elif _title(lane, ctx, content):
+                lane.skill = lane.cmd = None
             return
         for b in content if isinstance(content, list) else []:
             if isinstance(b, dict) and b.get("type") == "tool_use":
@@ -590,25 +790,39 @@ def summaries(store: Store, events: list[Any]) -> list[tuple[str | None, bool]]:
 
 
 def lane_of(source_id: str) -> str:
-    """Claude subagents live in <session>/subagents/agent-*.jsonl and are tailed into their parent session."""
+    """Claude subagents live in <session>/subagents/agent-*.jsonl, and workflow agents in
+    <session>/subagents/workflows/<run>/agent-*.jsonl; both are tailed into their parent session. A run's
+    journal folds into the main lane, next to the Workflow call that started it."""
     if source_id.startswith("file:"):
         path = Path(source_id[5:])
-        if path.parent.name == "subagents":
+        if path.parent.name == "subagents" or (run_of(source_id) and path.stem != "journal"):
             return path.stem
     return ""
 
 
-def _subagent_meta(rules: RuleSet, source_id: str) -> tuple[str | None, str | None]:
+def run_of(source_id: str) -> str | None:
+    path = Path(source_id[5:]) if source_id.startswith("file:") else None
+    return path.parent.name if path and claude_workflow_file(path) else None
+
+
+def _subagent_meta(rules: RuleSet, source_id: str) -> tuple[str | None, str | None, dict[str, Any]]:
+    """Read once, when the lane is created: by then the meta file exists, and on a rebuild it is final."""
+    link: dict[str, Any] = {"run": run_of(source_id)}
     meta = Path(source_id[5:]).with_suffix(".meta.json")
     try:
         raw = json.loads(meta.read_text()) if meta.stat().st_size < 65536 else {}
     except (OSError, ValueError):
-        return None, None
+        return None, None, link
     if not isinstance(raw, dict):
-        return None, None
+        return None, None, link
     label = summarize(rules, raw["agentType"], 40) if isinstance(raw.get("agentType"), str) else None
     title = summarize(rules, raw["description"]) if isinstance(raw.get("description"), str) else None
-    return label, title
+    if isinstance(raw.get("toolUseId"), str):
+        link["tool_use_id"] = raw["toolUseId"][:80]
+    if isinstance(raw.get("workflowPhase"), str):
+        link["phase"] = summarize(rules, raw["workflowPhase"], 60)
+    link["finished"] = raw.get("finished") is True
+    return label, title, link
 
 
 def _load(row: Any) -> Lane:
@@ -624,6 +838,12 @@ def _load(row: Any) -> Lane:
         todos=json.loads(row.todos or "[]"),
         files=json.loads(row.files or "[]"),
         pending=scratch.get("pending", {}),
+        jobs=scratch.get("jobs", {}),
+        awaiting=scratch.get("awaiting", {}),
+        skill=scratch.get("skill"),
+        cmd=scratch.get("cmd"),
+        runs=scratch.get("runs", {}),
+        link=scratch.get("link"),
     )
 
 
@@ -643,7 +863,17 @@ def _row(session_id: str, lane_id: str, lane: Lane) -> dict[str, Any]:
         todo_total=len(lane.todos),
         files=json.dumps(lane.files),
         files_count=len(lane.files),
-        scratch=json.dumps({"pending": lane.pending}),
+        scratch=json.dumps(
+            {
+                "pending": lane.pending,
+                "jobs": lane.jobs,
+                "awaiting": lane.awaiting,
+                "skill": lane.skill,
+                "cmd": lane.cmd,
+                "runs": lane.runs,
+                "link": lane.link,
+            }
+        ),
     )
 
 
@@ -722,11 +952,20 @@ def project_batch(store: Store, batch: int = BATCH) -> int:
         if lane is None:
             lane = Lane()
             if key[1]:
-                lane.label, lane.title = _subagent_meta(rules, r.source_id)
+                lane.label, lane.title, lane.link = _subagent_meta(rules, r.source_id)
         lanes[key] = lane
         ctx = Ctx(rules, r.execution_cwd, r.source_time or r.ingested_at)
-        wanted = r.event_type in PAYLOAD_TYPES or (
-            r.event_type == "tool.result" and lane.pending and r.payload_size < RESULT_LIMIT
+        if lane.awaiting:
+            lane.awaiting = {
+                k: v for k, v in lane.awaiting.items() if ctx.at - datetime.fromisoformat(v) < AWAIT_TTL
+            }
+        wanted = (
+            (
+                r.event_type in PAYLOAD_TYPES
+                and (r.event_type not in ("tool.finished", "tool.progress") or r.payload_size < NOTE_LIMIT)
+            )
+            or (r.event_type == "tool.result" and lane.pending and r.payload_size < RESULT_LIMIT)
+            or (r.event_type == "tool.result" and lane.awaiting and r.payload_size < AWAIT_LIMIT)
         )
         payload = None
         if wanted:
@@ -734,6 +973,9 @@ def project_batch(store: Store, batch: int = BATCH) -> int:
                 payload = read_payload_json(store, r.global_cursor)
             except (ValueError, OSError):
                 payload = None
+        if r.event_type == "tool.progress":
+            _journal(lane, run_of(r.source_id) or "", payload)
+            continue
         fold(lane, ctx, r.event_type, payload)
 
     def work(conn: Connection) -> None:
@@ -809,7 +1051,16 @@ def cluster_of(cwd: str | None) -> str:
 
 DETAIL_RUNTIMES = ("claude", "codex")
 RUNNING_WINDOW_S = 60.0  # a session with no reported state counts as working this long after activity
-SUBAGENTS_SHOWN = 8
+SUBAGENTS_SHOWN = 8  # per parent: the session, a skill or a workflow
+SHELL_SHOWN_S = 600  # a finished background shell keeps its card this long, then folds into a count
+GROUP_SHOWN_S = 1800  # likewise a finished skill or workflow, with everything under it
+SHELL_IDLE_S = 1800  # a shell with no end signal counts as running this long after the session's activity
+STATUS_STATE = {"completed": "idle", "failed": "failed", "killed": "stopped"}
+JOB_LABEL = {"skill": "Skill", "workflow": "Workflow", "shell": "Background shell", "monitor": "Monitor"}
+
+
+def _now() -> datetime:
+    return datetime.now().astimezone()
 
 
 def _display_path(path: str) -> str:
@@ -829,6 +1080,13 @@ def _state(reported: str | None, last: datetime | None, now: datetime) -> tuple[
     return "idle", "inferred"
 
 
+def _when(value: Any) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value) if isinstance(value, str) else None
+    except ValueError:
+        return None
+
+
 def _card(s: Any, lane: Any, now: datetime, parent: str | None = None) -> dict[str, Any]:
     last = lane.last_activity_at if lane is not None else None  # not derived yet: unknown, not "just now"
     state, evidence = _state(None if parent else s.runtime_state, last, now)
@@ -837,6 +1095,9 @@ def _card(s: Any, lane: Any, now: datetime, parent: str | None = None) -> dict[s
     total = lane.todo_total if lane is not None else 0
     return {
         "id": f"{s.session_id}:{lane.lane}" if parent else s.session_id,
+        "kind": "subagent" if parent else "session",
+        "ref": lane.lane if lane is not None else "",
+        "status": None,
         "session_id": s.session_id,
         "parent": parent,
         "runtime": s.runtime,
@@ -906,6 +1167,7 @@ def _rows(conn: Connection, session_ids: list[str] | None) -> list[Any]:
             SessionActivity.todo_total,
             SessionActivity.files,
             SessionActivity.files_count,
+            SessionActivity.scratch,
         )
         .outerjoin(SessionActivity, SessionActivity.session_id == SessionRow.session_id)
         .where(SessionRow.archived.is_(False))
@@ -915,8 +1177,183 @@ def _rows(conn: Connection, session_ids: list[str] | None) -> list[Any]:
     return list(conn.execute(q).all())
 
 
-def _cards(rows: list[Any], now: datetime) -> dict[str, list[dict[str, Any]]]:
-    """Session id -> [its card, then its most recent subagent cards]."""
+def _job_card(s: Any, key: str, job: dict[str, Any]) -> dict[str, Any]:
+    kind = "shell" if job["kind"] == "monitor" else job["kind"]
+    return {
+        "id": f"{s.session_id}:{key}",
+        "kind": kind,
+        "ref": key,
+        "status": job.get("status"),
+        "session_id": s.session_id,
+        "parent": s.session_id,
+        "runtime": s.runtime,
+        "mode": s.mode,
+        "label": JOB_LABEL[job["kind"]],
+        "title": job.get("name") if kind in ("skill", "workflow") else job.get("title"),
+        "state": "idle",
+        "state_evidence": "inferred",
+        "detail": True,
+        "todos": None,
+        "files": 0,
+        "last_file": None,
+        "tool": None,
+        "target": job.get("command"),
+        "action_at": None,
+        "turn_started_at": None,
+        "last_activity_at": job.get("ended_at") or job.get("started_at"),
+        "created_at": job.get("started_at"),
+        "subagents_hidden": 0,
+        "args": job.get("args"),
+        "inner": job.get("inner", []),
+        "summary": job.get("summary") or job.get("event"),
+        "run": job.get("run"),
+        "started_at": job.get("started_at"),
+        "ended_at": job.get("ended_at"),
+    }
+
+
+def _reported(card: dict[str, Any], status: str | None) -> None:
+    if status in STATUS_STATE:
+        card.update(status=status, state=STATUS_STATE[status], state_evidence="reported")
+
+
+def _later(a: str | None, b: str | None) -> str | None:
+    return max((x for x in (a, b) if x), key=lambda x: _when(x) or datetime.min, default=None)
+
+
+def _session_cards(s: Any, main: Any, subs: list[Any], now: datetime) -> list[dict[str, Any]]:
+    """A session's card, its skills, workflows and background shells, and its subagents under whichever
+    of those started them. Every card is returned; a finished one past its time, and the subagents past a
+    parent's cap, are marked "hidden" ("folded" or "capped")."""
+    sid = s.session_id
+    scratch = json.loads(main.scratch or "{}") if main is not None else {}
+    jobs: dict[str, dict[str, Any]] = scratch.get("jobs", {})
+    runs: dict[str, dict[str, Any]] = scratch.get("runs", {})
+    card = _card(s, main, now)
+    if main is None and subs:  # only subagents seen so far: the parent still has activity
+        card["last_activity_at"] = (
+            _iso(max((x.last_activity_at for x in subs if x.last_activity_at), default=None))
+            or card["last_activity_at"]
+        )
+    card.update(shells_done=0, groups_done=0)
+    groups = {k: _job_card(s, k, j) for k, j in jobs.items() if j["kind"] != "agent"}
+    for k, c in groups.items():
+        parent = jobs[k].get("parent")
+        if parent in groups and c["kind"] != "skill":
+            c["parent"] = groups[parent]["id"]
+    run_card = {c["run"]: c for c in groups.values() if c["kind"] == "workflow" and c["run"]}
+
+    agents = []
+    for x in subs:
+        c = _card(s, x, now, parent=sid)
+        link = json.loads(x.scratch or "{}").get("link") or {}
+        status = None
+        if link.get("run"):
+            agent = runs.get(link["run"], {}).get(x.lane.removeprefix("agent-")) or {}
+            status = agent.get("status")
+            c["phase"] = agent.get("phase") or link.get("phase")
+            if link["run"] in run_card:
+                c["parent"] = run_card[link["run"]]["id"]
+        elif link.get("tool_use_id") in jobs:
+            job = jobs[link["tool_use_id"]]
+            status = job["status"]
+            ended = _when(job.get("ended_at"))
+            if status and ended and x.last_activity_at and x.last_activity_at > ended:
+                status = None  # resumed after it ended (SendMessage): working again
+            if job.get("parent") in groups:
+                c["parent"] = groups[job["parent"]]["id"]
+        if not status and link.get("finished"):
+            status = "completed"
+        _reported(c, status)
+        agents.append(c)
+
+    def children(c: dict[str, Any]) -> list[dict[str, Any]]:
+        return [x for x in [*agents, *groups.values()] if x["parent"] == c["id"]]
+
+    session_last = _when(card["last_activity_at"])
+    for c in groups.values():
+        if c["kind"] != "shell":
+            continue
+        if c["status"]:
+            _reported(c, c["status"])
+        elif s.runtime_state in ("stopped", "failed"):
+            c["state"] = "stopped"
+        elif session_last and (now - session_last).total_seconds() < SHELL_IDLE_S:
+            c["state"] = "running"
+    for kind in ("workflow", "skill"):  # workflows first: a skill's state depends on its workflows'
+        for c in groups.values():
+            if c["kind"] != kind:
+                continue
+            kids = children(c)
+            for k in kids:
+                c["last_activity_at"] = _later(c["last_activity_at"], k["last_activity_at"])
+            if kind == "workflow":
+                phases: dict[str, dict[str, Any]] = {}
+                for agent in runs.get(c["run"] or "", {}).values() or [
+                    {"phase": k.get("phase"), "status": k["status"]} for k in kids
+                ]:
+                    ph = phases.setdefault(
+                        agent["phase"] or "",
+                        {"name": agent["phase"] or "", "done": 0, "failed": 0, "total": 0},
+                    )
+                    ph["total"] += 1
+                    ph["done"] += agent["status"] == "completed"
+                    ph["failed"] += agent["status"] == "failed"
+                c["phases"] = list(phases.values())
+            if c["status"]:
+                _reported(c, c["status"])
+            elif any(k["state"] == "failed" for k in kids):
+                c.update(state="failed", status="failed")
+            elif (
+                any(k["state"] in ("running", "waiting_for_input") for k in kids)
+                or (kind == "skill" and scratch.get("skill") == c["ref"] and card["state"] == "running")
+                or (kind == "workflow" and _state(None, _when(c["started_at"]), now)[0] == "running")
+            ):
+                c["state"] = "running"
+            elif kind == "skill" or kids:
+                c["status"] = "completed"
+
+    # Fold what finished a while ago; failures stay.
+    def fold_under(c: dict[str, Any]) -> None:
+        for k in children(c):
+            k["hidden"] = "folded"
+            fold_under(k)
+
+    for c in groups.values():
+        ended = _when(c["last_activity_at"])
+        age = (now - ended).total_seconds() if ended else 0
+        if c["parent"] != sid or c["state"] in ("running", "waiting_for_input", "failed"):
+            continue
+        if c["kind"] == "shell" and age > SHELL_SHOWN_S:
+            c["hidden"] = "folded"
+            card["shells_done"] += 1
+        elif c["kind"] != "shell" and age > GROUP_SHOWN_S:
+            c["hidden"] = "folded"
+            card["groups_done"] += 1
+            fold_under(c)
+
+    # Cap each parent's subagents: the working and failed ones first, then the newest.
+    oldest = datetime.min.replace(tzinfo=now.tzinfo)
+    by_id = {c["id"]: c for c in [card, *groups.values()]}
+    for parent in by_id.values():
+        kids = [a for a in agents if a["parent"] == parent["id"] and not a.get("hidden")]
+        kids.sort(
+            key=lambda a: (
+                a["state"] in ("running", "waiting_for_input", "failed"),
+                _when(a["last_activity_at"]) or oldest,
+            ),
+            reverse=True,
+        )
+        for a in kids[SUBAGENTS_SHOWN:]:
+            a["hidden"] = "capped"
+        parent["subagents_hidden"] = max(0, len(kids) - SUBAGENTS_SHOWN)
+    rest = sorted(
+        [*groups.values(), *agents], key=lambda c: _when(c["last_activity_at"]) or oldest, reverse=True
+    )
+    return [card, *rest]
+
+
+def _by_session(rows: list[Any]) -> dict[str, tuple[Any, Any, list[Any]]]:
     by_session: dict[str, tuple[Any, Any, list[Any]]] = {}
     for r in rows:
         s, main, subs = by_session.get(r.session_id, (r, None, []))
@@ -925,22 +1362,19 @@ def _cards(rows: list[Any], now: datetime) -> dict[str, list[dict[str, Any]]]:
         elif r.lane:
             subs.append(r)
         by_session[r.session_id] = (s, main, subs)
-    out = {}
-    for sid, (s, main, subs) in by_session.items():
-        card = _card(s, main, now)
-        if main is None and subs:  # only subagents seen so far: the parent still has activity
-            card["last_activity_at"] = (
-                _iso(max((x.last_activity_at for x in subs if x.last_activity_at), default=None))
-                or card["last_activity_at"]
-            )
-        subs.sort(key=lambda x: x.last_activity_at or datetime.min.replace(tzinfo=now.tzinfo), reverse=True)
-        card["subagents_hidden"] = max(0, len(subs) - SUBAGENTS_SHOWN)
-        out[sid] = [card] + [_card(s, x, now, parent=sid) for x in subs[:SUBAGENTS_SHOWN]]
-    return out
+    return by_session
+
+
+def _cards(rows: list[Any], now: datetime) -> dict[str, list[dict[str, Any]]]:
+    """Session id -> [its card, then the cards shown under it]."""
+    return {
+        sid: [c for c in _session_cards(s, main, subs, now) if not c.get("hidden")]
+        for sid, (s, main, subs) in _by_session(rows).items()
+    }
 
 
 def map_snapshot(store: Store, per_cluster: int = 50, cluster: str | None = None) -> dict[str, Any]:
-    now = datetime.now().astimezone()
+    now = _now()
     with store.reader.connect() as conn:
         rows = _rows(conn, None)
         now_card = _now_card(conn, now)
@@ -977,7 +1411,7 @@ def map_snapshot(store: Store, per_cluster: int = 50, cluster: str | None = None
 
 
 def map_cards(store: Store, session_ids: list[str]) -> dict[str, Any]:
-    now = datetime.now().astimezone()
+    now = _now()
     with store.reader.connect() as conn:
         rows = _rows(conn, session_ids)
         now_card = _now_card(conn, now)
@@ -1000,6 +1434,12 @@ def session_activity(store: Store, session_id: str) -> dict[str, Any] | None:
             .where(SessionActivity.session_id == session_id)
             .order_by(SessionActivity.lane)
         ).all()
+        rows = _rows(conn, [session_id])
+    cards = []
+    for _sid, (row, main, subs) in _by_session(rows).items():
+        cards = _session_cards(row, main, subs, _now())
+    agents = {c["ref"]: c for c in cards if c["kind"] == "subagent"}
+    main_scratch = next((json.loads(r.scratch or "{}") for r in lanes if r.lane == ""), {})
     return {
         "session_id": session_id,
         "cluster": cluster_of(s.execution_cwd),
@@ -1013,7 +1453,15 @@ def session_activity(store: Store, session_id: str) -> dict[str, Any] | None:
                 "files": json.loads(r.files)[:200],
                 "files_count": r.files_count,
                 "last_activity_at": _iso(r.last_activity_at),
+                "status": agents[r.lane]["status"] if r.lane in agents else None,
+                "phase": agents[r.lane].get("phase") if r.lane in agents else None,
+                "parent": agents[r.lane]["parent"] if r.lane in agents else None,
             }
             for r in lanes
         ],
+        # Skills, workflows and background shells, folded ones included, newest first.
+        "jobs": [
+            {**c, "hidden": c.get("hidden")} for c in cards if c["kind"] in ("skill", "workflow", "shell")
+        ],
+        "runs": main_scratch.get("runs", {}),
     }

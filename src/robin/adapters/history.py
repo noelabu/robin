@@ -75,10 +75,19 @@ def claude_files(root: Path) -> list[Path]:
     return sorted(root.glob("*/*.jsonl"))
 
 
+def claude_workflow_file(path: Path) -> bool:
+    """A workflow run's agent transcript or journal: <project>/<session>/subagents/workflows/<run>/x.jsonl."""
+    return (
+        len(path.parents) > 4 and path.parents[1].name == "workflows" and path.parents[2].name == "subagents"
+    )
+
+
 def claude_main(path: Path) -> Path:
     """A subagent transcript (<project>/<session>/subagents/x.jsonl) belongs to <project>/<session>.jsonl."""
     if path.parent.name == "subagents":
         return path.parent.parent.parent / f"{path.parent.parent.name}.jsonl"
+    if claude_workflow_file(path):
+        return path.parents[4] / f"{path.parents[3].name}.jsonl"
     return path
 
 
@@ -89,7 +98,8 @@ def claude_describe(path: Path) -> NativeSession:
     native = next((r["sessionId"] for r in recs if r.get("sessionId")), None) or path.stem
     cwd = next((r["cwd"] for r in recs if r.get("cwd")), None)
     version = next((r["version"] for r in recs if r.get("version")), None)
-    subagents = tuple(sorted((path.parent / path.stem / "subagents").glob("*.jsonl")))
+    sub = path.parent / path.stem / "subagents"
+    subagents = tuple(sorted(sub.glob("*.jsonl")) + sorted(sub.glob("workflows/*/*.jsonl")))
     return NativeSession("claude", str(native), path, cwd, version, subagents)
 
 
@@ -98,10 +108,26 @@ def claude_discover(root: Path) -> Iterator[NativeSession]:
         yield claude_describe(path)
 
 
+NOTIFICATION = "<task-notification>"
+
+
 def claude_mapper(rec: Any, ctx: MapperContext) -> MappedRecord | None:
     if not isinstance(rec, dict):
         return MappedRecord()
     kind = rec.get("type")
+    if ctx.source_id.endswith("/journal.jsonl") and claude_workflow_file(Path(ctx.source_id[5:])):
+        # A workflow run's journal: which agent started, in which phase, and how it ended. No timestamps.
+        return _m("tool.progress", rec) if kind in ("started", "result", "failed") else MappedRecord()
+    # Background work finishing; sometimes these queue records are the only copy of the notification.
+    attachment = rec.get("attachment")
+    if kind == "attachment" and isinstance(attachment, dict) and attachment.get("type") == "queued_command":
+        prompt = attachment.get("prompt")
+        if isinstance(prompt, str) and prompt.startswith(NOTIFICATION):
+            return _m("tool.finished", rec)
+    if kind == "queue-operation" and rec.get("operation") == "enqueue":
+        content = rec.get("content")
+        if isinstance(content, str) and content.startswith(NOTIFICATION):
+            return _m("tool.finished", rec)
     content = (rec.get("message") or {}).get("content") if isinstance(rec.get("message"), dict) else None
     blocks = content if isinstance(content, list) else []
     if kind == "user":
@@ -239,7 +265,11 @@ HISTORY: dict[str, HistoryAdapter] = {
         lambda: Path.home() / ".claude" / "projects",
         claude_discover,
         claude_mapper,
-        lambda root: claude_files(root) + sorted(root.glob("*/*/subagents/*.jsonl")),
+        lambda root: (
+            claude_files(root)
+            + sorted(root.glob("*/*/subagents/*.jsonl"))
+            + sorted(root.glob("*/*/subagents/workflows/*/*.jsonl"))
+        ),
         claude_describe,
         claude_main,
     ),

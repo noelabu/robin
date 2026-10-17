@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Map groups mockup</title>
+<link rel="stylesheet" href="../../web/src/styles.css">
+<link rel="stylesheet" href="../../web/src/map/map.css">
+<style>
+  body { margin: 0; background: var(--m-bg); color: var(--m-ink); padding: 24px; }
+  .wrap { max-width: 1320px; margin: 0 auto; }
+  h1 { font: 700 14px var(--disp); letter-spacing: .22em; text-transform: uppercase; color: var(--m-accent); margin: 0 0 4px; }
+  .sub-h { color: var(--m-muted); font-size: 12px; margin: 0 0 18px; }
+  .flow-canvas { position: relative; height: 640px; }
+  /* new kinds — what map.css gains */
+  .map-card.skill, .map-card.workflow { background: var(--m-card-sub); padding-bottom: 10px; border-style: solid; }
+  .map-card.skill { border-left: 3px solid var(--hue, var(--m-accent)); }
+  .map-card.workflow { border-left: 3px solid #7aa7ff; }
+  .map-card.shell { background: #0d0a16; padding-bottom: 9px; }
+  .map-card.shell .cmd { font: 10px var(--mono); color: var(--m-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .map-card.mini { padding: 8px 10px; }
+  .map-card.mini h3 { font-size: 11.5px; -webkit-line-clamp: 1; max-height: 1.3em; margin: 0; }
+  .map-card.mini .meta { margin-bottom: 4px; }
+  .map-card.failed { border-color: var(--m-bad); }
+  .map-card .phases { font: 10px var(--mono); color: var(--m-muted); }
+  .map-card .phases b { color: var(--m-ink); font-weight: 500; }
+  .map-card .phases .bad { color: var(--m-bad); }
+  .map-card .inner { font: 10px var(--mono); color: var(--m-muted); }
+  .map-chip.done { color: #9fe0b1; }
+  .map-chip.killed { color: var(--m-muted); }
+  .panels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 24px; }
+  .panels > div > h2 { font: 600 10px var(--disp); letter-spacing: .2em; text-transform: uppercase; color: var(--m-faint); margin: 0 0 8px; }
+  .task-panel { position: static; }
+  .tp-kv { margin: 0; padding: 8px 10px; display: grid; grid-template-columns: 70px 1fr; gap: 4px 8px; font-size: 11px; }
+  .tp-kv dt { color: var(--m-faint); }
+  .tp-kv dd { margin: 0; color: var(--m-ink-2); font-family: var(--mono); overflow-wrap: anywhere; }
+  .tp-phase { padding: 6px 10px 2px; display: flex; justify-content: space-between; font: 600 10px var(--disp); letter-spacing: .14em; text-transform: uppercase; color: var(--m-muted); }
+  .tp-agents { list-style: none; margin: 0; padding: 0 10px 6px; }
+  .tp-agents li { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; font: 10.5px var(--mono); color: var(--m-muted); }
+  .tp-agents li .ok { color: #9fe0b1; } .tp-agents li .run { color: var(--m-accent); } .tp-agents li .bad { color: var(--m-bad); }
+  .notes { margin-top: 24px; color: var(--m-muted); font-size: 12px; line-height: 1.6; }
+  .notes code { color: var(--m-ink-2); }
+  @media (max-width: 900px) { .panels { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Map — skills, workflows, shells</h1>
+  <p class="sub-h">One session, as in the Sessions tab flow and on the Map. Columns: session → skill / subagent / shell → workflow → workflow agents.</p>
+
+  <div class="flow">
+    <div class="flow-h"><span>Session, skills &amp; subagents</span><span>1 skill · 1 workflow · 5 agents · 1 shell running · click a card for its tasks and files</span></div>
+    <div class="flow-canvas" id="canvas">
+      <svg class="map-wires" id="wires" width="1320" height="640" aria-hidden="true"></svg>
+    </div>
+  </div>
+
+  <div class="panels">
+    <div>
+      <h2>Shell card opened</h2>
+      <div class="task-panel">
+        <dl class="tp-kv">
+          <dt>Command</dt><dd>uv run pytest -q 2&gt;&amp;1 | tail -6</dd>
+          <dt>Status</dt><dd>Running · started 3m ago</dd>
+          <dt>Task</dt><dd>btp0r73gl</dd>
+        </dl>
+      </div>
+    </div>
+    <div>
+      <h2>Workflow card opened</h2>
+      <div class="task-panel">
+        <div class="tp-phase"><span>Context</span><span>1/1</span></div>
+        <ul class="tp-agents"><li><span>context</span><span class="ok">Completed</span></li></ul>
+        <div class="tp-phase"><span>Find</span><span>2/3 · 1 failed</span></div>
+        <ul class="tp-agents">
+          <li><span>find:correctness</span><span class="run">Working</span></li>
+          <li><span>find:security</span><span class="ok">Completed</span></li>
+          <li><span>find:contracts</span><span class="bad">Failed</span></li>
+        </ul>
+        <div class="tp-phase"><span>Verify</span><span>0/0</span></div>
+        <p class="tp-none" style="padding-left:10px">Not started</p>
+      </div>
+    </div>
+    <div>
+      <h2>Session card opened — shells section</h2>
+      <div class="task-panel">
+        <div class="tp-plain">
+          <h4><span>Background shells</span><span>3</span></h4>
+          <ul class="tp-files">
+            <li class="hot"><span>Run the full Python suite · running</span><span>3m</span></li>
+            <li><span>Build the web UI · exit 0</span><span>12m</span></li>
+            <li><span>Lint web · exit 0</span><span>40m</span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="notes">
+    <p><b>Folded shells.</b> "Build the web UI" and "Lint web" ended more than 10 min ago, so they have no card. The session card's foot reads <code>2 finished shells</code>, and they stay listed in its panel. A failed shell keeps its card.</p>
+    <p><b>Skill chain.</b> <code>/review-lite</code> called <code>code-reviewer</code>, which launched the workflow. That is one skill card with <code>→ code-reviewer</code>. Its status comes from its children.</p>
+    <p><b>Status.</b> Completed / Failed / Killed come from Claude Code's task notifications and the workflow journal. "Working" with no signal still uses the activity guess.</p>
+  </div>
+</div>
+
+<script>
+const tick = '<span class="map-tick" aria-hidden="true"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#fff" stroke-width="1.8"><path d="M2 5.2 4.2 7.4 8 3"/></svg></span>';
+const chip = (s) => ({
+  running: '<span class="map-chip running">Working<span class="map-spin"></span></span>',
+  done: '<span class="map-chip done">Completed ' + tick + '</span>',
+  failed: '<span class="map-chip failed">Failed</span>',
+  killed: '<span class="map-chip killed">Killed</span>',
+})[s];
+// Plan sizes: CARD 272x128, GROUP 248x96, SUB 228x86, SHELL 228x72, MINI 208x60; COL_GAP 72, GAP 16.
+const X = [24, 368, 688, 1008];
+const cards = [
+  { id: "s", x: X[0], y: 24, w: 272, h: 128, cls: "running", html: `
+    <span class="meta"><span class="rt">claude · now</span>${chip("running")}</span>
+    <h3>Let sessions started outside Robin be continued from Robin</h3>
+    <span class="line"><span>2 of 5 tasks · In progress</span><span class="file">activity.py +3</span></span>
+    <span class="map-bar"><i style="width:40%"></i></span>
+    <span class="foot">Show tasks ↓ · 2 finished shells</span>` },
+  { id: "sk", p: "s", x: X[1], y: 24, w: 248, h: 96, cls: "skill running", html: `
+    <span class="meta"><span class="rt">Skill · 3m ago</span>${chip("running")}</span>
+    <h3>review-lite</h3>
+    <span class="inner">→ code-reviewer</span>
+    <span class="line" style="margin-top:4px"><span>1 workflow · 4 agents</span></span>` },
+  { id: "wf", p: "sk", x: X[2], y: 24, w: 248, h: 96, cls: "workflow running", html: `
+    <span class="meta"><span class="rt">Workflow · 2m ago</span>${chip("running")}</span>
+    <h3>review-pipeline</h3>
+    <span class="phases"><b>Context</b> 1/1 · <b>Find</b> 2/3 · <span class="bad">1 failed</span></span>` },
+  { id: "a1", p: "wf", x: X[3], y: 24, w: 208, h: 60, cls: "sub mini idle", html: `
+    <span class="meta"><span class="rt">Context · workflow-subagent</span>${chip("done")}</span><h3>context</h3>` },
+  { id: "a2", p: "wf", x: X[3], y: 100, w: 208, h: 60, cls: "sub mini running", html: `
+    <span class="meta"><span class="rt">Find · correctness-reviewer</span>${chip("running")}</span><h3>find:correctness</h3>` },
+  { id: "a3", p: "wf", x: X[3], y: 176, w: 208, h: 60, cls: "sub mini idle", html: `
+    <span class="meta"><span class="rt">Find · security-reviewer</span>${chip("done")}</span><h3>find:security</h3>` },
+  { id: "a4", p: "wf", x: X[3], y: 252, w: 208, h: 60, cls: "sub mini failed", html: `
+    <span class="meta"><span class="rt">Find · contracts-reviewer</span>${chip("failed")}</span><h3>find:contracts</h3>` },
+  { id: "ex", p: "s", x: X[1], y: 328, w: 228, h: 86, cls: "sub idle", html: `
+    <span class="meta"><span class="rt">Explore · 40m ago</span>${chip("done")}</span>
+    <h3>List Map source files</h3>
+    <span class="line"><span>Read web/src/map</span></span>` },
+  { id: "sh", p: "s", x: X[1], y: 430, w: 228, h: 72, cls: "shell running", html: `
+    <span class="meta"><span class="rt">Background shell · 3m</span>${chip("running")}</span>
+    <h3>Run the full Python suite</h3>
+    <span class="cmd">uv run pytest -q 2&gt;&amp;1 | tail -6</span>` },
+  { id: "sh2", p: "s", x: X[1], y: 518, w: 228, h: 72, cls: "shell failed", html: `
+    <span class="meta"><span class="rt">Background shell · 20m ago</span>${chip("failed")}</span>
+    <h3>Type-check the web app</h3>
+    <span class="cmd">exit code 2</span>` },
+];
+const canvas = document.getElementById("canvas");
+const wires = document.getElementById("wires");
+const at = Object.fromEntries(cards.map((c) => [c.id, c]));
+for (const c of cards) {
+  const b = document.createElement("button");
+  b.className = `map-card ${c.cls}`;
+  b.style.cssText = `left:${c.x}px;top:${c.y}px;width:${c.w}px;height:${c.h}px;--hue:var(--h-violet)`;
+  b.innerHTML = c.html;
+  canvas.appendChild(b);
+  if (!c.p) continue;
+  const a = at[c.p];
+  const x1 = a.x + a.w, y1 = a.y + Math.min(40, a.h / 2), x2 = c.x, y2 = c.y + c.h / 2, mx = (x1 + x2) / 2;
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", `M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`);
+  if (c.cls.includes("running")) path.setAttribute("class", "live");
+  wires.appendChild(path);
+}
+</script>
+</body>
+</html>

@@ -37,7 +37,8 @@ def tool_use(uuid, t, name, inp, tid=None):
     )
 
 
-def claude_session(tmp_path: Path, cwd: Path, *records, subagents=None) -> dict[str, Path]:
+def claude_session(tmp_path: Path, cwd: Path, *records, subagents=None, workflows=None) -> dict[str, Path]:
+    """workflows: {run id: (journal records, {agent name: (meta, records)})}"""
     root = tmp_path / "claude"
     base = root / "-repo"
     jl(base / f"{SID}.jsonl", *records)
@@ -45,6 +46,12 @@ def claude_session(tmp_path: Path, cwd: Path, *records, subagents=None) -> dict[
         jl(base / SID / "subagents" / f"{name}.jsonl", *recs)
         if meta is not None:
             (base / SID / "subagents" / f"{name}.meta.json").write_text(json.dumps(meta))
+    for run, (journal, agents) in (workflows or {}).items():
+        folder = base / SID / "subagents" / "workflows" / run
+        jl(folder / "journal.jsonl", *journal)
+        for name, (meta, recs) in agents.items():
+            jl(folder / f"{name}.jsonl", *recs)
+            (folder / f"{name}.meta.json").write_text(json.dumps(meta))
     return {"claude": root, "codex": tmp_path / "none", "pi": tmp_path / "none"}
 
 
