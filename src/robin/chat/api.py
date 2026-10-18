@@ -42,11 +42,11 @@ class ChatApi:
             raise ChatError(str(e.get("code", r.status_code)), str(e.get("message", r.text)))
         return data
 
-    async def session(self) -> dict[str, Any]:
-        return dict(await self._call("GET", f"/sessions/{self.session_id}"))
+    async def session(self, session_id: str | None = None) -> dict[str, Any]:
+        return dict(await self._call("GET", f"/sessions/{session_id or self.session_id}"))
 
-    async def conversation(self) -> tuple[list[dict[str, Any]], int]:
-        page = await self._call("GET", f"/sessions/{self.session_id}/conversation")
+    async def conversation(self, session_id: str | None = None) -> tuple[list[dict[str, Any]], int]:
+        page = await self._call("GET", f"/sessions/{session_id or self.session_id}/conversation")
         return list(page["messages"]), int(page.get("cursor") or 0)
 
     async def attention(self) -> list[dict[str, Any]]:

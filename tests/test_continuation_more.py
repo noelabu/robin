@@ -430,7 +430,14 @@ def served_cli(supervised):
 def continue_args(store, sid, confirm):
     # --in only offers the real runtimes; the scripted "fake" target is reached through cmd_continue itself.
     return argparse.Namespace(
-        data=store.data_dir, session=sid, into="fake", confirm=confirm, text="go on", file=None, wait=10
+        data=store.data_dir,
+        session=sid,
+        into="fake",
+        confirm=confirm,
+        text="go on",
+        file=None,
+        wait=10,
+        no_chat=False,
     )
 
 
@@ -448,6 +455,49 @@ def test_the_cli_confirm_step_continues_and_names_the_new_session(served_cli, fa
         ).one()
     assert f"continued in fake: session {target} (native {native})" in out
     assert "acknowledged" in out
+
+
+def test_one_command_continues_from_the_start_of_an_id_and_opens_the_chat(
+    served_cli, fake_target, tmp_path, monkeypatch
+):
+    from robin import cli
+    from robin.chat import app as chat_app
+
+    store = served_cli
+    sid, _ = claude_source(store, fake_target, tmp_path)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr("builtins.input", lambda prompt: "")  # Enter takes the default: yes
+    chats = []
+    monkeypatch.setattr(chat_app, "run_chat", lambda data, session_id: chats.append(session_id))
+    cli.cmd_continue(continue_args(store, sid[:8], None))
+    with store.reader.connect() as c:
+        target = c.execute(select(SessionRow.session_id).where(SessionRow.runtime == "fake")).scalar_one()
+    assert chats == [target]
+
+
+def test_the_start_of_an_id_must_name_one_session(served_cli, fake_target, tmp_path):
+    from robin.cli import CliError, client, resolve_session
+
+    store = served_cli
+    sid, _ = claude_source(store, fake_target, tmp_path)
+    with client(store.data_dir) as c:
+        assert resolve_session(c, sid[:-1]) == sid  # one character short, as copied from a narrow terminal
+        assert resolve_session(c, sid) == sid
+        with pytest.raises(CliError, match="no session starting"):
+            resolve_session(c, "ffffffff-0000")
+
+
+def test_a_start_shared_by_several_sessions_lists_them(monkeypatch):
+    from robin import cli
+
+    two = [
+        {"session_id": f"c4bf2d75-{n}", "runtime": "claude", "runtime_state": "stopped"} for n in ("a", "b")
+    ]
+    monkeypatch.setattr(cli, "call", lambda c, method, path: {"sessions": two})
+    with pytest.raises(cli.CliError, match="more than one session") as err:
+        cli.resolve_session(None, "c4bf")
+    assert "c4bf2d75-a" in str(err.value) and "c4bf2d75-b" in str(err.value)
 
 
 def test_the_cli_says_where_the_session_is_kept_when_the_target_never_starts(

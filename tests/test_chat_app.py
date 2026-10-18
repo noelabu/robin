@@ -57,12 +57,13 @@ class FakeApi:
         self.frames: asyncio.Queue[Any] = asyncio.Queue()
         self.streams: list[int] = []
         self.fail_act: ChatError | None = None
+        self.others: dict[str, tuple[dict[str, Any], list[dict[str, Any]]]] = {}
 
-    async def session(self):
-        return self.s
+    async def session(self, session_id=None):
+        return self.others[session_id][0] if session_id else self.s
 
-    async def conversation(self):
-        return list(self.messages), 40
+    async def conversation(self, session_id=None):
+        return (list(self.others[session_id][1]), 0) if session_id else (list(self.messages), 40)
 
     async def attention(self):
         return list(self.items)
@@ -142,6 +143,25 @@ async def test_history_then_live_steps_and_replies():
         assert app.cursor == 42
 
 
+async def test_a_continued_session_shows_the_conversation_it_continues():
+    api = FakeApi(
+        {**SESSION, "runtime": "codex", "continued_from": {"session_id": "s0", "runtime": "claude"}}
+    )
+    api.others["s0"] = (
+        {**SESSION, "session_id": "s0", "continued_from": None},
+        [{"role": "user", "at": "0", "text": "Plan the resume feature"}],
+    )
+    api.messages = [{"role": "user", "at": "1", "text": "Continue from where the previous session left off."}]
+    app = ChatApp(api, "s1")
+    async with app.run_test() as pilot:
+        await settle(pilot, lambda: len(texts(app)) == 3)
+        assert texts(app) == [
+            "You  Plan the resume feature",
+            "── continued from claude in codex ──",
+            "You  Continue from where the previous session left off.",
+        ]
+
+
 async def test_typing_sends_a_message_and_leaving_never_stops_the_session():
     api = FakeApi()
     app = ChatApp(api, "s1")
@@ -169,6 +189,9 @@ async def test_an_approval_is_answered_with_y():
     app = ChatApp(api, "s1")
     async with app.run_test() as pilot:
         await settle(pilot, lambda: "make test" in str(app.query_one("#pending", Static).content))
+        await pilot.pause()
+        box, panel = app.query_one("#input").region, app.query_one("#pending").region
+        assert box.height and not box.overlaps(panel)  # the panel never covers what you type
         await send(pilot, "y")
         assert ("respond", "a2", "allow", None) in api.calls
         assert not app.query_one("#pending").has_class("show")

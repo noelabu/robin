@@ -414,6 +414,7 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         task_id: str | None = None,
         include_archived: bool = False,
         mode: str | None = None,
+        id_prefix: str | None = Query(None, pattern=r"^[0-9a-fA-F-]+$"),
         limit: int = Query(200, ge=1, le=1000),
         offset: int = Query(0, ge=0),
         before_updated_at: datetime | None = None,
@@ -448,6 +449,8 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
             where.append(SessionRow.runtime_state == state)
         if mode:
             where.append(SessionRow.mode == mode)
+        if id_prefix:  # hex and dashes only, so nothing in it is a LIKE wildcard
+            where.append(SessionRow.session_id.like(f"{id_prefix.lower()}%"))
         with store.reader.connect() as conn:
             total = conn.execute(select(func.count()).select_from(SessionRow).where(*where)).scalar_one()
             rows = _sessions(conn, where=tuple(where), limit=limit, offset=offset)
