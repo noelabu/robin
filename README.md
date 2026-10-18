@@ -72,6 +72,15 @@ robin run claude --skip-permissions --prompt "..."        # run tools without as
 robin run claude --skip-permissions --chat                # then chat with it in this terminal
 ```
 
+To carry a session into another runtime (the original stays as it is), preview it, then confirm:
+
+```bash
+robin continue <session> --in codex                       # what crosses, what doesn't, and whether it fits
+robin continue <session> --in codex --confirm sha256:…    # write it into Codex's sessions and start it
+```
+
+Or use **Continue in…** on the session in the dashboard.
+
 ### If something's wrong
 
 - `robin doctor` first. It names what's missing or down.

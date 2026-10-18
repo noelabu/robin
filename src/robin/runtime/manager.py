@@ -25,7 +25,15 @@ from robin.runtime import attention, ledger, state
 from robin.runtime.capabilities import capabilities_for
 from robin.runtime.ledger import Action, ActionRejected
 from robin.store import Store
-from robin.store.models import AgentCredential, AttentionItem, ControlAction, Event, Meta, SourceCheckpoint
+from robin.store.models import (
+    AgentCredential,
+    AttentionItem,
+    ControlAction,
+    Event,
+    Meta,
+    SessionLink,
+    SourceCheckpoint,
+)
 from robin.store.models import Session as SessionRow
 from robin.supervisor.client import SupervisorClient, SupervisorUnavailable
 
@@ -565,12 +573,29 @@ def _transcripts(store: Store, session_id: str) -> list[str]:
 
 def _recently_written(store: Store, session_id: str) -> bool:
     now = time.time()
+    with store.reader.connect() as conn:
+        own = conn.execute(
+            select(SessionLink.written_path, SessionLink.written_size, SessionLink.written_mtime_ns).where(
+                SessionLink.target_session_id == session_id
+            )
+        ).first()
     for path in _transcripts(store, session_id):
         try:
-            if now - os.stat(path).st_mtime < TERMINAL_QUIET_S:
-                return True
+            st = os.stat(path)
         except OSError:
             continue
+        if (
+            own
+            and os.path.realpath(path) == os.path.realpath(own.written_path)
+            and (
+                st.st_size,
+                st.st_mtime_ns,
+            )
+            == (own.written_size, own.written_mtime_ns)
+        ):
+            continue  # the file Robin wrote to continue a session, untouched since: no terminal is writing it
+        if now - st.st_mtime < TERMINAL_QUIET_S:
+            return True
     return False
 
 
@@ -579,19 +604,23 @@ def _catch_up(store: Store, session_id: str, runtime: str) -> None:
     from pathlib import Path
 
     from robin.adapters.history import HISTORY
+    from robin.discovery import INGEST_LOCK
     from robin.events.tailer import JsonlTailer
 
     adapter = HISTORY.get(runtime)
     if adapter is None:
         return
-    for path in _transcripts(store, session_id):
-        if not os.path.exists(path):
-            continue
-        tailer = JsonlTailer(store, Path(path), session_id=session_id, runtime=runtime, mapper=adapter.mapper)
-        try:
-            tailer.poll_once()
-        finally:
-            tailer.close()
+    with INGEST_LOCK:  # the watcher may be tailing the same file
+        for path in _transcripts(store, session_id):
+            if not os.path.exists(path):
+                continue
+            tailer = JsonlTailer(
+                store, Path(path), session_id=session_id, runtime=runtime, mapper=adapter.mapper
+            )
+            try:
+                tailer.poll_once()
+            finally:
+                tailer.close()
 
 
 def _project_batch(conn: Connection, store: Store, batch: int) -> int:

@@ -3,6 +3,7 @@ import { api, ApiError, type Session } from "../api";
 import { RuntimeIcon } from "../map/RuntimeIcon";
 import { ago as since } from "../map/time";
 import { SessionFlow } from "../map/SessionFlow";
+import { ContinueDialog } from "./ContinueDialog";
 import { Conversation } from "./Conversation";
 import { Runs } from "./Runs";
 import { WorktreePanel } from "./WorktreePanel";
@@ -38,11 +39,13 @@ export function SessionDetail({
   onChanged,
   liveCursor,
   events,
+  onOpenSession,
 }: {
   session: Session;
   onChanged?: () => void;
   liveCursor?: number;
   events?: ReactNode;
+  onOpenSession?: (id: string) => void;
 }) {
   const [text, setText] = useState("");
   const [status, setStatus] = useState<string | null>(null);
@@ -119,6 +122,16 @@ export function SessionDetail({
             </span>
           )}
           {session.skip_permissions && <span className="warn-text">skip permissions</span>}
+          {session.continued_from && (
+            <button type="button" className="link" onClick={() => onOpenSession?.(session.continued_from!.session_id)}>
+              ← continued from {session.continued_from.runtime}
+            </button>
+          )}
+          {session.continued_in.map((l) => (
+            <button key={l.session_id} type="button" className="link" onClick={() => onOpenSession?.(l.session_id)}>
+              continued in {l.runtime} →
+            </button>
+          ))}
           {session.last_activity_at && <span>last activity {since(session.last_activity_at, Date.now())} ago</span>}
           {session.mode === "observed" && c.takeover?.enabled && (
             <button type="button" className="link" onClick={() => void archive()}>
@@ -126,6 +139,7 @@ export function SessionDetail({
             </button>
           )}
         </p>
+        <ContinueDialog session={session} onOpenSession={onOpenSession} />
       </div>
       <details className="facts-box">
         <summary>Details</summary>

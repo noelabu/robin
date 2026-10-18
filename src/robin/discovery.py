@@ -7,6 +7,7 @@ never stops the others (NFR-06). Sessions Robin launched itself are skipped: the
 authoritative copy, and correlating it with the transcript needs native identity (TR-032).
 """
 
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -19,6 +20,11 @@ from robin.ids import utc_now
 from robin.store import Store
 from robin.store.models import Session as SessionRow
 from robin.workspace import tasks as ws
+
+# One tailer per transcript at a time: two that both find no checkpoint would each open a generation and
+# store the same records twice. Scans, the watcher, takeover's catch-up and continue all take this lock;
+# they run in the service's threads. Reentrant, so continue can hold it across its own ingest.
+INGEST_LOCK = threading.RLock()
 
 
 @dataclass
@@ -66,48 +72,49 @@ def _ingest_session(
     projects: list[tuple[str, str]],
     report: RuntimeScan,
 ) -> None:
-    with store.reader.connect() as conn:
-        existing = conn.execute(
-            select(SessionRow.session_id, SessionRow.mode).where(
-                SessionRow.host_id == store.host_id,
-                SessionRow.runtime == native.runtime,
-                SessionRow.native_session_id == native.native_id,
-            )
-        ).first()
-    if existing is not None and existing.mode == "managed":
-        report.skipped_managed += 1
-        return
-    if existing is None:
-        report.new_sessions += 1
-    sid = ensure_session(
-        store,
-        runtime=native.runtime,
-        mode="observed",
-        native_session_id=native.native_id,
-        execution_cwd=native.cwd,
-    )
-    if native.cwd:  # sessions indexed before their folder could be read get it on the next scan
-        store.writer.call(
-            lambda c: c.execute(
-                update(SessionRow)
-                .where(SessionRow.session_id == sid, SessionRow.execution_cwd.is_(None))
-                .values(execution_cwd=native.cwd, updated_at=utc_now())
-            )
+    with INGEST_LOCK:
+        with store.reader.connect() as conn:
+            existing = conn.execute(
+                select(SessionRow.session_id, SessionRow.mode).where(
+                    SessionRow.host_id == store.host_id,
+                    SessionRow.runtime == native.runtime,
+                    SessionRow.native_session_id == native.native_id,
+                )
+            ).first()
+        if existing is not None and existing.mode == "managed":
+            report.skipped_managed += 1
+            return
+        if existing is None:
+            report.new_sessions += 1
+        sid = ensure_session(
+            store,
+            runtime=native.runtime,
+            mode="observed",
+            native_session_id=native.native_id,
+            execution_cwd=native.cwd,
         )
-    project_id = ws.project_for(native.cwd, projects)
-    if project_id:
-        store.writer.call(
-            lambda c: c.execute(
-                update(SessionRow)
-                .where(SessionRow.session_id == sid, SessionRow.project_id.is_(None))
-                .values(project_id=project_id, updated_at=utc_now())
+        if native.cwd:  # sessions indexed before their folder could be read get it on the next scan
+            store.writer.call(
+                lambda c: c.execute(
+                    update(SessionRow)
+                    .where(SessionRow.session_id == sid, SessionRow.execution_cwd.is_(None))
+                    .values(execution_cwd=native.cwd, updated_at=utc_now())
+                )
             )
-        )
-    for path in (native.path, *native.extra_files):
-        tailer = JsonlTailer(store, path, session_id=sid, runtime=native.runtime, mapper=mapper)
-        try:
-            r = tailer.poll_once()
-        finally:
-            tailer.close()
-        report.events += r.inserted
-        report.quarantined += r.quarantined
+        project_id = ws.project_for(native.cwd, projects)
+        if project_id:
+            store.writer.call(
+                lambda c: c.execute(
+                    update(SessionRow)
+                    .where(SessionRow.session_id == sid, SessionRow.project_id.is_(None))
+                    .values(project_id=project_id, updated_at=utc_now())
+                )
+            )
+        for path in (native.path, *native.extra_files):
+            tailer = JsonlTailer(store, path, session_id=sid, runtime=native.runtime, mapper=mapper)
+            try:
+                r = tailer.poll_once()
+            finally:
+                tailer.close()
+            report.events += r.inserted
+            report.quarantined += r.quarantined

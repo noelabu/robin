@@ -26,6 +26,7 @@ from sqlalchemy.orm import aliased
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from robin import activity, retrieval
+from robin.continuation.flow import links_for
 from robin.events.ingest import ensure_session, read_events
 from robin.paths import ExecutionCwd, secure_mkdir
 from robin.runtime.capabilities import RUNTIME_CAPABILITIES, capabilities_for
@@ -127,7 +128,9 @@ def _iso(value: Any) -> str | None:
     return value.isoformat() if value is not None and hasattr(value, "isoformat") else value
 
 
-def session_view(r: Any, shared: list[str] | None = None) -> dict[str, Any]:
+def session_view(
+    r: Any, shared: list[str] | None = None, links: dict[str, Any] | None = None
+) -> dict[str, Any]:
     caps = capabilities_for(r["runtime"])
     controls = {}
     for action in CONTROL_TYPES:
@@ -179,6 +182,8 @@ def session_view(r: Any, shared: list[str] | None = None) -> dict[str, Any]:
         "skip_permissions": bool(r["skip_permissions"]),
         "branch": None if r["archived"] else folders.branch_of(r["execution_cwd"]),
         "shared_folder_with": shared or [],
+        "continued_from": (links or {}).get("continued_from"),
+        "continued_in": (links or {}).get("continued_in") or [],
         "title": r.get("title"),
         "cluster": activity.cluster_of(r["execution_cwd"]),
         "last_activity_at": _iso(r.get("last_activity_at")),
@@ -236,10 +241,12 @@ def _sessions(
         q = q.limit(limit).offset(offset)
     rows = list(conn.execute(q).mappings())
     writers = _writers(conn) if writers is None else writers
+    links = links_for(conn, [r["session_id"] for r in rows])
     return [
         session_view(
             r,
             folders.shared_with(writers, r["execution_cwd"], r["session_id"]) if folders.is_writer(r) else [],
+            links[r["session_id"]],
         )
         for r in rows
     ]
@@ -928,6 +935,7 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         routes_agent,
         routes_attention,
         routes_context,
+        routes_continuation,
         routes_findings,
         routes_map,
         routes_workspace,
@@ -937,6 +945,7 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
     routes_attention.register(app, runtime, Authed, API, _error)
     routes_findings.register(app, runtime, Authed, API, _error)
     routes_context.register(app, runtime, Authed, API, _error)
+    routes_continuation.register(app, runtime, Authed, API, _error, action_view)
     routes_agent.register(app, runtime, Authed, API, _error)
     routes_map.register(app, runtime, Authed, API)
 

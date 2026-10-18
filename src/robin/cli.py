@@ -162,6 +162,79 @@ def cmd_reclaim(args: argparse.Namespace) -> None:
         print_action(wait_action(c, aid, args.wait) if args.wait else call(c, "GET", f"/actions/{aid}"))
 
 
+def _print_continue(p: dict[str, Any]) -> None:
+    src, tgt = p["source"], p["target"]
+    print(f"Continue {src['runtime']} session {src['session_id']} ({src['cwd']}) in {tgt['runtime']}")
+    if p.get("messages"):
+        m, d = p["messages"], p["dropped"]
+        print(
+            f"  messages:    {m['total']} ({m['user']} user, {m['assistant']} assistant, "
+            f"{m['tool_calls']} tool calls written as text)"
+        )
+        gone = [
+            f"{d[k]} {label}"
+            for k, label in (
+                ("images", 'images -> "[image]"'),
+                ("sidechain_records", "subagent records"),
+                ("system_reminders", "system messages"),
+                ("encrypted_reasoning", "encrypted reasoning blocks"),
+                ("unknown_items", "items of unknown kinds"),
+            )
+            if d.get(k)
+        ]
+        print(f"  dropped:     {', '.join(gone) or 'nothing'}")
+        if d.get("thinking_as_text"):
+            print(f"  thinking:    {d['thinking_as_text']} blocks written as text")
+        if p["compaction"]["source_summary_used"]:
+            print(f"  compaction:  used {src['runtime']}'s latest summary and the messages it kept")
+        e = p["estimate"]
+        print(
+            f"  size:        ~{e['tokens'] // 1000}k tokens of {e['limit_tokens'] // 1000}k allowed "
+            f"(60% of {tgt['model'] or tgt['runtime']}'s {tgt['context_window'] // 1000}k window)"
+        )
+        i = p["inherits"]
+        kept = [
+            f"task {i['task_id']}" if i["task_id"] else "",
+            "permission prompts skipped" if i["skip_permissions"] else "",
+        ]
+        print(f"  inherits:    {', '.join(k for k in kept if k) or 'nothing'}")
+    for w in p.get("warnings") or []:
+        print(f"  warning:     {w}")
+
+
+def cmd_continue(args: argparse.Namespace) -> None:
+    """Carry a session into another runtime: preview first, then --confirm with the preview's hash."""
+    with client(args.data) as c:
+        p = call(c, "POST", f"/sessions/{args.session}/continue/preview", {"runtime": args.into})
+        if p["refusal"]:
+            raise CliError(f"can't continue in {args.into}: {p['refusal']['message']}")
+        text = read_text(args.text, args.file) if (args.text or args.file) else p["default_text"]
+        if not args.confirm:
+            _print_continue(p)
+            print(f'  first message: "{text}"')
+            print(
+                f"\nTo continue: robin continue {args.session} --in {args.into} "
+                f'--confirm {p["preview_hash"]} [--text "..." | --file F]'
+            )
+            return
+        aid = action_id()
+        r = call(
+            c,
+            "POST",
+            f"/sessions/{args.session}/continue",
+            {"runtime": args.into, "text": text, "preview_hash": args.confirm, "action_id": aid},
+        )
+        row = call(c, "GET", f"/sessions/{r['session_id']}")
+        print(f"continued in {args.into}: session {r['session_id']} (native {row['native_session_id']})")
+        a = wait_action(c, aid, args.wait) if args.wait else r["action"]
+        print_action(a)
+        if a["state"] == "failed":
+            raise CliError(
+                f"{args.into} didn't start. The converted session is kept as {r['session_id']}; "
+                f"continue it from there with `robin chat {r['session_id']}` or the dashboard."
+            )
+
+
 def cmd_run(args: argparse.Namespace) -> None:
     prompt = read_text(args.prompt, args.prompt_file) if (args.prompt or args.prompt_file) else None
     with client(args.data) as c:
@@ -1262,6 +1335,16 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("session")
     p.add_argument("--wait", type=float, default=15)
     p.set_defaults(func=cmd_reclaim)
+
+    p = sub.add_parser("continue", parents=[common], help="continue a session in another runtime")
+    p.add_argument("session", help="the session to continue (it stays as it is)")
+    p.add_argument("--in", dest="into", required=True, choices=["claude", "codex", "pi"])
+    p.add_argument("--confirm", metavar="HASH", help="the preview hash: writes the session and starts it")
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--text", help="the first message (default: continue where it left off)")
+    g.add_argument("--file", help="read the first message from a file")
+    p.add_argument("--wait", type=float, default=30, help="seconds to wait for the runtime to start")
+    p.set_defaults(func=cmd_continue)
 
     p = sub.add_parser("run", parents=[common], help="launch a managed session")
     p.add_argument("agent", help="claude, codex or pi")
