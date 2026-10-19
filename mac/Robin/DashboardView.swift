@@ -29,6 +29,8 @@ struct DashboardView: View {
         .background(Color(red: 0.035, green: 0.024, blue: 0.067))
         .onAppear {
             NSApp.setActivationPolicy(.regular)
+            // An LSUIElement app turned regular can get the generic dock tile; hand it the bundle icon.
+            NSApp.applicationIconImage = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
             NSApp.activate()
             page.onReauth = { [controller] in await controller.bootstrapURL() }
             Task { await page.signIn(force: true) }
