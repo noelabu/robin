@@ -20,7 +20,7 @@ from typing import Any
 from sqlalchemy import Connection, delete, func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from robin.adapters.history import claude_workflow_file
+from robin.adapters.history import claude_workflow_file, codex_head
 from robin.events.ingest import read_events, read_payload_json
 from robin.redact.scanner import RuleSet, for_data_dir
 from robin.runtime import ledger
@@ -28,7 +28,7 @@ from robin.store import Store
 from robin.store.models import Event, Meta, SessionActivity
 from robin.store.models import Session as SessionRow
 
-VERSION = "5"  # bump when extraction changes: the table is rebuilt from the events
+VERSION = "6"  # bump when extraction changes: the table is rebuilt from the events
 CURSOR_KEY = "activity_cursor"
 RULES_KEY = "activity_rules"
 BATCH = 500
@@ -75,6 +75,9 @@ NOTE_FIELD = re.compile(r"<(task-id|tool-use-id|status|summary|event)>(.*?)</\1>
 STOPPED_IDS = re.compile(r"Task ids?: ([\w, -]+)")
 NOTE_STATUS = {"completed": "completed", "failed": "failed", "killed": "killed", "stopped": "killed"}
 PATCH_LINE = re.compile(r"^\*\*\* (Add|Update|Delete) File: (.+)$|^\*\*\* Move to: (.+)$", re.M)
+FILE_OPS = {"add": "write", "update": "edit", "delete": "delete"}
+EXEC_PLAN = re.compile(r'\{\s*"?step"?\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"?status"?\s*:\s*"(\w+)"')
+SHELL_WRAP = ("-lc", "-c")
 
 
 @dataclass
@@ -221,7 +224,7 @@ def _patch_paths(patch: str) -> list[tuple[str, str]]:
 def _tool(lane: Lane, ctx: Ctx, name: Any, inp: Any, call_id: str | None = None) -> None:
     if not isinstance(name, str) or not name:
         return
-    if isinstance(inp, str) and name in ("update_plan", "exec_command", "shell"):
+    if isinstance(inp, str) and name in ("update_plan", "exec_command", "shell", "spawn_agent"):
         try:
             inp = json.loads(inp)
         except ValueError:
@@ -307,6 +310,14 @@ def _job(lane: Lane, ctx: Ctx, name: str, inp: dict[str, Any], call_id: str) -> 
                 "title": text("description"),
                 "parent": open_skill,
             },
+        )
+    elif name == "spawn_agent":  # Codex: its SubAgentActivity items name the thread and say when it ended
+        _add_job(
+            lane,
+            ctx,
+            call_id,
+            {"kind": "agent", "name": text("agent_type", 40), "title": text("task_name"), "parent": None},
+            False,
         )
     elif name == "Workflow":
         script = inp.get("scriptPath")
@@ -452,6 +463,60 @@ def _task_result(lane: Lane, rec: dict[str, Any], ctx: Ctx | None = None) -> Non
                     t["id"] = real
 
 
+def _codex_item(lane: Lane, ctx: Ctx, p: dict[str, Any]) -> None:
+    """A finished Codex item: a prompt, a shell command, file changes, or a subagent starting or ending."""
+    item = p["item"]
+    thread = (lane.link or {}).get("thread")
+    if thread and p.get("thread_id") not in (None, thread):  # replayed from the parent's thread
+        return
+    kind = item.get("type")
+    if kind == "UserMessage" and isinstance(item.get("content"), list):
+        _title(
+            lane,
+            ctx,
+            " ".join(
+                c.get("text", "") for c in item["content"] if isinstance(c, dict) and c.get("type") == "text"
+            ),
+        )
+    elif kind == "CommandExecution":
+        command = item.get("command")
+        if isinstance(command, list) and len(command) == 3 and command[1] in SHELL_WRAP:
+            command = command[2]
+        _tool(lane, ctx, "shell", {"command": command})
+    elif kind == "FileChange" and isinstance(item.get("changes"), dict):
+        _files(
+            lane,
+            ctx,
+            [
+                (str(path), FILE_OPS.get(str(c.get("type")), "edit") if isinstance(c, dict) else "edit")
+                for path, c in item["changes"].items()
+            ],
+        )
+    elif kind == "SubAgentActivity" and isinstance(item.get("agent_thread_id"), str):
+        agent = item["agent_thread_id"][:80]
+        if item.get("kind") == "started" and item.get("id") in lane.jobs:
+            lane.jobs[item["id"]]["task"] = agent
+        elif item.get("kind") == "completed":
+            for job in lane.jobs.values():
+                if job.get("task") == agent and not job["status"]:
+                    job.update(status="completed", ended_at=ctx.at.isoformat())
+
+
+def _exec(lane: Lane, ctx: Ctx, script: Any) -> None:
+    """A Codex exec script. The commands it runs arrive as their own items; a plan update lives only here."""
+    if not isinstance(script, str) or (at := script.find("tools.update_plan(")) < 0:
+        return
+    plan = []
+    for m in EXEC_PLAN.finditer(script[:65536], at):
+        try:
+            step = json.loads(f'"{m.group(1)}"')
+        except ValueError:
+            step = m.group(1)
+        plan.append({"step": step, "status": m.group(2)})
+    if plan:
+        _plan(lane, ctx, plan)
+
+
 def fold(lane: Lane, ctx: Ctx, event_type: str, payload: Any) -> None:
     """Apply one event's payload to a lane. Shapes it doesn't know change nothing and never raise (NFR-06)."""
     _touch(lane, ctx)
@@ -516,8 +581,12 @@ def fold(lane: Lane, ctx: Ctx, event_type: str, payload: Any) -> None:
                 _files(lane, ctx, [(str(k), "edit") for k in p["changes"]])
             elif ptype == "exec_command_begin":
                 _tool(lane, ctx, "shell", {"command": p.get("command")})
+            elif ptype == "item_completed" and isinstance(p.get("item"), dict):
+                _codex_item(lane, ctx, p)
         elif ptype == "function_call":
-            _tool(lane, ctx, p.get("name"), p.get("arguments"))
+            _tool(lane, ctx, p.get("name"), p.get("arguments"), p.get("call_id"))
+        elif ptype == "custom_tool_call" and p.get("name") == "exec":
+            _exec(lane, ctx, p.get("input"))
         elif ptype == "custom_tool_call":
             _tool(lane, ctx, p.get("name"), p.get("input"))
         return
@@ -593,6 +662,17 @@ def _assistant_text(payload: dict[str, Any]) -> str | None:
         return "\n".join(texts) or None
     if kind == "event_msg" and isinstance(payload.get("payload"), dict):  # Codex
         p = payload["payload"]
+        item = p.get("item")
+        if (
+            p.get("type") == "item_completed"
+            and isinstance(item, dict)
+            and item.get("type") == "AgentMessage"
+        ):
+            parts = item.get("content")
+            texts = (
+                [c.get("text", "") for c in parts if isinstance(c, dict)] if isinstance(parts, list) else []
+            )
+            return "\n".join(t for t in texts if isinstance(t, str)) or None
         return p.get("message") if p.get("type") == "agent_message" else None
     if kind == "message" and isinstance(payload.get("message"), dict):  # Pi transcript
         content = payload["message"].get("content")
@@ -801,9 +881,13 @@ def summaries(store: Store, events: list[Any]) -> list[tuple[str | None, bool]]:
 def lane_of(source_id: str) -> str:
     """Claude subagents live in <session>/subagents/agent-*.jsonl, and workflow agents in
     <session>/subagents/workflows/<run>/agent-*.jsonl; both are tailed into their parent session. A run's
-    journal folds into the main lane, next to the Workflow call that started it."""
+    journal folds into the main lane, next to the Workflow call that started it. A Codex subagent's rollout,
+    tailed into its root thread's session, is lane codex-<thread>."""
     if source_id.startswith("file:"):
         path = Path(source_id[5:])
+        if path.name.startswith("rollout-"):
+            head = codex_head(path)
+            return f"codex-{head['id']}" if head and head["parent"] else ""
         if path.parent.name == "subagents" or (run_of(source_id) and path.stem != "journal"):
             return path.stem
     return ""
@@ -831,6 +915,22 @@ def _subagent_meta(rules: RuleSet, source_id: str) -> tuple[str | None, str | No
     if isinstance(raw.get("workflowPhase"), str):
         link["phase"] = summarize(rules, raw["workflowPhase"], 60)
     link["finished"] = raw.get("finished") is True
+    return label, title, link
+
+
+def _codex_meta(rules: RuleSet, source_id: str) -> tuple[str | None, str | None, dict[str, Any]]:
+    """A Codex subagent's role and task name, from its rollout's session_meta: its own prompt is encrypted."""
+    head = codex_head(Path(source_id[5:])) or {}
+    role, path = head.get("agent_role"), head.get("agent_path")
+    label = summarize(rules, role, 40) if isinstance(role, str) else None
+    title = summarize(rules, path.rstrip("/").rsplit("/", 1)[-1]) if isinstance(path, str) else None
+    nickname = head.get("agent_nickname")
+    if not title and isinstance(nickname, str):
+        title = summarize(rules, nickname)
+    link = {
+        "thread": head.get("id"),
+        "agent_path": summarize(rules, path, 300) if isinstance(path, str) else None,
+    }
     return label, title, link
 
 
@@ -961,7 +1061,8 @@ def project_batch(store: Store, batch: int = BATCH) -> int:
         if lane is None:
             lane = Lane()
             if key[1]:
-                lane.label, lane.title, lane.link = _subagent_meta(rules, r.source_id)
+                meta = _codex_meta if key[1].startswith("codex-") else _subagent_meta
+                lane.label, lane.title, lane.link = meta(rules, r.source_id)
         lanes[key] = lane
         ctx = Ctx(rules, r.execution_cwd, r.source_time or r.ingested_at)
         if lane.awaiting:
@@ -1253,6 +1354,14 @@ def _session_cards(s: Any, main: Any, subs: list[Any], now: datetime) -> list[di
         if parent in groups and c["kind"] != "skill":
             c["parent"] = groups[parent]["id"]
     run_card = {c["run"]: c for c in groups.values() if c["kind"] == "workflow" and c["run"]}
+    # A Codex subagent's spawn is in whichever thread started it: the root's, or another subagent's.
+    spawned = {
+        j["task"]: j
+        for x in [main, *subs]
+        if x is not None
+        for j in json.loads(x.scratch or "{}").get("jobs", {}).values()
+        if j["kind"] == "agent" and j.get("task")
+    }
 
     agents = []
     for x in subs:
@@ -1273,6 +1382,8 @@ def _session_cards(s: Any, main: Any, subs: list[Any], now: datetime) -> list[di
                 status = None  # resumed after it ended (SendMessage): working again
             if job.get("parent") in groups:
                 c["parent"] = groups[job["parent"]]["id"]
+        elif link.get("thread") in spawned:
+            status = spawned[link["thread"]]["status"]
         if not status and link.get("finished"):
             status = "completed"
         _reported(c, status)

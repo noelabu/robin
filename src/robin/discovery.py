@@ -7,17 +7,20 @@ never stops the others (NFR-06). Sessions Robin launched itself are skipped: the
 authoritative copy, and correlating it with the transcript needs native identity (TR-032).
 """
 
+import os
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sqlalchemy import select, update
+from sqlalchemy import Connection, delete, select, text, update
 
+from robin import activity
 from robin.adapters.history import HISTORY, NativeSession
 from robin.events.ingest import ensure_session
 from robin.events.tailer import JsonlTailer, RecordMapper
 from robin.ids import utc_now
 from robin.store import Store
+from robin.store.models import Event, Meta, SourceCheckpoint
 from robin.store.models import Session as SessionRow
 from robin.workspace import tasks as ws
 
@@ -110,6 +113,8 @@ def _ingest_session(
                     .values(project_id=project_id, updated_at=utc_now())
                 )
             )
+        for path in native.extra_files:
+            _rehome(store, "file:" + os.path.realpath(path), sid)
         for path in (native.path, *native.extra_files):
             tailer = JsonlTailer(store, path, session_id=sid, runtime=native.runtime, mapper=mapper)
             try:
@@ -118,3 +123,52 @@ def _ingest_session(
                 tailer.close()
             report.events += r.inserted
             report.quarantined += r.quarantined
+
+
+def _rehome(store: Store, source_id: str, sid: str) -> None:
+    """A transcript read into another observed session before its parent was found (a Codex subagent's
+    rollout) moves to the session that now claims it: its events, checkpoints and search rows. The session
+    left without events is archived, and the Map is rebuilt so the moved events fold into their new lane."""
+
+    def owner(conn: Connection) -> str | None:
+        return conn.execute(
+            select(SourceCheckpoint.session_id)
+            .join(SessionRow, SessionRow.session_id == SourceCheckpoint.session_id)
+            .where(
+                SourceCheckpoint.source_id == source_id,
+                SourceCheckpoint.state == "active",
+                SourceCheckpoint.session_id != sid,
+                SessionRow.mode == "observed",
+            )
+        ).scalar()
+
+    def work(conn: Connection) -> None:
+        old = owner(conn)
+        if old is None:
+            return
+        conn.execute(
+            update(Event).where(Event.source_id == source_id, Event.session_id == old).values(session_id=sid)
+        )
+        conn.execute(
+            update(SourceCheckpoint).where(SourceCheckpoint.source_id == source_id).values(session_id=sid)
+        )
+        conn.execute(
+            text(
+                "UPDATE search_index SET session_id = :sid, "
+                "project_id = (SELECT project_id FROM session WHERE session_id = :sid) "
+                "WHERE kind = 'event' AND rowid IN (SELECT global_cursor FROM event WHERE source_id = :src)"
+            ),
+            {"sid": sid, "src": source_id},
+        )
+        if conn.execute(select(Event.global_cursor).where(Event.session_id == old).limit(1)).first() is None:
+            conn.execute(
+                update(SessionRow)
+                .where(SessionRow.session_id == old)
+                .values(archived=1, updated_at=utc_now())
+            )
+        conn.execute(delete(Meta).where(Meta.key == activity.RULES_KEY))
+
+    with store.reader.connect() as conn:
+        if owner(conn) is None:
+            return
+    store.writer.call(work)
