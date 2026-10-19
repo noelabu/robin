@@ -2,8 +2,8 @@
 //  RobinIcon.swift
 //  Robin
 //
-//  The menu bar flower, after Nico Robin's Hana Hana no Mi: a template image, so macOS tints it for light
-//  and dark menu bars.
+//  The menu bar flower, after Nico Robin's Hana Hana no Mi, shaded periwinkle to purple like the app icon.
+//  Not a template, so the menu bar keeps the color.
 //
 
 import AppKit
@@ -15,7 +15,7 @@ enum RobinIcon {
             draw()
             return true
         }
-        image.isTemplate = true
+        image.isTemplate = false
         image.accessibilityDescription = "Robin"
         return image
     }
@@ -50,5 +50,13 @@ enum RobinIcon {
         ctx.restoreGraphicsState()
 
         NSBezierPath(ovalIn: NSRect(x: centre.x - 1.5, y: centre.y - 1.5, width: 3, height: 3)).fill()
+
+        // Paint the shape periwinkle at the top to purple at the bottom.
+        ctx.saveGraphicsState()
+        ctx.compositingOperation = .sourceAtop
+        let periwinkle = NSColor(srgbRed: 0.62, green: 0.66, blue: 1.0, alpha: 1)
+        let purple = NSColor(srgbRed: 0.66, green: 0.42, blue: 0.98, alpha: 1)
+        NSGradient(starting: purple, ending: periwinkle)?.draw(in: NSRect(x: 0, y: 0, width: 18, height: 18), angle: 90)
+        ctx.restoreGraphicsState()
     }
 }
