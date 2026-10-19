@@ -78,6 +78,7 @@ class ChatApp(App[None]):
         self.cursor = 0
         self.link = "connecting"
         self.last_message: Static | None = None
+        self.imported_until: dict[str, Any] | None = None
         self._conversation_due = False
 
     def compose(self) -> ComposeResult:
@@ -140,23 +141,32 @@ class ChatApp(App[None]):
     # -- reading -----------------------------------------------------------------------------------
 
     async def earlier(self) -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
-        """The sessions this one was continued from, oldest first, each with its conversation."""
-        out = []
+        """The sessions this one was continued from, oldest first, each with its conversation up to the
+        link that continued it. One that shows nothing hides the older ones too: the session after it
+        keeps its own copy of that history."""
+        chain: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
         link = self.state.session.get("continued_from")
-        while link and len(out) < EARLIER_LIMIT:
+        while link and len(chain) < EARLIER_LIMIT:
             try:
                 source = await self.api.session(link["session_id"])
                 messages, _ = await self.api.conversation(link["session_id"])
             except ChatError:
                 break  # an archived or pruned source: show what's left
-            out.insert(0, (source, messages))
+            chain.insert(0, (source, model.before_link(messages, link)))
             link = source.get("continued_from")
+        out: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+        for source, messages in chain:
+            if out:
+                messages = model.after_link(messages, source.get("continued_from"))
+            out = out + [(source, messages)] if messages else []
         return out
 
     async def reload(self) -> None:
         self.state.session = await self.api.session()
         earlier = await self.earlier()
+        self.imported_until = self.state.session.get("continued_from") if earlier else None
         messages, self.cursor = await self.api.conversation()
+        messages = model.after_link(messages, self.imported_until)
         await self.query_one("#log", VerticalScroll).remove_children()
         for i, (source, old) in enumerate(earlier):
             for m in old:
@@ -175,6 +185,7 @@ class ChatApp(App[None]):
     async def refresh_conversation(self) -> None:
         self._conversation_due = False
         messages, _ = await self.api.conversation()
+        messages = model.after_link(messages, self.imported_until)
         grown, added = model.new_messages(self.seen, messages)
         if grown is not None and self.last_message is not None:
             self.last_message.update(

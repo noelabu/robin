@@ -2,12 +2,18 @@
 
 import hashlib
 import json
+from datetime import timedelta
 
 import httpx
+from sqlalchemy import insert, update
 
 from robin import retrieval
-from robin.events.ingest import read_events
+from robin.context import lineage
+from robin.events.ingest import ensure_session, read_events
 from robin.findings.store import canonical
+from robin.ids import new_id, utc_now
+from robin.store.models import Session as SessionRow
+from robin.store.models import SessionLink
 from test_context import observed_session_with, publish_user
 from test_findings import GOOD, aid, block, launch, say, wait
 from test_independence import started_with
@@ -195,3 +201,89 @@ def test_a_grant_of_a_sessions_own_work_back_needs_an_explicit_allow(api):
     r = c.post("/grants", json=body)
     assert r.status_code == 409 and r.json()["error"]["code"] == "context_loop"
     assert c.post("/grants", json={**body, "allow_loops": [derived["finding_id"]]}).status_code == 201
+
+
+def _continued(store, source, task_id, at):
+    """A new session that continues `source` on its task, recorded the way the continue flow does."""
+    target = ensure_session(store, runtime="claude", mode="observed", native_session_id=new_id())
+
+    def record(conn):
+        conn.execute(
+            update(SessionRow).where(SessionRow.session_id == target).values(current_task_id=task_id)
+        )
+        conn.execute(
+            insert(SessionLink).values(
+                link_id=new_id(),
+                kind="continued",
+                source_session_id=source,
+                target_session_id=target,
+                source_runtime="fake",
+                target_runtime="claude",
+                source_path="/tmp/source.jsonl",
+                written_path="/tmp/target.jsonl",
+                written_size=0,
+                written_mtime_ns=0,
+                preview_hash="",
+                manifest="{}",
+                action_id=new_id(),
+                created_at=at,
+            )
+        )
+
+    store.writer.call(record)
+    return target
+
+
+def _own_and_derived(c, task_id, writer):
+    say(c, writer, block(GOOD))
+    (own,) = wait(lambda: c.get(f"/findings?task_id={task_id}").json()["findings"])
+    derived = c.post(
+        "/findings",
+        json={
+            **{k: GOOD[k] for k in ("summary", "claims")},
+            "task_id": task_id,
+            "parents": [own["finding_id"]],
+        },
+    ).json()
+    return own, derived
+
+
+def test_work_a_continued_session_inherited_needs_an_explicit_allow(api):
+    """FR-025 through a continuation: B continues A, so A's work up to then is B's own."""
+    store, c, task_id, _ = api
+    original = launch(c, task_id)
+    own, derived = _own_and_derived(c, task_id, original)
+    continued = _continued(store, original, task_id, utc_now())
+    for fid in (derived["finding_id"], own["finding_id"]):
+        body = {"session_id": continued, "artifacts": [{"id": fid}]}
+        r = c.post("/grants", json=body)
+        assert r.status_code == 409 and r.json()["error"]["code"] == "context_loop", fid
+        assert "this session's own finding" in r.json()["error"]["message"]
+        assert c.post("/grants", json={**body, "allow_loops": [fid]}).status_code == 201
+
+
+def test_work_an_earlier_session_did_after_the_continuation_isnt_inherited(api):
+    store, c, task_id, _ = api
+    original = launch(c, task_id)
+    continued = _continued(store, original, task_id, utc_now() - timedelta(hours=1))
+    _, derived = _own_and_derived(c, task_id, original)
+    body = {"session_id": continued, "artifacts": [{"id": derived["finding_id"]}]}
+    assert c.post("/grants", json=body).status_code == 201
+
+
+def test_a_continuation_cycle_doesnt_spin(api):
+    store, c, task_id, _ = api
+    original = launch(c, task_id)
+    own, _ = _own_and_derived(c, task_id, original)
+    continued = _continued(store, original, task_id, utc_now())
+    later = _continued(store, continued, task_id, utc_now())
+    store.writer.call(
+        lambda conn: conn.execute(
+            update(SessionLink)
+            .where(SessionLink.target_session_id == continued)
+            .values(source_session_id=later)
+        )
+    )
+    with store.reader.connect() as conn:
+        assert lineage.own_output(conn, own["finding_id"], 1, continued) is None
+        assert lineage.own_output(conn, own["finding_id"], 1, later) is None

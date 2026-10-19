@@ -166,6 +166,12 @@ def build(store: Store, source_id: str, target: str) -> Built:
     if skip and not caps.skip_permissions:
         skip = False
         view["warnings"].append(f"{target} will ask for permissions: it can't skip permission prompts")
+    independence = row["independence"]
+    if independence == "enforced" and caps.review_independence != "enforced_with_deny_rules":
+        independence = "not_isolated"
+        view["warnings"].append(
+            f"{target} can't keep this reviewer away from Robin's data: it has no sandbox"
+        )
     view.update(
         target={
             "runtime": target,
@@ -190,7 +196,7 @@ def build(store: Store, source_id: str, target: str) -> Built:
             "task_id": row["current_task_id"],
             "project_id": row["project_id"],
             "skip_permissions": skip,
-            "independence": row["independence"],
+            "independence": independence,
         },
         preview_hash=_hash(row, source_path, target, window),
     )
@@ -367,9 +373,7 @@ async def _retried(
 
     if done["source_session_id"] != source_id or done["target_runtime"] != target:
         raise ActionConflict("this action ID was used for a different request")
-    action = await manager.get_action(action_id)
-    if action is None:
-        action = await manager.takeover(done["target_session_id"], text, action_id=action_id)
+    action = await manager.takeover(done["target_session_id"], text, action_id=action_id)
     link = {k: done[k] for k in ("link_id", "source_session_id", "target_session_id", "written_path")}
     return {"action": action, "session_id": done["target_session_id"], "link": link}
 

@@ -717,3 +717,39 @@ async def test_duplicate_submits_at_once_write_one_session(supervised, fake_targ
     await manager.stop(a["session_id"], action_id="s1")
     await client.close()
     await asyncio.wait_for(task, 5)
+
+
+def test_a_reviewer_continued_where_it_cant_be_isolated_is_not_called_isolated(store, fake_target, tmp_path):
+    from sqlalchemy import update
+
+    sid, _ = claude_source(store, fake_target, tmp_path)
+    store.writer.call(
+        lambda c: c.execute(
+            update(SessionRow).where(SessionRow.session_id == sid).values(independence="enforced")
+        )
+    )
+    pi = flow.preview(store, sid, "pi")
+    assert pi["refusal"] is None and pi["inherits"]["independence"] == "not_isolated"
+    assert any("sandbox" in w for w in pi["warnings"])
+    fake = flow.preview(store, sid, "fake")
+    assert fake["inherits"]["independence"] == "enforced" and fake["warnings"] == []
+
+
+async def test_reusing_an_action_id_with_a_different_first_message_is_a_conflict(
+    supervised, fake_target, tmp_path
+):
+    from robin.runtime.ledger import ActionConflict
+
+    store = supervised
+    sid, _ = claude_source(store, fake_target, tmp_path)
+    p = flow.preview(store, sid, "fake")
+    manager, client, task = await connect(store)
+    out = await flow.continue_(store, manager, sid, "fake", "original", p["preview_hash"], "cont-1")
+    await settled(manager, "cont-1")
+    with pytest.raises(ActionConflict):
+        await flow.continue_(store, manager, sid, "fake", "DIFFERENT", p["preview_hash"], "cont-1")
+    again = await flow.continue_(store, manager, sid, "fake", "original", p["preview_hash"], "cont-1")
+    assert again["action"].action_id == out["action"].action_id and len(written(fake_target)) == 1
+    await manager.stop(out["session_id"], action_id="s1")
+    await client.close()
+    await asyncio.wait_for(task, 5)

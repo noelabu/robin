@@ -319,8 +319,12 @@ def read_pi(path: Path) -> Transcript:
     starts: dict[str, int] = {}  # entry id -> index of its first message
     cut = Cut()
     native = cwd = model = None
-    for rec in records(path):
+    branch = pi_branch(path, dropped)
+    edits = {str(r.get("targetId")): r.get("replacement") for r in branch if r.get("type") == "context_edit"}
+    for rec in branch:
         kind = rec.get("type")
+        if kind != "session" and rec.get("id"):
+            starts.setdefault(str(rec["id"]), len(msgs))
         if kind == "session":
             native, cwd = rec.get("id"), rec.get("cwd")
         elif kind == "model_change":
@@ -328,11 +332,31 @@ def read_pi(path: Path) -> Transcript:
         elif kind == "compaction":
             cut.prefix = [summary_msg(str(rec.get("summary") or ""), "pi", rec)]
             cut.start = starts.get(str(rec.get("firstKeptEntryId")), len(msgs))
+        elif kind == "branch_summary" and rec.get("summary"):
+            text = f"[Summary of a branch this conversation came back from, by pi]\n\n{rec['summary']}"
+            msgs.append(Msg("user", [Text(text)], parse_time(rec.get("timestamp"))))
+        elif kind == "custom_message":
+            content = rec.get("content")
+            if rec.get("id") and str(rec["id"]) in edits:
+                replacement = edits[str(rec["id"])]
+                if not isinstance(replacement, dict):
+                    dropped["removed_by_context_edit"] += 1
+                    continue
+                content = replacement.get("content")
+            text = flatten(content, dropped)
+            if text.strip():
+                msgs.append(Msg("user", [Text(text)], parse_time(rec.get("timestamp"))))
         elif kind == "message" and isinstance(rec.get("message"), dict):
+            message = rec["message"]
             if rec.get("id"):
-                starts[str(rec["id"])] = len(msgs)
-            pi_message(rec["message"], parse_time(rec.get("timestamp")), msgs, dropped)
-            model = model or rec["message"].get("model")
+                if str(rec["id"]) in edits:
+                    replacement = edits[str(rec["id"])]
+                    if not isinstance(replacement, dict):
+                        dropped["removed_by_context_edit"] += 1
+                        continue
+                    message = {**message, "content": replacement.get("content")}
+            pi_message(message, parse_time(rec.get("timestamp")), msgs, dropped)
+            model = model or message.get("model")
     return Transcript(
         "pi",
         str(native or path.stem.split("_", 1)[-1]),
@@ -342,6 +366,25 @@ def read_pi(path: Path) -> Transcript:
         dropped,
         cut.prefix is not None,
     )
+
+
+def pi_branch(path: Path, dropped: Counter[str]) -> list[dict[str, Any]]:
+    """The header and the active branch: Pi's file is a tree, and like Pi's own reload the conversation is
+    the path from the last entry back to the root. Files without parent links read in file order."""
+    recs = list(records(path))
+    if not any("parentId" in r for r in recs):
+        return recs
+    by_id = {str(r["id"]): r for r in recs if r.get("type") != "session" and r.get("id")}
+    leaf = next((r for r in reversed(recs) if r.get("type") != "session" and r.get("id")), None)
+    branch: list[dict[str, Any]] = []
+    on: set[str] = set()
+    while leaf is not None and str(leaf["id"]) not in on:
+        on.add(str(leaf["id"]))
+        branch.append(leaf)
+        leaf = by_id.get(str(leaf.get("parentId"))) if leaf.get("parentId") else None
+    if off := sum(1 for r in recs if r.get("type") == "message" and str(r.get("id")) not in on):
+        dropped["other_branches"] += off
+    return [r for r in recs if r.get("type") == "session"] + branch[::-1]
 
 
 def pi_message(m: dict[str, Any], ts: Any, msgs: list[Msg], dropped: Counter[str]) -> None:

@@ -262,6 +262,219 @@ def test_pi_assistant_string_content_and_images(tmp_path):
     assert t.dropped == {"images": 1, "unknown_items": 1}
 
 
+def pi_entry(eid: str, parent: str | None, role: str, text: str) -> dict:
+    return {
+        "type": "message",
+        "id": eid,
+        "parentId": parent,
+        "timestamp": T0,
+        "message": {"role": role, "content": [{"type": "text", "text": text}]},
+    }
+
+
+def pi_tree(tmp_path, *entries: dict) -> Path:
+    return jsonl(tmp_path / "p.jsonl", [{"type": "session", "version": 3, "id": "s", "cwd": "/w"}, *entries])
+
+
+def pi_texts(path: Path) -> list[str]:
+    return [b.text for m in readers.read_pi(path).msgs for b in m.blocks]
+
+
+def test_a_pi_branch_left_behind_is_not_part_of_the_conversation(tmp_path):
+    p = pi_tree(
+        tmp_path,
+        pi_entry("a1", None, "user", "root question"),
+        pi_entry("a2", "a1", "assistant", "root answer"),
+        pi_entry("b1", "a2", "user", "abandoned question"),
+        pi_entry("b2", "b1", "assistant", "abandoned answer"),
+        pi_entry("c1", "a2", "user", "active question"),
+        pi_entry("c2", "c1", "assistant", "active answer"),
+    )
+    t = readers.read_pi(p)
+    assert pi_texts(p) == ["root question", "root answer", "active question", "active answer"]
+    assert t.dropped == {"other_branches": 2}
+
+
+def test_a_compaction_on_an_abandoned_pi_branch_does_not_apply(tmp_path):
+    p = pi_tree(
+        tmp_path,
+        pi_entry("a1", None, "user", "root question"),
+        pi_entry("a2", "a1", "assistant", "root answer"),
+        pi_entry("b1", "a2", "user", "abandoned question"),
+        pi_entry("b2", "b1", "assistant", "abandoned answer"),
+        {
+            "type": "compaction",
+            "id": "b3",
+            "parentId": "b2",
+            "timestamp": T0,
+            "summary": "abandoned summary",
+            "firstKeptEntryId": "b2",
+            "tokensBefore": 10,
+        },
+        pi_entry("c1", "a2", "user", "active question"),
+        pi_entry("c2", "c1", "assistant", "active answer"),
+    )
+    t = readers.read_pi(p)
+    assert pi_texts(p) == ["root question", "root answer", "active question", "active answer"]
+    assert not t.compacted and "before_compaction" not in t.dropped
+
+
+def test_a_compaction_on_the_active_pi_branch_still_applies(tmp_path):
+    p = pi_tree(
+        tmp_path,
+        pi_entry("a1", None, "user", "root question"),
+        pi_entry("a2", "a1", "assistant", "root answer"),
+        pi_entry("b1", "a2", "user", "abandoned question"),
+        pi_entry("a3", "a2", "user", "kept question"),
+        pi_entry("a4", "a3", "assistant", "kept answer"),
+        {
+            "type": "compaction",
+            "id": "a5",
+            "parentId": "a4",
+            "timestamp": T0,
+            "summary": "active summary",
+            "firstKeptEntryId": "a3",
+            "tokensBefore": 10,
+        },
+        pi_entry("a6", "a5", "user", "after question"),
+    )
+    t = readers.read_pi(p)
+    texts = pi_texts(p)
+    assert t.compacted and "active summary" in texts[0]
+    assert texts[1:] == ["kept question", "kept answer", "after question"]
+    assert t.dropped == {"before_compaction": 2, "other_branches": 1}
+
+
+def test_a_pi_branch_summary_and_context_edits_read_as_pi_rebuilds_them(tmp_path):
+    p = pi_tree(
+        tmp_path,
+        pi_entry("a1", None, "user", "root question"),
+        pi_entry("a2", "a1", "assistant", "root answer"),
+        pi_entry("b1", "a2", "user", "abandoned question"),
+        {
+            "type": "branch_summary",
+            "id": "c0",
+            "parentId": "a2",
+            "timestamp": T0,
+            "fromId": "b1",
+            "summary": "tried X",
+        },
+        pi_entry("c1", "c0", "user", "noisy question"),
+        pi_entry("c2", "c1", "assistant", "long answer"),
+        {
+            "type": "context_edit",
+            "id": "c3",
+            "parentId": "c2",
+            "timestamp": T0,
+            "targetId": "c1",
+            "replacement": None,
+        },
+        {
+            "type": "context_edit",
+            "id": "c4",
+            "parentId": "c3",
+            "timestamp": T0,
+            "targetId": "c2",
+            "replacement": {"content": [{"type": "text", "text": "short answer"}]},
+        },
+    )
+    texts = pi_texts(p)
+    assert texts[:2] == ["root question", "root answer"] and "tried X" in texts[2]
+    assert texts[3:] == ["short answer"]
+    assert readers.read_pi(p).dropped == {"other_branches": 1, "removed_by_context_edit": 1}
+
+
+def test_a_pi_compaction_kept_from_a_metadata_entry_keeps_the_messages_after_it(tmp_path):
+    p = pi_tree(
+        tmp_path,
+        pi_entry("old", None, "user", "old"),
+        {"type": "model_change", "id": "meta", "parentId": "old", "timestamp": T0, "modelId": "m2"},
+        pi_entry("user", "meta", "user", "KEEP USER"),
+        pi_entry("answer", "user", "assistant", "KEEP ANSWER"),
+        {
+            "type": "compaction",
+            "id": "cut",
+            "parentId": "answer",
+            "timestamp": T0,
+            "summary": "SUMMARY",
+            "firstKeptEntryId": "meta",
+            "tokensBefore": 10,
+        },
+    )
+    t = readers.read_pi(p)
+    texts = pi_texts(p)
+    assert t.compacted and "SUMMARY" in texts[0]
+    assert texts[1:] == ["KEEP USER", "KEEP ANSWER"]
+    assert t.dropped == {"before_compaction": 1}
+
+
+def test_pi_custom_messages_reach_the_model_as_user_content_and_honor_context_edits(tmp_path):
+    p = pi_tree(
+        tmp_path,
+        pi_entry("a1", None, "user", "question"),
+        {
+            "type": "custom_message",
+            "id": "x1",
+            "parentId": "a1",
+            "timestamp": T0,
+            "customType": "note",
+            "content": "injected string",
+            "display": False,
+        },
+        {
+            "type": "custom_message",
+            "id": "x2",
+            "parentId": "x1",
+            "timestamp": T0,
+            "customType": "note",
+            "content": [{"type": "text", "text": "injected blocks"}, {"type": "image", "data": "..."}],
+            "display": True,
+        },
+        {"type": "custom", "id": "x3", "parentId": "x2", "timestamp": T0, "customType": "state", "data": {}},
+        {
+            "type": "custom_message",
+            "id": "x4",
+            "parentId": "x3",
+            "timestamp": T0,
+            "customType": "note",
+            "content": "to be removed",
+        },
+        {
+            "type": "custom_message",
+            "id": "x5",
+            "parentId": "x4",
+            "timestamp": T0,
+            "customType": "note",
+            "content": "to be replaced",
+        },
+        {
+            "type": "context_edit",
+            "id": "e1",
+            "parentId": "x5",
+            "timestamp": T0,
+            "targetId": "x4",
+            "replacement": None,
+        },
+        {
+            "type": "context_edit",
+            "id": "e2",
+            "parentId": "e1",
+            "timestamp": T0,
+            "targetId": "x5",
+            "replacement": {"content": "replaced"},
+        },
+    )
+    t = readers.read_pi(p)
+    assert [(m.role, m.blocks) for m in t.msgs] == [
+        ("user", [Text("question")]),
+        ("user", [Text("injected string")]),
+        ("user", [Text("injected blocks\n[image]")]),
+        ("user", [Text("replaced")]),
+    ]
+    assert t.msgs[1].ts is not None
+    assert t.dropped == {"images": 1, "removed_by_context_edit": 1}
+
+
 # -- turn shaping ---------------------------------------------------------------------
 
 
