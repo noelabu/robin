@@ -30,6 +30,8 @@ const session = (over: Partial<Session> = {}): Session => ({
   last_activity_at: null,
   independence: null,
   skip_permissions: false,
+  continued_from: null,
+  continued_in: [],
   created_at: "2026-10-15T00:00:00Z",
   updated_at: "2026-10-15T00:00:00Z",
   controls: {

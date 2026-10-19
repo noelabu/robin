@@ -281,6 +281,20 @@ button.pill { cursor: pointer; background: transparent; }
 .readonly-note .status { flex-basis: 100%; margin: 0; }
 .compose { margin-top: 14px; }
 
+.continue { margin: 8px 0 0 30px; font-size: 12px; }
+.continue-menu summary { display: inline-block; cursor: pointer; color: var(--accent); list-style: none; }
+.continue-menu summary::-webkit-details-marker { display: none; }
+.continue-menu summary[aria-disabled="true"] { color: var(--faint); cursor: not-allowed; }
+.continue-options { display: flex; gap: 14px; margin-top: 4px; }
+.continue-panel {
+  margin-top: 8px; padding: 12px 14px; border-radius: 10px; background: var(--card); border: 1px solid var(--line-hi);
+  max-width: 640px;
+}
+.continue-panel h3 { margin: 0 0 8px; font-size: 14px; }
+.continue-panel label { display: block; margin: 10px 0 4px; color: var(--muted); }
+.continue-panel textarea { width: 100%; box-sizing: border-box; }
+.continue-panel meter { width: 120px; vertical-align: middle; }
+
 .terminal { margin-top: 12px; }
 
 .recency { display: flex; gap: 2px; padding: 3px; margin: 8px 0 4px; border: 1px solid var(--line); border-radius: 8px; }

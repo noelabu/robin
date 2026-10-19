@@ -13,7 +13,7 @@ from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import VerticalScroll
+from textual.containers import Vertical, VerticalScroll
 from textual.message import Message
 from textual.widgets import Static, TextArea
 
@@ -22,6 +22,7 @@ from robin.chat.api import ChatApi, ChatError
 from robin.chat.model import ChatState, Line
 
 LOG_LIMIT = 1000  # lines kept on screen
+EARLIER_LIMIT = 5  # sessions followed back through continued_from
 STYLE = {"user": "bold #c9b6ff", "tool": "dim", "notice": "italic #8f86a8", "error": "#ff6b81"}
 
 
@@ -56,10 +57,11 @@ class ChatApp(App[None]):
     #log > Static { margin: 0 0 0 0; }
     #log > .assistant { margin: 0 0 1 0; }
     #log > .user { margin: 1 0 0 0; }
-    #pending { dock: bottom; display: none; margin: 0 1; padding: 0 1; border: round #e8b04b; }
+    #bottom { dock: bottom; height: auto; }
+    #pending { display: none; height: auto; margin: 0 1; padding: 0 1; border: round #e8b04b; }
     #pending { color: #f3e3c0; }
     #pending.show { display: block; }
-    #input { dock: bottom; height: auto; max-height: 8; border: round #3a2d57; }
+    #input { height: auto; max-height: 8; border: round #3a2d57; }
     #input:focus { border: round #b48cff; }
     """
     BINDINGS = [
@@ -76,13 +78,15 @@ class ChatApp(App[None]):
         self.cursor = 0
         self.link = "connecting"
         self.last_message: Static | None = None
+        self.imported_until: dict[str, Any] | None = None
         self._conversation_due = False
 
     def compose(self) -> ComposeResult:
         yield Static(id="status")
         yield VerticalScroll(id="log")
-        yield ChatInput(id="input", soft_wrap=True, show_line_numbers=False)
-        yield Static(id="pending")
+        with Vertical(id="bottom"):  # docked together: two widgets docked to one edge overlap
+            yield Static(id="pending")
+            yield ChatInput(id="input", soft_wrap=True, show_line_numbers=False)
 
     async def on_mount(self) -> None:
         self.query_one("#input", ChatInput).focus()
@@ -136,12 +140,41 @@ class ChatApp(App[None]):
 
     # -- reading -----------------------------------------------------------------------------------
 
+    async def earlier(self) -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
+        """The sessions this one was continued from, oldest first, each with its conversation up to the
+        link that continued it. One that shows nothing hides the older ones too: the session after it
+        keeps its own copy of that history."""
+        chain: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+        link = self.state.session.get("continued_from")
+        while link and len(chain) < EARLIER_LIMIT:
+            try:
+                source = await self.api.session(link["session_id"])
+                messages, _ = await self.api.conversation(link["session_id"])
+            except ChatError:
+                break  # an archived or pruned source: show what's left
+            chain.insert(0, (source, model.before_link(messages, link)))
+            link = source.get("continued_from")
+        out: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+        for source, messages in chain:
+            if out:
+                messages = model.after_link(messages, source.get("continued_from"))
+            out = out + [(source, messages)] if messages else []
+        return out
+
     async def reload(self) -> None:
         self.state.session = await self.api.session()
+        earlier = await self.earlier()
+        self.imported_until = self.state.session.get("continued_from") if earlier else None
         messages, self.cursor = await self.api.conversation()
+        messages = model.after_link(messages, self.imported_until)
         await self.query_one("#log", VerticalScroll).remove_children()
-        self.last_message = None
-        if not messages:
+        for i, (source, old) in enumerate(earlier):
+            for m in old:
+                self.write_message(m)
+            into = earlier[i + 1][0] if i + 1 < len(earlier) else self.state.session
+            self.write(Line("notice", f"── continued from {source['runtime']} in {into['runtime']} ──"))
+        self.last_message = None  # only this session's own last message grows
+        if not messages and not earlier:
             self.write(Line("notice", "No messages yet."))
         for m in messages:
             self.write_message(m)
@@ -152,6 +185,7 @@ class ChatApp(App[None]):
     async def refresh_conversation(self) -> None:
         self._conversation_due = False
         messages, _ = await self.api.conversation()
+        messages = model.after_link(messages, self.imported_until)
         grown, added = model.new_messages(self.seen, messages)
         if grown is not None and self.last_message is not None:
             self.last_message.update(

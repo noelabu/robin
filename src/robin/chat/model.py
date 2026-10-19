@@ -7,6 +7,7 @@ dim lines as they happen, and a new message re-reads the conversation, which has
 import json
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 LineKind = Literal["user", "assistant", "tool", "notice", "error"]
@@ -35,6 +36,31 @@ def message_lines(m: dict[str, Any]) -> list[Line]:
     if m.get("role") in ("user", "assistant"):
         return [Line(m["role"], str(m.get("text") or ""))]
     return []
+
+
+def _when(text: Any) -> datetime | None:
+    try:
+        when = datetime.fromisoformat(text)
+    except (TypeError, ValueError):
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=UTC)
+
+
+def after_link(messages: list[dict[str, Any]], link: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """A continued session's own messages: the ones before its link were imported from the session it
+    continues (written with that session's times), which is shown above it."""
+    at = _when((link or {}).get("at"))
+    if at is None:
+        return messages
+    return [m for m in messages if (t := _when(m.get("at"))) is None or t > at]
+
+
+def before_link(messages: list[dict[str, Any]], link: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """What a session had when another continued it; anything it did afterwards wasn't carried over."""
+    at = _when((link or {}).get("at"))
+    if at is None:
+        return messages
+    return [m for m in messages if (t := _when(m.get("at"))) is None or t <= at]
 
 
 def parse_sse(lines: Iterable[str]) -> Iterator[tuple[str, int | None, dict[str, Any]]]:

@@ -93,6 +93,9 @@ class HistoryWatcher:
             for main in sorted({adapter.main(p) for p in paths}):
                 if not main.is_file():
                     continue
+                if not adapter.ready(main):  # read again next cycle, once it can be identified
+                    failed.add(main)
+                    continue
                 report.found += 1
                 try:
                     _ingest_session(self.store, adapter.describe(main), adapter.mapper, projects, report)

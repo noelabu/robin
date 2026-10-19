@@ -659,3 +659,32 @@ class SessionActivity(Base):
     files: Mapped[str] = mapped_column(Text)  # JSON [{path, op, at}], most recent first
     files_count: Mapped[int] = mapped_column(Integer)
     scratch: Mapped[str] = mapped_column(Text)  # JSON: TaskCreate calls waiting for their task id
+
+
+LINK_KINDS = ("continued",)
+
+
+class SessionLink(Base):
+    """A session continued in another runtime: the target is a new session whose transcript Robin wrote
+    from the source's. written_* identify that file as Robin left it, so takeover's quiet-window check can
+    tell Robin's own write from a terminal still writing."""
+
+    __tablename__ = "session_link"
+    __table_args__ = (
+        CheckConstraint(_in("kind", LINK_KINDS), name="kind"),
+        Index("ix_session_link_source_session_id", "source_session_id"),
+    )
+    link_id: Mapped[str] = mapped_column(String, primary_key=True)
+    kind: Mapped[str] = mapped_column(String)
+    source_session_id: Mapped[str] = mapped_column(ForeignKey("session.session_id"))
+    target_session_id: Mapped[str] = mapped_column(ForeignKey("session.session_id"), unique=True)
+    source_runtime: Mapped[str] = mapped_column(String)
+    target_runtime: Mapped[str] = mapped_column(String)
+    source_path: Mapped[str] = mapped_column(Text)
+    written_path: Mapped[str] = mapped_column(Text)
+    written_size: Mapped[int] = mapped_column(Integer)
+    written_mtime_ns: Mapped[int] = mapped_column(Integer)
+    preview_hash: Mapped[str] = mapped_column(String)
+    manifest: Mapped[str] = mapped_column(Text)  # JSON: counts, dropped, estimate, window, converter version
+    action_id: Mapped[str] = mapped_column(String, unique=True)  # the takeover's; created after this row
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)

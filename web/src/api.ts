@@ -24,10 +24,28 @@ export type Session = {
   last_activity_at: string | null;
   independence: "enforced" | "not_isolated" | null;
   skip_permissions: boolean; // launched with permission prompts skipped
+  continued_from: SessionLink | null; // carried over from a session in another runtime
+  continued_in: SessionLink[];
   created_at: string;
   updated_at: string;
   controls: Record<"message" | "interrupt" | "stop" | "approval" | "handoff" | "reclaim" | "takeover", Control>;
   capabilities: { runtime: string; steer_mid_turn: boolean; tested_versions: string; level: string };
+};
+
+export type SessionLink = { session_id: string; runtime: string; at: string };
+
+export type ContinuePreview = {
+  source: { session_id: string; runtime: string; native_session_id: string | null; mode: string; cwd: string | null };
+  target: { runtime: string; model?: string | null; context_window?: number; window_source?: string };
+  messages?: { total: number; user: number; assistant: number; tool_calls: number; tool_results: number };
+  dropped?: Record<string, number>;
+  compaction?: { source_summary_used: boolean };
+  estimate?: { bytes: number; tokens: number; limit_tokens: number; fits: boolean };
+  inherits?: { task_id: string | null; project_id: string | null; skip_permissions: boolean; independence: string | null };
+  warnings: string[];
+  refusal: { code: string; message: string } | null;
+  default_text: string;
+  preview_hash?: string;
 };
 
 export type RobinEvent = {
@@ -417,6 +435,15 @@ export const api = {
   ) =>
     request<{ action: Action }>("POST", `/sessions/${sessionId}/actions`, { ...body, action_id: newActionId() }),
   action: (actionId: string) => request<Action>("GET", `/actions/${actionId}`),
+  continuePreview: (sessionId: string, runtime: string) =>
+    request<ContinuePreview>("POST", `/sessions/${sessionId}/continue/preview`, { runtime }),
+  continueIn: (sessionId: string, runtime: string, text: string, previewHash: string) =>
+    request<{ action: Action; session_id: string }>("POST", `/sessions/${sessionId}/continue`, {
+      runtime,
+      text,
+      preview_hash: previewHash,
+      action_id: newActionId(),
+    }),
   attention: () => request<{ items: AttentionItem[] }>("GET", "/attention"),
   respond: (attentionId: string, decision: "allow" | "deny") =>
     request<{ action: Action }>("POST", `/attention/${attentionId}/responses`, { decision, action_id: newActionId() }),

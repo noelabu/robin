@@ -335,6 +335,10 @@ export function App() {
             key={current.session_id}
             session={current}
             onChanged={() => void ws.reload()}
+            onOpenSession={(id) => {
+              void ws.reload();
+              openSession(id);
+            }}
             liveCursor={ws.feed.find((i) => i.session_id === current.session_id)?.global_cursor}
             events={<ActivityFeed items={ws.feed} scope={feedScope} sessions={ws.sessions} ready={ws.ready} />}
           />

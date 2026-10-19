@@ -151,6 +151,19 @@ def test_pending_picks_the_oldest_open_request():
     assert model.pending([{**APPROVAL, "state": "resolved"}]) is None
 
 
+def test_a_source_is_read_up_to_the_link_that_continued_it():
+    messages = [
+        {"role": "user", "at": "2026-10-18T09:00:00+00:00", "text": "before"},
+        {"role": "user", "at": "2026-10-18T10:00:00+00:00", "text": "at"},
+        {"role": "tools", "items": ["no time"]},
+        {"role": "user", "at": "2026-10-18T11:00:00+00:00", "text": "after"},
+    ]
+    link = {"session_id": "s0", "at": "2026-10-18T10:00:00+00:00"}
+    assert [m.get("text") for m in model.before_link(messages, link)] == ["before", "at", None]
+    assert model.before_link(messages, {"session_id": "s0"}) == messages
+    assert model.before_link(messages, None) == messages
+
+
 def test_status_line():
     s = {
         **MANAGED,

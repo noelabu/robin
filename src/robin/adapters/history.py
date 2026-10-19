@@ -152,17 +152,112 @@ def codex_files(root: Path) -> list[Path]:
     return sorted(root.rglob("rollout-*.jsonl"))
 
 
-def codex_describe(path: Path) -> NativeSession:
+def codex_thread(path: Path) -> str:
+    return path.stem.split("-", 6)[-1]
+
+
+_HEADS: dict[str, dict[str, Any]] = {}
+
+
+def codex_head(path: Path) -> dict[str, Any] | None:
+    """A rollout's own thread, the thread that spawned it and how, from its first line (session_meta).
+    None while that line is still being written; a complete one is final, so it's read once."""
+    key = str(path)
+    if key in _HEADS:
+        return _HEADS[key]
+    try:
+        with open(path, "rb") as f:
+            line = f.readline(HEADER_BYTES)
+    except OSError:
+        return None
+    if not line.endswith(b"\n") and len(line) < HEADER_BYTES:
+        return None
+    try:
+        rec = json.loads(line)
+    except ValueError:
+        rec = None
+    meta = rec.get("payload") if isinstance(rec, dict) and rec.get("type") == "session_meta" else None
+    meta = meta if isinstance(meta, dict) else {}
+    source = meta.get("source")
+    sub = source.get("subagent") if isinstance(source, dict) else None
+    spawn = sub.get("thread_spawn") if isinstance(sub, dict) else None
+    spawn = spawn if isinstance(spawn, dict) else {}
+    parent = meta.get("parent_thread_id") or spawn.get("parent_thread_id")
+    head = {
+        "id": str(meta.get("id") or codex_thread(path)),
+        "parent": str(parent) if parent else None,
+        "agent_path": spawn.get("agent_path") or meta.get("agent_path"),
+        "agent_role": spawn.get("agent_role") or meta.get("agent_role"),
+        "agent_nickname": spawn.get("agent_nickname") or meta.get("agent_nickname"),
+    }
+    _HEADS[key] = head
+    return head
+
+
+def codex_ready(path: Path) -> bool:
+    return codex_head(path) is not None
+
+
+def _codex_root(path: Path) -> Path:
+    """The sessions folder: rollouts live in <root>/YYYY/MM/DD/."""
+    day = path.parent
+    if all(p.name.isdigit() for p in (day, day.parent, day.parent.parent)):
+        return day.parents[2]
+    return day
+
+
+def _codex_groups(root: Path) -> dict[Path, list[Path]]:
+    """Each top rollout (no parent among the files) -> the subagent rollouts under it, at any depth."""
+    files = codex_files(root)
+    by_thread = {codex_thread(p): p for p in files}
+
+    def top(path: Path) -> Path:
+        seen = {path}
+        while (head := codex_head(path)) and head["parent"] in by_thread:
+            parent = by_thread[head["parent"]]
+            if parent in seen:
+                break
+            path = parent
+            seen.add(path)
+        return path
+
+    groups: dict[Path, list[Path]] = {}
+    for path in files:
+        main = top(path)
+        members = groups.setdefault(main, [])
+        if path != main:
+            members.append(path)
+    return groups
+
+
+_MAINS: dict[str, Path] = {}  # subagent rollout -> its root thread's rollout, once that root is found
+
+
+def codex_main(path: Path) -> Path:
+    """A subagent's rollout belongs to the topmost rollout above it that is present."""
+    if (head := codex_head(path)) is None or not head["parent"]:
+        return path
+    if str(path) not in _MAINS:
+        for main, kids in _codex_groups(_codex_root(path)).items():
+            if (top := codex_head(main)) is not None and not top["parent"]:
+                _MAINS.update((str(k), main) for k in kids)
+    return _MAINS.get(str(path), path)
+
+
+def codex_describe(path: Path, extra: tuple[Path, ...] | None = None) -> NativeSession:
     meta = next(
         (r.get("payload") or {} for r in first_records(path, 5) if r.get("type") == "session_meta"), {}
     )
-    native = meta.get("id") or path.stem.split("-", 6)[-1]
-    return NativeSession("codex", str(native), path, meta.get("cwd"), meta.get("cli_version"))
+    native = meta.get("id") or codex_thread(path)
+    if extra is None:
+        extra = tuple(sorted(_codex_groups(_codex_root(path)).get(path, [])))
+    return NativeSession("codex", str(native), path, meta.get("cwd"), meta.get("cli_version"), extra)
 
 
 def codex_discover(root: Path) -> Iterator[NativeSession]:
-    for path in codex_files(root):
-        yield codex_describe(path)
+    for main, kids in _codex_groups(root).items():
+        if codex_ready(main):  # not identifiable yet: the next scan reads it
+            yield codex_describe(main, tuple(sorted(kids)))
 
 
 CODEX_EVENTS = {
@@ -182,6 +277,13 @@ CODEX_ITEMS = {
     "custom_tool_call": "tool.started",
     "custom_tool_call_output": "tool.result",
 }
+CODEX_COMPLETED = {  # event_msg item_completed, by item type
+    "UserMessage": "message.user",
+    "AgentMessage": "message.completed",
+    "CommandExecution": "tool.started",
+    "SubAgentActivity": "tool.started",
+    "FileChange": "file.change",
+}
 
 
 def codex_mapper(rec: Any, ctx: MapperContext) -> MappedRecord | None:
@@ -192,6 +294,19 @@ def codex_mapper(rec: Any, ctx: MapperContext) -> MappedRecord | None:
     payload: dict[str, Any] = raw if isinstance(raw, dict) else {}
     if kind == "session_meta":
         return _m("session.started", rec)
+    if (
+        kind == "event_msg"
+        and payload.get("type") == "item_completed"
+        and isinstance(payload.get("item"), dict)
+    ):
+        item = payload["item"]
+        if item.get("type") in CODEX_COMPLETED:
+            return MappedRecord(
+                event_type=CODEX_COMPLETED[item["type"]],
+                evidence_kind=EvidenceKind.REPORTED,
+                source_time=parse_time(rec.get("timestamp")),
+                native_event_id=str(item["id"]) if item.get("id") else None,
+            )
     if kind == "event_msg" and payload.get("type") in CODEX_EVENTS:
         return _m(CODEX_EVENTS[payload["type"]], rec)
     if kind == "response_item":
@@ -252,6 +367,7 @@ class HistoryAdapter:
     files: Callable[[Path], list[Path]]  # every transcript a watcher should follow, subagents included
     describe: Callable[[Path], NativeSession]  # one main transcript
     main: Callable[[Path], Path] = lambda p: p  # the main transcript a file belongs to
+    ready: Callable[[Path], bool] = lambda p: True  # False while a main transcript can't be identified yet
 
     def default_root(self) -> Path:
         """The runtime's own store; ROBIN_HISTORY_<RUNTIME> points elsewhere (tests, unusual installs)."""
@@ -280,6 +396,8 @@ HISTORY: dict[str, HistoryAdapter] = {
         codex_mapper,
         codex_files,
         codex_describe,
+        codex_main,
+        codex_ready,
     ),
     "pi": HistoryAdapter(
         "pi",

@@ -27,6 +27,7 @@ Dated evidence for each runtime against the PRD §16 minimum capability floor (T
 |---|---|---|---|
 | Steer during a run | **Queued to the next turn boundary**; use `interrupt()` + `query()` to cut a turn short | **Pass, applied mid-turn** (`turn/steer`) | **Queued to the next turn boundary** (`streamingBehavior: "steer"`); use `abort` + `prompt` to cut a turn short |
 | Native resume | **Pass** (`resume=<session_id>`) | **Pass** (`thread/resume`) | **Pass** (`--session <id>`) |
+| Continue from another runtime | **Pass** (Robin-written transcript, `supervisor/test_continue_live.py claude`, 2026-10-18) | **Pass** (`… codex`) | **Pass** (`… pi`, and with `ROBIN_PI_SESSION_DIR`) |
 | Terminal mode | **Handoff works** (`claude --resume <id>`) | **Handoff works** (`codex resume <id>`). **Attach possible** if Robin hosts Codex behind a listener; every client can drive, so it's shared control | **Handoff works** (`pi --session <id>`); no attach |
 | Review independence | **Enforced with deny rules**: sandbox `denyRead` for shell + `Read(//…)` deny for file tools (defaults do not isolate) | **Enforced with a deny profile** on the artifact store (default read-only sandbox does not isolate) | **Not isolated**: Pi has no sandbox |
 | Hook mechanism (WP-2.6) | `hooks` in `~/.claude/settings.json` | `~/.codex/hooks.json` (confirmed: 15 hook runs per session) | Extensions in `~/.pi/agent/extensions` |

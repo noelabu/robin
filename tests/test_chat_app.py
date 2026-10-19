@@ -57,12 +57,13 @@ class FakeApi:
         self.frames: asyncio.Queue[Any] = asyncio.Queue()
         self.streams: list[int] = []
         self.fail_act: ChatError | None = None
+        self.others: dict[str, tuple[dict[str, Any], list[dict[str, Any]]]] = {}
 
-    async def session(self):
-        return self.s
+    async def session(self, session_id=None):
+        return self.others[session_id][0] if session_id else self.s
 
-    async def conversation(self):
-        return list(self.messages), 40
+    async def conversation(self, session_id=None):
+        return (list(self.others[session_id][1]), 0) if session_id else (list(self.messages), 40)
 
     async def attention(self):
         return list(self.items)
@@ -142,6 +143,203 @@ async def test_history_then_live_steps_and_replies():
         assert app.cursor == 42
 
 
+async def test_a_continued_session_shows_the_conversation_it_continues():
+    api = FakeApi(
+        {**SESSION, "runtime": "codex", "continued_from": {"session_id": "s0", "runtime": "claude"}}
+    )
+    api.others["s0"] = (
+        {**SESSION, "session_id": "s0", "continued_from": None},
+        [{"role": "user", "at": "0", "text": "Plan the resume feature"}],
+    )
+    api.messages = [{"role": "user", "at": "1", "text": "Continue from where the previous session left off."}]
+    app = ChatApp(api, "s1")
+    async with app.run_test() as pilot:
+        await settle(pilot, lambda: len(texts(app)) == 3)
+        assert texts(app) == [
+            "You  Plan the resume feature",
+            "── continued from claude in codex ──",
+            "You  Continue from where the previous session left off.",
+        ]
+
+
+async def test_a_continued_session_shows_each_imported_message_once():
+    # Claude and Pi targets hold the messages imported from their source, with the source's times.
+    reasoning = "[external_agent_reasoning]\nCheck the plan\n[/external_agent_reasoning]"
+    api = FakeApi(
+        {
+            **SESSION,
+            "runtime": "pi",
+            "continued_from": {"session_id": "s0", "runtime": "claude", "at": "2026-10-18T12:00:00+00:00"},
+        }
+    )
+    api.others["s00"] = (
+        {**SESSION, "session_id": "s00", "runtime": "codex", "continued_from": None},
+        [
+            {"role": "user", "at": "2026-10-18T09:00:00+00:00", "text": "Plan the resume feature"},
+            {"role": "assistant", "at": "2026-10-18T09:01:00+00:00", "text": "Planned it."},
+        ],
+    )
+    api.others["s0"] = (
+        {
+            **SESSION,
+            "session_id": "s0",
+            "continued_from": {"session_id": "s00", "runtime": "codex", "at": "2026-10-18T10:00:00+00:00"},
+        },
+        [
+            {"role": "user", "at": "2026-10-18T09:00:00+00:00", "text": "Plan the resume feature"},
+            {"role": "assistant", "at": "2026-10-18T09:01:00+00:00", "text": "Planned it."},
+            {"role": "user", "at": "2026-10-18T10:05:00+00:00", "text": "Build it"},
+            {"role": "assistant", "at": "2026-10-18T10:30:00+00:00", "text": "Built it."},
+        ],
+    )
+    api.messages = [
+        {"role": "user", "at": "2026-10-18T09:00:00+00:00", "text": "Plan the resume feature"},
+        {"role": "assistant", "at": "2026-10-18T09:01:00+00:00", "text": reasoning + "\n\nPlanned it."},
+        {"role": "user", "at": "2026-10-18T10:05:00+00:00", "text": "Build it"},
+        {"role": "assistant", "at": "2026-10-18T10:30:00+00:00", "text": "Built it."},
+        {"role": "user", "at": "2026-10-18T12:00:01+00:00", "text": "Now test it"},
+    ]
+    app = ChatApp(api, "s1")
+    async with app.run_test() as pilot:
+        await settle(pilot, lambda: api.streams == [40])
+        expected = [
+            "You  Plan the resume feature",
+            "Planned it.",
+            "── continued from codex in claude ──",
+            "You  Build it",
+            "Built it.",
+            "── continued from claude in pi ──",
+            "You  Now test it",
+        ]
+        assert texts(app) == expected
+        api.messages.append({"role": "assistant", "at": "2026-10-18T12:01:00+00:00", "text": "Tests pass."})
+        await api.frames.put(frame("message.completed", 41))
+        await settle(pilot, lambda: "Tests pass." in texts(app))
+        assert texts(app) == [*expected, "Tests pass."]
+
+
+async def test_a_continued_session_whose_source_is_gone_keeps_what_it_imported():
+    api = FakeApi(
+        {
+            **SESSION,
+            "continued_from": {"session_id": "gone", "runtime": "pi", "at": "2026-10-18T12:00:00+00:00"},
+        }
+    )
+    api.messages = [
+        {"role": "user", "at": "2026-10-18T09:00:00+00:00", "text": "Plan the resume feature"},
+        {"role": "user", "at": "2026-10-18T12:00:01+00:00", "text": "Now test it"},
+    ]
+
+    async def session(session_id=None):
+        if session_id:
+            raise ChatError("not_found", "no such session")
+        return api.s
+
+    api.session = session  # type: ignore[method-assign]
+    app = ChatApp(api, "s1")
+    async with app.run_test() as pilot:
+        await settle(pilot, lambda: len(texts(app)) == 2)
+        assert texts(app) == ["You  Plan the resume feature", "You  Now test it"]
+
+
+async def test_a_continued_session_whose_source_shows_nothing_keeps_what_it_imported():
+    api = FakeApi(
+        {
+            **SESSION,
+            "continued_from": {"session_id": "s0", "runtime": "pi", "at": "2026-10-18T10:00:00+00:00"},
+        }
+    )
+    api.others["s0"] = ({**SESSION, "session_id": "s0", "runtime": "pi", "continued_from": None}, [])
+    api.messages = [
+        {"role": "user", "at": "2026-10-18T09:00:00+00:00", "text": "Plan the resume feature"},
+        {"role": "user", "at": "2026-10-18T10:05:00+00:00", "text": "Now test it"},
+    ]
+    app = ChatApp(api, "s1")
+    async with app.run_test() as pilot:
+        await settle(pilot, lambda: api.streams == [40])
+        assert texts(app) == ["You  Plan the resume feature", "You  Now test it"]
+
+
+async def test_an_older_source_that_shows_nothing_leaves_the_newer_one_whole():
+    api = FakeApi(
+        {
+            **SESSION,
+            "runtime": "pi",
+            "continued_from": {"session_id": "s0", "runtime": "claude", "at": "2026-10-18T12:00:00+00:00"},
+        }
+    )
+    api.others["s00"] = ({**SESSION, "session_id": "s00", "runtime": "codex", "continued_from": None}, [])
+    api.others["s0"] = (
+        {
+            **SESSION,
+            "session_id": "s0",
+            "continued_from": {"session_id": "s00", "runtime": "codex", "at": "2026-10-18T10:00:00+00:00"},
+        },
+        [
+            {"role": "user", "at": "2026-10-18T09:00:00+00:00", "text": "Plan the resume feature"},
+            {"role": "user", "at": "2026-10-18T10:05:00+00:00", "text": "Build it"},
+        ],
+    )
+    api.messages = [
+        {"role": "user", "at": "2026-10-18T09:00:00+00:00", "text": "Plan the resume feature"},
+        {"role": "user", "at": "2026-10-18T10:05:00+00:00", "text": "Build it"},
+        {"role": "user", "at": "2026-10-18T12:00:01+00:00", "text": "Now test it"},
+    ]
+    app = ChatApp(api, "s1")
+    async with app.run_test() as pilot:
+        await settle(pilot, lambda: api.streams == [40])
+        assert texts(app) == [
+            "You  Plan the resume feature",
+            "You  Build it",
+            "── continued from claude in pi ──",
+            "You  Now test it",
+        ]
+
+
+async def test_a_source_that_kept_going_shows_only_what_was_continued():
+    api = FakeApi(
+        {
+            **SESSION,
+            "runtime": "pi",
+            "continued_from": {"session_id": "s0", "runtime": "claude", "at": "2026-10-18T12:00:00+00:00"},
+        }
+    )
+    api.others["s00"] = (
+        {**SESSION, "session_id": "s00", "runtime": "codex", "continued_from": None},
+        [
+            {"role": "user", "at": "2026-10-18T09:00:00+00:00", "text": "Plan the resume feature"},
+            {"role": "user", "at": "2026-10-18T11:00:00+00:00", "text": "AFTER FORK in codex"},
+        ],
+    )
+    api.others["s0"] = (
+        {
+            **SESSION,
+            "session_id": "s0",
+            "continued_from": {"session_id": "s00", "runtime": "codex", "at": "2026-10-18T10:00:00+00:00"},
+        },
+        [
+            {"role": "user", "at": "2026-10-18T09:00:00+00:00", "text": "Plan the resume feature"},
+            {"role": "user", "at": "2026-10-18T10:05:00+00:00", "text": "Build it"},
+            {"role": "user", "at": "2026-10-18T13:00:00+00:00", "text": "AFTER FORK in claude"},
+        ],
+    )
+    api.messages = [
+        {"role": "user", "at": "2026-10-18T09:00:00+00:00", "text": "Plan the resume feature"},
+        {"role": "user", "at": "2026-10-18T10:05:00+00:00", "text": "Build it"},
+        {"role": "user", "at": "2026-10-18T12:00:01+00:00", "text": "Now test it"},
+    ]
+    app = ChatApp(api, "s1")
+    async with app.run_test() as pilot:
+        await settle(pilot, lambda: api.streams == [40])
+        assert texts(app) == [
+            "You  Plan the resume feature",
+            "── continued from codex in claude ──",
+            "You  Build it",
+            "── continued from claude in pi ──",
+            "You  Now test it",
+        ]
+
+
 async def test_typing_sends_a_message_and_leaving_never_stops_the_session():
     api = FakeApi()
     app = ChatApp(api, "s1")
@@ -169,6 +367,9 @@ async def test_an_approval_is_answered_with_y():
     app = ChatApp(api, "s1")
     async with app.run_test() as pilot:
         await settle(pilot, lambda: "make test" in str(app.query_one("#pending", Static).content))
+        await pilot.pause()
+        box, panel = app.query_one("#input").region, app.query_one("#pending").region
+        assert box.height and not box.overlaps(panel)  # the panel never covers what you type
         await send(pilot, "y")
         assert ("respond", "a2", "allow", None) in api.calls
         assert not app.query_one("#pending").has_class("show")
