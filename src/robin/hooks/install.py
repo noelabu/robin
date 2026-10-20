@@ -5,6 +5,9 @@ Claude Code (`hooks` in ~/.claude/settings.json) and Codex (~/.codex/hooks.json)
 Robin appends its own group to each event list and never edits, replaces or reorders anyone else's. Pi's
 mechanism is an extension file, so Robin adds one file of its own.
 
+For Claude, Robin also adds its question hook: one more PreToolUse group, matched to AskUserQuestion, that
+waits for the question to be answered in Robin (robin.hooks.ask). It's the only hook that decides anything.
+
 Every install is planned first (a diff of exactly what changes), written only when confirmed, backed up,
 and recorded, so uninstall removes only Robin's entries and status can report drift.
 """
@@ -25,6 +28,9 @@ from robin.paths import secure_mkdir
 
 RELAY_MODULE = "robin.hooks.relay"
 HOOK_TIMEOUT_S = 5
+ASK_MODULE = "robin.hooks.ask"
+ASK_EVENT, ASK_MATCHER = "PreToolUse", "AskUserQuestion"
+ASK_TIMEOUT_S = 600  # above the longest wait (attention.WAIT_MAX_S), so Claude never kills it mid-wait
 EVENTS = {
     "claude": [
         "SessionStart",
@@ -90,8 +96,20 @@ def relay_command(runtime: str, data_dir: Path) -> str:
     return shlex.join([sys.executable, "-m", RELAY_MODULE, "--runtime", runtime, "--data", str(data_dir)])
 
 
-def is_robin(hook: Any) -> bool:
+def ask_command(data_dir: Path) -> str:
+    return shlex.join([sys.executable, "-m", ASK_MODULE, "--data", str(data_dir)])
+
+
+def is_relay(hook: Any) -> bool:
     return isinstance(hook, dict) and RELAY_MODULE in str(hook.get("command", ""))
+
+
+def is_ask(hook: Any) -> bool:
+    return isinstance(hook, dict) and ASK_MODULE in str(hook.get("command", ""))
+
+
+def is_robin(hook: Any) -> bool:
+    return is_relay(hook) or is_ask(hook)
 
 
 # -- records -----------------------------------------------------------------------------------------------
@@ -167,7 +185,7 @@ def plan_install(runtime: str, data_dir: Path) -> Plan:
         if groups is not None and not isinstance(groups, list):
             raise InstallError(f"`hooks.{event}` in {target} isn't a list; Robin won't edit it")
         groups = list(groups or [])
-        mine = [h for g in groups if isinstance(g, dict) for h in g.get("hooks", []) or [] if is_robin(h)]
+        mine = [h for g in groups if isinstance(g, dict) for h in g.get("hooks", []) or [] if is_relay(h)]
         if mine:
             if any(h.get("command") != command for h in mine):  # Robin moved: update its own entries only
                 groups = [_with_command(g, command) for g in groups]
@@ -179,6 +197,11 @@ def plan_install(runtime: str, data_dir: Path) -> Plan:
         groups.append({"hooks": [{"type": "command", "command": command, "timeout": HOOK_TIMEOUT_S}]})
         new_hooks[event] = groups
         changed = True
+    if runtime == "claude":
+        groups, ask_changed = _with_ask(list(new_hooks.get(ASK_EVENT) or []), ask_command(data_dir))
+        if ask_changed:
+            new_hooks[ASK_EVENT] = groups
+            changed = True
     if not changed:
         return Plan(runtime, target, "nothing", text, text, ["already installed"])
     after = dict(data)
@@ -194,7 +217,26 @@ def plan_install(runtime: str, data_dir: Path) -> Plan:
 def _with_command(group: Any, command: str) -> Any:
     if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
         return group
-    return {**group, "hooks": [{**h, "command": command} if is_robin(h) else h for h in group["hooks"]]}
+    return {**group, "hooks": [{**h, "command": command} if is_relay(h) else h for h in group["hooks"]]}
+
+
+def _with_ask(groups: list[Any], command: str) -> tuple[list[Any], bool]:
+    """Robin's question hook in its own group: added if missing; its command, timeout and matcher kept
+    current."""
+    want = {
+        "matcher": ASK_MATCHER,
+        "hooks": [{"type": "command", "command": command, "timeout": ASK_TIMEOUT_S}],
+    }
+    for n, g in enumerate(groups):
+        if isinstance(g, dict) and isinstance(g.get("hooks"), list) and any(is_ask(h) for h in g["hooks"]):
+            hooks = [
+                {**h, "command": command, "timeout": ASK_TIMEOUT_S} if is_ask(h) else h for h in g["hooks"]
+            ]
+            current = {**g, "matcher": ASK_MATCHER, "hooks": hooks}
+            if current == g:
+                return groups, False
+            return groups[:n] + [current] + groups[n + 1 :], True
+    return groups + [want], True
 
 
 def plan_uninstall(runtime: str, data_dir: Path) -> Plan:
@@ -272,6 +314,7 @@ def apply(plan: Plan, data_dir: Path) -> Path | None:
         recs[plan.runtime] = {
             "config": str(plan.target),
             "command": relay_command(plan.runtime, data_dir) if plan.runtime != "pi" else None,
+            "ask_command": ask_command(data_dir) if plan.runtime == "claude" else None,
             "events": EVENTS.get(plan.runtime, []),
             # A reinstall keeps what an earlier install created, so uninstall still removes it.
             "created_events": sorted(
@@ -329,11 +372,33 @@ def status(runtime: str, data_dir: Path) -> dict[str, Any]:
     raw = data.get("hooks")
     hooks: dict[str, Any] = raw if isinstance(raw, dict) else {}
     found: dict[str, list[str]] = {}
+    asks: list[dict[str, Any]] = []
     for event, groups in hooks.items():
         for g in groups if isinstance(groups, list) else []:
             for h in g.get("hooks", []) if isinstance(g, dict) else []:
-                if is_robin(h):
+                if is_relay(h):
                     found.setdefault(event, []).append(str(h.get("command")))
+                elif is_ask(h):
+                    asks.append({**h, "event": event, "matcher": g.get("matcher")})
+    if rec and runtime == "claude":
+        if not asks:
+            drift.append(
+                "Robin's question hook is missing; reinstall to answer terminal questions from Robin"
+            )
+        elif len(asks) > 1:
+            drift.append("Robin's question hook appears more than once")
+        else:
+            a = asks[0]
+            if a["event"] != ASK_EVENT or a["matcher"] != ASK_MATCHER:
+                drift.append(
+                    f"Robin's question hook isn't on {ASK_EVENT} for {ASK_MATCHER}; reinstall to fix it"
+                )
+            elif a.get("command") != rec.get("ask_command"):
+                drift.append(
+                    "Robin's question hook runs a different command (Robin moved?); reinstall to update it"
+                )
+            elif a.get("timeout") != ASK_TIMEOUT_S:
+                drift.append(f"Robin's question hook timeout isn't {ASK_TIMEOUT_S}s; reinstall to restore it")
     if rec:
         missing = [e for e in rec.get("events", []) if e not in found]
         if missing:
@@ -346,4 +411,9 @@ def status(runtime: str, data_dir: Path) -> dict[str, Any]:
             drift.append(f"Robin's hook appears more than once for {', '.join(dupes)}")
     elif found:
         drift.append("Robin hooks are present but not recorded; `robin hooks uninstall` removes them")
-    return {"runtime": runtime, "config": str(target), "installed": bool(rec and found), "drift": drift}
+    return {
+        "runtime": runtime,
+        "config": str(target),
+        "installed": bool(rec and (found or asks)),
+        "drift": drift,
+    }

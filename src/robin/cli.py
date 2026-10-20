@@ -998,7 +998,14 @@ def cmd_hooks(args: argparse.Namespace) -> None:
     for note in plan.notes:
         print(f"note: {note}")
     if args.action == "install":
-        print("Robin's hooks only report events to Robin. They never approve, block or change anything.")
+        if args.runtime != "claude":
+            print("Robin's hooks only report events to Robin. They never approve, block or change anything.")
+        else:
+            print(
+                "Robin's hooks report events to Robin. One more, the question hook, holds a question back "
+                "while it waits for your answer in Robin (5 minutes by default, set in Settings; 0 turns it "
+                "off), then the terminal asks as usual. Answer in terminal in Robin, or Esc, ends it early."
+            )
     if not args.yes:
         if not sys.stdin.isatty():
             raise CliError("not confirmed; run again with --yes to apply this change")
@@ -1443,7 +1450,7 @@ def parser() -> argparse.ArgumentParser:
         p.add_argument("attention_id")
         p.add_argument("--wait", type=float, default=5)
         p.set_defaults(func=cmd_respond, decision=decision)
-    p = sub.add_parser("answer", parents=[common], help="answer a question from a session Robin runs")
+    p = sub.add_parser("answer", parents=[common], help="answer a question an agent asked")
     p.add_argument("attention_id")
     p.add_argument("answers", nargs="*", help="one per question, in order: an option number (1,3) or text")
     p.add_argument("--decline", action="store_true", help="tell the agent you won't answer")

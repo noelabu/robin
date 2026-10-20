@@ -707,3 +707,95 @@ def test_conversation_through_the_api(service):
         ("assistant", "key [REDACTED:github-pat]"),
     ]
     assert c.get("/api/v1/sessions/nope/conversation").status_code == 404
+
+
+TERMINAL_QUESTION = {
+    "session_id": "ext-route",
+    "tool_name": "AskUserQuestion",
+    "tool_use_id": "toolu_route",
+    "tool_input": {"questions": [{"question": "Ship it?", "options": [{"label": "Yes"}, {"label": "No"}]}]},
+}
+
+
+def register_question(c, payload=TERMINAL_QUESTION):
+    return c.post(
+        "/api/v1/hooks/claude/questions",
+        json={"relay_id": uuid.uuid4().hex, "relayed_at": time.time(), "payload": payload},
+    )
+
+
+def test_only_claude_has_a_question_hook_and_only_questions_register(service):
+    store, port, auth = service
+    c = cli(port, auth)
+    body = {"relay_id": "x", "relayed_at": time.time(), "payload": TERMINAL_QUESTION}
+    r = c.post("/api/v1/hooks/codex/questions", json=body)
+    assert r.status_code == 404 and r.json()["error"]["code"] == "not_found"
+    r = register_question(c, {**TERMINAL_QUESTION, "tool_name": "Bash"})
+    assert r.status_code == 422
+
+
+def test_a_registered_question_is_pending_until_answered_once(service):
+    store, port, auth = service
+    c = cli(port, auth)
+    reg = register_question(c).json()
+    assert reg["attention_id"] and reg["wait_s"] == 300 and reg["until"] > time.time()
+    assert register_question(c).json()["until"] == reg["until"]  # a retried registration keeps its deadline
+    att = reg["attention_id"]
+    assert c.get(f"/api/v1/attention/{att}/reply?wait=0").json()["status"] == "pending"
+
+    first = aid()
+    body = {"decision": "answer", "answers": {"Ship it?": "Yes"}, "action_id": first}
+    r = c.post(f"/api/v1/attention/{att}/responses", json=body)
+    assert r.status_code == 202 and r.json()["action"]["action_id"] == first
+    retry = c.post(f"/api/v1/attention/{att}/responses", json=body)
+    assert retry.status_code == 202 and retry.json()["action"]["action_id"] == first
+    again = c.post(f"/api/v1/attention/{att}/responses", json={"decision": "deny", "action_id": aid()})
+    assert again.status_code == 409 and again.json()["error"]["code"] == "not_answerable"
+    assert c.get(f"/api/v1/attention/{att}/reply?wait=0").json() == {
+        "status": "answered",
+        "answers": {"Ship it?": "Yes"},
+    }
+
+
+def test_releasing_a_registered_question_hands_it_to_the_terminal(service):
+    store, port, auth = service
+    c = cli(port, auth)
+    att = register_question(c).json()["attention_id"]
+    assert c.post(f"/api/v1/attention/{att}/release").json() == {"status": "closed"}
+    item = c.get(f"/api/v1/attention/{att}").json()
+    assert item["allowed_responses"] == [] and item["detail"]["answer_in"] == "terminal"
+    r = c.post(f"/api/v1/attention/{att}/responses", json={"decision": "deny", "action_id": aid()})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "answer_in_terminal"
+
+
+def test_question_wait_setting(service):
+    store, port, auth = service
+    c = cli(port, auth)
+    assert c.get("/api/v1/settings/questions").json() == {"wait_s": 300}
+    assert c.put("/api/v1/settings/questions", json={"wait_s": 120}).json() == {"wait_s": 120}
+    assert c.get("/api/v1/settings/questions").json() == {"wait_s": 120}
+    assert c.put("/api/v1/settings/questions", json={"wait_s": 541}).status_code == 422
+    assert c.put("/api/v1/settings/questions", json={"wait_s": -1}).status_code == 422
+    assert c.get("/api/v1/settings/questions").json() == {"wait_s": 120}
+    assert c.put("/api/v1/settings/questions", json={"wait_s": 0}).json() == {"wait_s": 0}
+    assert register_question(c).json() == {"attention_id": None, "reason": "disabled"}
+
+
+def test_a_managed_question_cannot_be_handed_to_a_terminal(service):
+    store, port, auth = service
+    c = browser(port, auth)
+    sid = c.post(
+        "/api/v1/sessions/launch",
+        json={"runtime": "fake", "cwd": work(store), "prompt": "ask", "action_id": aid()},
+    ).json()["session_id"]
+    deadline = time.time() + 10
+    items = []
+    while not items and time.time() < deadline:
+        items = c.get(f"/api/v1/attention?session_id={sid}").json()["items"]
+        time.sleep(0.05)
+    r = c.post(
+        f"/api/v1/attention/{items[0]['attention_id']}/responses",
+        json={"decision": "terminal", "action_id": aid()},
+    )
+    assert r.status_code == 422 and r.json()["error"]["code"] == "invalid_response"
+    c.post(f"/api/v1/sessions/{sid}/actions", json={"type": "stop", "action_id": aid()})

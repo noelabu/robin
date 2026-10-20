@@ -143,7 +143,7 @@ test("a session asking a question turns its card amber and its panel shows the q
   vi.unstubAllGlobals();
 });
 
-test("a question from a session Robin runs says how to answer it here", () => {
+test("a question from a session Robin runs has a form, and says the CLI works too", () => {
   const item: AttentionItem = {
     attention_id: "att-9",
     kind: "question",
@@ -160,6 +160,123 @@ test("a question from a session Robin runs says how to answer it here", () => {
     created_at: "2026-10-17T09:59:30Z",
   };
   const { container } = render(<QuestionList item={item} />);
-  expect(container.textContent).toContain("Answer it with robin chat s1 or robin answer att-9.");
+  expect(container.textContent).toContain("Or answer it with robin chat s1 or robin answer att-9.");
+  expect(container.querySelector("button[type=submit]")).not.toBeNull();
   expect(container.textContent).not.toContain("terminal");
+});
+
+function hookQuestion(over: Partial<AttentionItem> = {}): AttentionItem {
+  return {
+    attention_id: "att-h",
+    kind: "question",
+    session_id: "s1",
+    task_id: null,
+    state: "open",
+    title: "Which database?",
+    detail: {
+      tool: "AskUserQuestion",
+      answer_in: "hook",
+      until: NOW / 1000 + 300,
+      questions: [
+        {
+          question: "Which database?",
+          header: "",
+          multi: false,
+          options: [
+            { label: "SQLite", description: "" },
+            { label: "Postgres", description: "" },
+          ],
+        },
+      ],
+    },
+    allowed_responses: ["answer", "deny", "terminal"],
+    created_at: "2026-10-17T09:59:30Z",
+    ...over,
+  };
+}
+
+function captureResponses() {
+  const sent: unknown[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/attention/att-h/responses")) sent.push(JSON.parse(String(init?.body)));
+      return new Response(
+        JSON.stringify({ action: { action_id: "a", session_id: "s1", type: "approval", state: "submitted", error: null } }),
+        { status: 202 },
+      );
+    }),
+  );
+  return sent;
+}
+
+test("a terminal session's question is answered from its form once every question has an answer", async () => {
+  const sent = captureResponses();
+  const onAnswered = vi.fn();
+  render(<QuestionList item={hookQuestion()} onAnswered={onAnswered} />);
+  const submit = screen.getByRole("button", { name: "Submit" }) as HTMLButtonElement;
+  expect(submit.disabled).toBe(true);
+  fireEvent.click(screen.getByLabelText("Postgres"));
+  expect(submit.disabled).toBe(false);
+  fireEvent.click(submit);
+  await waitFor(() => expect(sent).toHaveLength(1));
+  expect(sent[0]).toMatchObject({ decision: "answer", answers: { "Which database?": "Postgres" } });
+  await waitFor(() => expect(onAnswered).toHaveBeenCalled());
+  vi.unstubAllGlobals();
+});
+
+test("a multi-select question sends every pick, with the user's own text as one of them", async () => {
+  const sent = captureResponses();
+  const item = hookQuestion();
+  item.detail.questions = [
+    {
+      question: "Which features?",
+      header: "",
+      multi: true,
+      options: [
+        { label: "Auth", description: "" },
+        { label: "Billing", description: "" },
+      ],
+    },
+  ];
+  render(<QuestionList item={item} />);
+  fireEvent.click(screen.getByLabelText("Auth"));
+  fireEvent.click(screen.getByLabelText("Billing"));
+  fireEvent.click(screen.getByLabelText("Billing")); // unpicked again
+  const own = screen.getByLabelText("Your own answer to Which features?");
+  fireEvent.focus(own);
+  fireEvent.change(own, { target: { value: "Search" } });
+  fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+  await waitFor(() => expect(sent).toHaveLength(1));
+  expect(sent[0]).toMatchObject({ decision: "answer", answers: { "Which features?": ["Auth", "Search"] } });
+  vi.unstubAllGlobals();
+});
+
+test("Decline and Answer in terminal send their decisions without answers", async () => {
+  const sent = captureResponses();
+  const { unmount } = render(<QuestionList item={hookQuestion()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Decline" }));
+  await waitFor(() => expect(sent).toHaveLength(1));
+  unmount();
+  render(<QuestionList item={hookQuestion()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Answer in terminal" }));
+  await waitFor(() => expect(sent).toHaveLength(2));
+  expect(sent[0]).toMatchObject({ decision: "deny" });
+  expect(sent[1]).toMatchObject({ decision: "terminal" });
+  expect(sent[0]).not.toHaveProperty("answers");
+  expect(sent[1]).not.toHaveProperty("answers");
+  vi.unstubAllGlobals();
+});
+
+test("a question from a session Robin runs can't be handed to a terminal", () => {
+  render(
+    <QuestionList
+      item={hookQuestion({
+        allowed_responses: ["answer", "deny"],
+        detail: { ...hookQuestion().detail, answer_in: "robin", until: undefined },
+      })}
+    />,
+  );
+  expect(screen.getByRole("button", { name: "Decline" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Answer in terminal" })).toBeNull();
 });

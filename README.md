@@ -38,7 +38,7 @@ To see sessions you already have, and follow them live:
 ```bash
 robin scan                   # index existing Claude, Codex and Pi sessions (read-only)
 robin watch on               # keep following their history as it grows
-robin hooks install claude   # optional: live state and questions for sessions started in a terminal
+robin hooks install claude   # optional: live state for sessions started in a terminal, and their questions answered from Robin
 ```
 
 ### Every day
@@ -113,7 +113,7 @@ The dashboard opens on the Map: every session at once, one card per session, gro
 What a Claude session starts gets its own card, in columns joined by wires: the session, then its skills, subagents and background shells, then a skill's workflows, then a workflow's agents in phase order. A workflow card counts its agents per phase ("Find 2/3 · 1 failed"), a skill names the skills it called, a shell shows its command. Jobs that finished a while ago fold into a count on the session card. While a subagent works, packets run along its wire.
 
 - **Needs permission** — a session waiting on an approval turns red and pulses. Click it for the request with **Approve** and **Deny**.
-- **Needs an answer** — a session asking a question turns amber. The question and its options show at the top of its panel and in Needs attention; answer it in the session's terminal.
+- **Needs an answer** — a session asking a question turns amber. The question and its options show at the top of its panel and in Needs attention; pick an option or type your own, then **Submit** (or **Decline**). For a Claude session started in a terminal, this needs `robin hooks install claude`: its question hook holds the question while it waits for your answer here (5 minutes by default, set in Settings; 0 turns it off), then the terminal asks as usual. **Answer in terminal**, or Esc in the terminal, ends the wait early. Codex and Pi questions from a terminal are answered there.
 - **Active / Today / All** — the filter above the Map and the session list. Active (the default) is what's working or waiting on you, including a session whose workflow, shell or subagent still runs; Today adds the rest of the day. The choice is shared by both views and remembered per browser.
 
 Each folder gets its own colour, the same on the Map and in Sessions, and folders shown together never share one. Working cards glow in their folder's colour; waiting stays blue and failed red.
@@ -133,7 +133,7 @@ A session started outside Robin can be continued from here: the first message yo
 - Enter sends; Ctrl+J starts a new line (Shift+Enter too, in terminals that report it). A message sent while a turn runs is queued until it ends. `/interrupt` ends the turn, `/stop` ends the session, `/help` lists these.
 - An approval shows above the input: `y` allows, `n` denies.
 - A question from Claude shows its options: type a number to pick one (`1,3` for several), or any other text as your own answer; with more than one question it asks them in turn. `/decline` tells Claude you won't answer. Without the chat: `robin answer <attention-id> 2 "1,3"` (one answer per question, in order); with no answers it lists them.
-- A session started outside Robin is taken over by your first message, as in the dashboard. Its questions are still answered in its own terminal.
+- A session started outside Robin is taken over by your first message, as in the dashboard. With Claude's question hook installed, its questions are answered here too, like in the dashboard.
 - If the connection drops, the chat says so and picks up where it left off.
 
 

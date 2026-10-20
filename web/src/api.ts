@@ -108,7 +108,7 @@ export type AttentionItem = {
   task_id: string | null;
   state: "open" | "acknowledged" | "resolved" | "dismissed" | "expired" | "handed_off";
   title: string;
-  detail: { tool?: string; input?: unknown; reason?: unknown; event?: string; questions?: Question[]; answer_in?: string };
+  detail: { tool?: string; input?: unknown; reason?: unknown; event?: string; questions?: Question[]; answer_in?: string; until?: number };
   allowed_responses: string[];
   created_at: string;
 };
@@ -445,8 +445,16 @@ export const api = {
       action_id: newActionId(),
     }),
   attention: () => request<{ items: AttentionItem[] }>("GET", "/attention"),
-  respond: (attentionId: string, decision: "allow" | "deny") =>
-    request<{ action: Action }>("POST", `/attention/${attentionId}/responses`, { decision, action_id: newActionId() }),
+  respond: (
+    attentionId: string,
+    decision: "allow" | "deny" | "answer" | "terminal",
+    answers?: Record<string, string | string[]>,
+  ) =>
+    request<{ action: Action }>("POST", `/attention/${attentionId}/responses`, {
+      decision,
+      action_id: newActionId(),
+      ...(answers ? { answers } : {}),
+    }),
   notice: (attentionId: string, to: "acknowledge" | "dismiss") =>
     request<AttentionItem>("POST", `/attention/${attentionId}/${to}`),
   terminal: (sessionId: string) =>
@@ -459,6 +467,8 @@ export const api = {
   storage: () => request<StorageUsage>("GET", "/storage"),
   prunePreview: () => request<PrunePlan>("POST", "/storage/prune", { dry_run: true }),
   prune: () => request<PrunePlan & { pruned_events: number }>("POST", "/storage/prune", { dry_run: false }),
+  questionWait: () => request<{ wait_s: number }>("GET", "/settings/questions"),
+  setQuestionWait: (wait_s: number) => request<{ wait_s: number }>("PUT", "/settings/questions", { wait_s }),
   watch: () => request<{ enabled: boolean }>("GET", "/settings/watch"),
   setWatch: (enabled: boolean) => request<{ enabled: boolean }>("PUT", "/settings/watch", { enabled }),
   notifications: () => request<NotificationSettings>("GET", "/settings/notifications"),

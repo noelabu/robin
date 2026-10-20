@@ -409,3 +409,7 @@ body::after {
 .msg.live .step {
   display: block; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.question-form fieldset.question { border: 0; padding: 0; margin: 6px 0 0; }
+.question-form legend { font-weight: 600; font-size: 12px; padding: 0; }
+.question-choice { display: block; margin: 3px 0; font-size: 12px; }
+.question-choice input[type="text"] { font-size: 12px; width: min(260px, 60%); }
