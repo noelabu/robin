@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from robin.adapters.codex.translate import translate
-from robin.runtime.host import Approvals, emit, runtime, stdin_commands
+from robin.runtime.host import Approvals, StderrTail, emit, runtime, stdin_commands
 from robin.supervisor.protocol import MAX_LINE
 
 APPROVAL_METHODS = {
@@ -38,13 +38,30 @@ class Rpc:
         self.proc = proc
         self.next_id = 0
         self.waiting: dict[int, asyncio.Future[dict[str, Any]]] = {}
+        self.closed: str | None = None
 
     async def call(self, method: str, params: dict[str, Any], timeout: float = 60) -> dict[str, Any]:
+        if self.closed:
+            raise ConnectionError(self.closed)
         self.next_id += 1
         fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
         self.waiting[self.next_id] = fut
-        await self.write({"id": self.next_id, "method": method, "params": params})
-        return await asyncio.wait_for(fut, timeout)
+        try:
+            await self.write({"id": self.next_id, "method": method, "params": params})
+        except ConnectionError:  # the process is gone; close() fails the call with the reason
+            pass
+        try:
+            return await asyncio.wait_for(fut, timeout)
+        except TimeoutError:
+            raise TimeoutError(f"codex app-server didn't answer {method} within {timeout:g}s") from None
+
+    def close(self, reason: str) -> None:
+        """The process exited: every call still waiting fails now, rather than at its timeout."""
+        self.closed = reason
+        for fut in self.waiting.values():
+            if not fut.done():
+                fut.set_exception(ConnectionError(reason))
+        self.waiting.clear()
 
     async def write(self, msg: dict[str, Any]) -> None:
         assert self.proc.stdin is not None
@@ -68,10 +85,11 @@ async def run_codex(args: argparse.Namespace) -> None:
         "app-server",
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
-        stderr=sys.stderr,
+        stderr=asyncio.subprocess.PIPE,
         limit=MAX_LINE,
         cwd=args.cwd,
     )
+    stderr = StderrTail(proc.stderr)
     rpc = Rpc(proc)
     state: dict[str, Any] = {"thread": None, "turn": None}
 
@@ -109,7 +127,9 @@ async def run_codex(args: argparse.Namespace) -> None:
                         state["turn"] = None
                         approvals.expire_all("turn ended")
                     emit(event)
-        emit({"type": "host_error", "reason": f"codex app-server exited ({await proc.wait()})"})
+        reason = await stderr.exit_reason("codex app-server", await proc.wait())
+        rpc.close(reason)
+        emit({"type": "host_error", "reason": reason})
 
     pump_task = asyncio.create_task(pump())
     init = await rpc.call("initialize", {"clientInfo": {"name": "robin", "version": "0.1"}})

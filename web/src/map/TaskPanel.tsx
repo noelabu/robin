@@ -251,7 +251,7 @@ export function TaskPanel(props: {
       {props.approvals?.map((a) => (
         <ApprovalBox key={a.attention_id} item={a} onAnswered={props.onAnswered} />
       ))}
-      {props.questions?.map((q) => <QuestionBox key={q.attention_id} item={q} />)}
+      {props.questions?.map((q) => <QuestionBox key={q.attention_id} item={q} onAnswered={props.onAnswered} />)}
       {done && (
         <p className="tp-done" role="status">
           <span className="map-tick" aria-hidden="true">

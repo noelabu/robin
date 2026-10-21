@@ -556,6 +556,26 @@ def _give_back(conn: Connection, session_id: str) -> None:
     )
 
 
+def _never_started(conn: Connection, session_id: str, cursor: int, at: datetime, ev: dict[str, Any]) -> None:
+    """A launch whose host exited before its session started failed. The host's own host_error has usually
+    opened the failure item with the reason; a host that died without one still gets an item."""
+    conn.execute(
+        update(SessionRow)
+        .where(SessionRow.session_id == session_id)
+        .values(runtime_state="failed", updated_at=at)
+    )
+    shown = conn.execute(
+        select(AttentionItem.attention_id).where(
+            AttentionItem.session_id == session_id,
+            AttentionItem.kind == "failure",
+            AttentionItem.state.in_(attention.ACTIVE),
+        )
+    ).first()
+    if shown is None:
+        reason = f"runtime host exited with code {ev.get('returncode')} before the session started"
+        attention._failure(conn, session_id, cursor, at, {**ev, "reason": reason})
+
+
 def _transcripts(store: Store, session_id: str) -> list[str]:
     with store.reader.connect() as conn:
         return [
@@ -757,6 +777,8 @@ def _project_one(
             failed = ledger.get(conn, launch_id)
             if failed is not None and failed.action_type == "takeover":
                 _give_back(conn, session_id)  # still continuable, not a managed session with no host
+            else:
+                _never_started(conn, session_id, cursor, at, ev)
             ledger.transition(
                 conn,
                 launch_id,

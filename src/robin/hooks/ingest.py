@@ -9,6 +9,7 @@ their live stream is already the record. Dropped relays become coverage gaps.
 import json
 import os
 import threading
+import time
 import uuid
 from collections import defaultdict
 from datetime import UTC, datetime
@@ -29,6 +30,7 @@ from robin.events.ingest import (
 from robin.ids import utc_now
 from robin.runtime import attention
 from robin.store import Store
+from robin.store.models import AttentionItem
 from robin.store.models import Session as SessionRow
 from robin.workspace import tasks as ws
 
@@ -49,6 +51,9 @@ EVENTS: dict[str, tuple[str, str | None]] = {
     "Notification": ("session.notification", None),
     "SessionEnd": ("session.stopped", "stopped"),
     "session_shutdown": ("session.stopped", "stopped"),
+    # Robin's question hook: no runtime state, so it doesn't matter whether it lands before the observer's
+    attention.ASK_HOOK: ("attention.question", None),
+    attention.ASK_END_HOOK: ("attention.expired", None),
 }
 
 _locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
@@ -119,6 +124,72 @@ def record(store: Store, runtime: str, body: dict[str, Any]) -> dict[str, Any]:
 
     store.writer.call(observe)
     return {"recorded": True, "session_id": sid, "event_type": event_type}
+
+
+def ask(store: Store, runtime: str, body: dict[str, Any], wait_s: int) -> dict[str, Any]:
+    """Robin's question hook registers a question it will wait on. Returns the item to wait on and until
+    when, or why there is none (the hook then lets the terminal ask)."""
+    payload = body.get("payload")
+    if not isinstance(payload, dict):
+        raise HookRejected("payload must be an object")
+    tool_use = str(payload.get("tool_use_id") or "")
+    if not tool_use or payload.get("tool_name") not in attention.QUESTION_TOOLS:
+        raise HookRejected("not a question")
+    if wait_s <= 0:
+        return {"attention_id": None, "reason": "disabled"}
+    questions = attention._questions(payload.get("tool_input"))
+    out = record(
+        store,
+        runtime,
+        {
+            # Keyed by the tool call, so a retried registration keeps the first deadline
+            "relay_id": f"ask-{tool_use}",
+            "relayed_at": body.get("relayed_at"),
+            "payload": {
+                **payload,
+                "hook_event_name": attention.ASK_HOOK,
+                "robin_until": time.time() + wait_s,
+                "question": questions[0]["question"] if questions else None,
+            },
+        },
+    )
+    if not out["recorded"]:
+        return {"attention_id": None, "reason": out["reason"]}
+    with store.reader.connect() as conn:
+        r = conn.execute(
+            select(AttentionItem.attention_id, AttentionItem.detail).where(
+                AttentionItem.session_id == out["session_id"], AttentionItem.native_request_id == tool_use
+            )
+        ).first()
+    detail = json.loads(r.detail) if r else {}
+    if r is None or detail.get("answer_in") != "hook":
+        return {"attention_id": None, "reason": "not_answerable"}
+    return {"attention_id": r.attention_id, "until": detail["until"], "wait_s": wait_s}
+
+
+def ask_ended(store: Store, attention_id: str) -> None:
+    """The hook's wait ended (answered, declined, handed back or timed out): an event, so every view
+    showing the question refreshes."""
+    with store.reader.connect() as conn:
+        r = conn.execute(
+            select(SessionRow.runtime, SessionRow.native_session_id, AttentionItem.native_request_id)
+            .join(SessionRow, SessionRow.session_id == AttentionItem.session_id)
+            .where(AttentionItem.attention_id == attention_id)
+        ).first()
+    if r is None or not r.native_session_id:
+        return
+    record(
+        store,
+        r.runtime,
+        {
+            "relay_id": f"ask-end-{r.native_request_id}",
+            "payload": {
+                "session_id": r.native_session_id,
+                "hook_event_name": attention.ASK_END_HOOK,
+                "tool_use_id": r.native_request_id,
+            },
+        },
+    )
 
 
 def _next_seq(store: Store, source_id: str, runtime: str, sid: str) -> int:

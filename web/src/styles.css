@@ -502,6 +502,11 @@ body::after {
 .msg.live .step {
   display: block; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.question-form fieldset.question { border: 0; padding: 0; margin: 6px 0 0; }
+.question-form legend { font-weight: 600; font-size: 12px; padding: 0; }
+label.question-choice { display: flex; gap: 6px; align-items: baseline; margin: 4px 0; font-size: 12px; color: var(--ink); }
+.question-choice input[type="radio"], .question-choice input[type="checkbox"] { width: auto; flex: none; margin: 0; padding: 0; }
+.question-choice input[type="text"] { flex: 1; min-width: 0; padding: 2px 6px; font-size: 12px; }
 
 /* -- light: no neon glows or scanlines -------------------------------------------------------------- */
 :root[data-theme="light"] .recency button[aria-pressed="true"] { text-shadow: none; }

@@ -27,12 +27,14 @@ export function SettingsPanel(props: {
   const [plan, setPlan] = useState<PrunePlan | null>(null);
   const [watching, setWatching] = useState<boolean | null>(null);
   const [notify, setNotify] = useState<NotificationSettings | null>(null);
+  const [waitMin, setWaitMin] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
 
   const load = () => {
     void api.storage().then(setUsage);
     void api.watch().then((w) => setWatching(w.enabled));
     void api.notifications().then(setNotify);
+    void api.questionWait().then((q) => setWaitMin(String(q.wait_s / 60)));
   };
   useEffect(load, []);
 
@@ -135,6 +137,25 @@ export function SettingsPanel(props: {
         />{" "}
         Follow Claude Code, Codex and Pi history as it grows (Robin reads their transcripts continuously)
       </label>
+      <h3>Questions</h3>
+      {waitMin !== null && (
+        <label className="inline">
+          Wait for an answer in Robin before a terminal session asks (minutes, 0 = off){" "}
+          <input
+            type="number"
+            min={0}
+            max={9}
+            step={0.5}
+            value={waitMin}
+            onChange={(e) => setWaitMin(e.target.value)}
+            onBlur={() =>
+              void run("Saving", async () => {
+                await api.setQuestionWait(Math.round(Math.min(9, Math.max(0, Number(waitMin) || 0)) * 60));
+              })
+            }
+          />
+        </label>
+      )}
       <h3>Notifications</h3>
       {notify && (
         <fieldset className="notify">
