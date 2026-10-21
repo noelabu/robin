@@ -30,7 +30,7 @@ If more than one session matches, list the candidates and ask. Show sessions as 
 | find a session / text | `robin search "<query>" [--runtime claude\|codex\|pi] [--kind session\|event\|task\|finding]` |
 | what's waiting | `robin attention` |
 | approve / deny | `robin approve <attention-id>` / `robin deny <attention-id>` |
-| answer a question | `robin answer <attention-id> <answer per question…>` (option number or text; `--decline` to refuse) |
+| answer a question | `robin answer <attention-id> <answer per question…>` (option number or text; `--decline` to refuse). Works for terminal Claude sessions too while their question hook waits |
 | send an instruction | `robin message <session> --text "…"` |
 | interrupt / stop | `robin interrupt <session>` / `robin stop <session>` |
 | start a session | `robin run claude\|codex\|pi [--cwd DIR] [--worktree] [--skip-permissions] --prompt "…"` |

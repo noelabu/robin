@@ -7,6 +7,7 @@ the notice only: it never approves anything. A new failure reopens the session's
 """
 
 import json
+import time
 from datetime import datetime
 from typing import Any
 
@@ -14,8 +15,9 @@ from sqlalchemy import Connection, and_, insert, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from robin.ids import new_id, utc_now
+from robin.runtime import ledger
 from robin.store import Store
-from robin.store.models import AttentionItem, AuditEntry
+from robin.store.models import AttentionItem, AuditEntry, Meta
 from robin.store.models import Session as SessionRow
 
 ACTIVE = ("open", "acknowledged")
@@ -103,15 +105,61 @@ def project(conn: Connection, session_id: str, cursor: int, at: datetime, ev: di
 # Hook names that end an observed session's open questions: the turn ended, a new prompt came, it stopped.
 HOOK_TURN_ENDS = {"Stop", "agent_end", "UserPromptSubmit", "turn_start", "SessionEnd", "session_shutdown"}
 QUESTION_TOOLS = {"AskUserQuestion"}
+# Robin's question hook (robin.hooks.ask) registering a question it waits on, and that wait ending.
+ASK_HOOK, ASK_END_HOOK = "_robin_ask", "_robin_ask_end"
+HOOK_RESPONSES = ["answer", "deny", "terminal"]
 
 
 def project_hook(
     conn: Connection, session_id: str, cursor: int, at: datetime, payload: dict[str, Any]
 ) -> None:
-    """One hook from a session started outside Robin. Its questions show here, answered in its terminal."""
+    """One hook from a session started outside Robin. Its questions show here, answered in its terminal,
+    or here while Robin's question hook waits for an answer."""
     name = payload.get("hook_event_name")
     tool_use = payload.get("tool_use_id")
-    if name == "PreToolUse" and payload.get("tool_name") in QUESTION_TOOLS and tool_use:
+    if name == ASK_HOOK and payload.get("tool_name") in QUESTION_TOOLS and tool_use:
+        questions = _questions(payload.get("tool_input"))
+        if not questions:
+            return
+        task = conn.execute(
+            select(SessionRow.current_task_id).where(SessionRow.session_id == session_id)
+        ).scalar()
+        detail = json.dumps(
+            {
+                "tool": payload.get("tool_name"),
+                "questions": questions,
+                "answer_in": "hook",
+                "until": payload.get("robin_until"),
+            },
+            ensure_ascii=False,
+        )
+        stmt = sqlite_insert(AttentionItem).values(
+            attention_id=new_id(),
+            kind="question",
+            session_id=session_id,
+            task_id=task,
+            native_request_id=str(tool_use),
+            state="open",
+            title=questions[0]["question"],
+            detail=detail,
+            allowed_responses=json.dumps(HOOK_RESPONSES),
+            originating_cursor=cursor,
+            created_at=at,
+            updated_at=at,
+        )
+        # The observer's PreToolUse may have shown it first, as answered in the terminal: make it answerable.
+        conn.execute(
+            stmt.on_conflict_do_update(
+                index_elements=["session_id", "native_request_id"],
+                set_={
+                    "detail": stmt.excluded.detail,
+                    "allowed_responses": stmt.excluded.allowed_responses,
+                    "updated_at": at,
+                },
+                where=and_(AttentionItem.state.in_(ACTIVE), AttentionItem.resolution_action_id.is_(None)),
+            )
+        )
+    elif name == "PreToolUse" and payload.get("tool_name") in QUESTION_TOOLS and tool_use:
         questions = _questions(payload.get("tool_input"))
         task = conn.execute(
             select(SessionRow.current_task_id).where(SessionRow.session_id == session_id)
@@ -379,3 +427,198 @@ def set_notice(store: Store, attention_id: str, to: str, actor: str = "user") ->
 
     store.writer.call(work)
     return get(store, attention_id)
+
+
+# -- questions answered through Robin's question hook --------------------------------------------------------
+
+WAIT_SETTING = "question_wait_s"
+WAIT_DEFAULT_S = 300
+WAIT_MAX_S = 540  # under the hook's 600 s timeout, so Claude never kills it
+
+
+def question_wait_s(store: Store) -> int:
+    """How long the question hook waits for an answer here before the terminal asks. 0 turns it off."""
+    with store.reader.connect() as conn:
+        value = conn.execute(select(Meta.value).where(Meta.key == WAIT_SETTING)).scalar()
+    try:
+        return max(0, min(WAIT_MAX_S, int(value))) if value is not None else WAIT_DEFAULT_S
+    except ValueError:
+        return WAIT_DEFAULT_S
+
+
+def set_question_wait_s(store: Store, seconds: int) -> int:
+    value = str(max(0, min(WAIT_MAX_S, int(seconds))))
+    store.writer.call(
+        lambda c: c.execute(
+            sqlite_insert(Meta)
+            .values(key=WAIT_SETTING, value=value)
+            .on_conflict_do_update(index_elements=["key"], set_={"value": value})
+        )
+    )
+    return int(value)
+
+
+def _hook_row(conn: Connection, attention_id: str) -> Any:
+    r = (
+        conn.execute(select(AttentionItem).where(AttentionItem.attention_id == attention_id))
+        .mappings()
+        .first()
+    )
+    if r is None:
+        raise AttentionError("not_found", f"no attention item {attention_id}", 404)
+    return r
+
+
+def _to_terminal(conn: Connection, attention_id: str, detail: dict[str, Any], **extra: Any) -> None:
+    """The hook stopped waiting: the question is answered in the terminal from here on."""
+    conn.execute(
+        update(AttentionItem)
+        .where(AttentionItem.attention_id == attention_id, AttentionItem.resolution_action_id.is_(None))
+        .values(
+            detail=json.dumps({**detail, "answer_in": "terminal"}, ensure_ascii=False),
+            allowed_responses=json.dumps([]),
+            updated_at=utc_now(),
+            **extra,
+        )
+    )
+
+
+def reply_hook(
+    store: Store,
+    attention_id: str,
+    action_id: str,
+    decision: str,
+    answers: dict[str, str] | None = None,
+    message: str | None = None,
+    now: float | None = None,
+) -> ledger.Action:
+    """Answer, decline or hand back a question the hook is waiting on. Once only, and never after the hook
+    gave up: the deadline is checked in the same transaction that takes the item."""
+
+    def work(conn: Connection) -> ledger.Action | str:
+        at = (
+            time.time() if now is None else now
+        )  # in the transaction: a queued write may land past the deadline
+        r = _hook_row(conn, attention_id)
+        detail = json.loads(r["detail"])
+        allowed = json.loads(r["allowed_responses"])
+        if decision not in allowed:
+            if not allowed:
+                raise AttentionError("answer_in_terminal", "answer this question in the session's terminal")
+            raise AttentionError("invalid_response", f"a {r['kind']} can't take {decision!r}", 422)
+        if r["state"] not in ACTIVE or r["resolution_action_id"] is not None:
+            raise AttentionError(
+                "not_answerable", f"this {r['kind']} is {r['state']} and can't take a response"
+            )
+        if at >= float(detail.get("until") or 0):
+            _to_terminal(conn, attention_id, detail)
+            return "expired"
+        if decision == "answer":
+            missing = [
+                q["question"] for q in detail.get("questions", []) if q["question"] not in (answers or {})
+            ]
+            if missing:
+                raise AttentionError("invalid_answers", f"answer every question; missing {missing[0]!r}", 422)
+        payload = {"request_id": r["native_request_id"], "decision": decision, "answers": answers}
+        action, _ = ledger.create(
+            conn, action_id=action_id, session_id=r["session_id"], action_type="approval", payload=payload
+        )
+        ledger.transition(conn, action_id, "submitted")
+        reply = {"decision": decision, "answers": answers, "message": message, "action_id": action_id}
+        if decision == "terminal":
+            _to_terminal(conn, attention_id, {**detail, "reply": reply}, resolution_action_id=action_id)
+        else:
+            conn.execute(
+                update(AttentionItem)
+                .where(AttentionItem.attention_id == attention_id)
+                .values(
+                    state="resolved",
+                    resolution="answered" if decision == "answer" else "declined",
+                    resolution_action_id=action_id,
+                    detail=json.dumps({**detail, "reply": reply}, ensure_ascii=False),
+                    updated_at=utc_now(),
+                )
+            )
+        got = ledger.get(conn, action_id)
+        assert got is not None
+        return got
+
+    out = store.writer.call(work)
+    if out == "expired":  # raised outside the transaction, so handing it to the terminal sticks
+        raise AttentionError(
+            "answer_in_terminal", "Robin stopped waiting; answer it in the session's terminal"
+        )
+    assert isinstance(out, ledger.Action)
+    return out
+
+
+def hook_outcome(store: Store, attention_id: str, now: float | None = None) -> dict[str, Any]:
+    """What the waiting hook should do: pending, answered, declined, terminal, timeout or closed."""
+    now = time.time() if now is None else now
+    with store.reader.connect() as conn:
+        r = _hook_row(conn, attention_id)
+    detail = json.loads(r["detail"])
+    if detail.get("reply"):
+        return _delivered(store, detail["reply"])
+    if r["state"] not in ACTIVE or detail.get("answer_in") != "hook":
+        return {"status": "closed"}
+    if now < float(detail.get("until") or 0):
+        return {"status": "pending", "until": detail.get("until")}
+
+    def expire(conn: Connection) -> dict[str, Any] | None:
+        fresh = _hook_row(conn, attention_id)
+        d = json.loads(fresh["detail"])
+        if d.get("reply"):  # answered just before the deadline: that answer wins
+            return dict(d["reply"])
+        if fresh["state"] in ACTIVE and d.get("answer_in") == "hook":
+            _to_terminal(conn, attention_id, d)
+        return None
+
+    reply = store.writer.call(expire)
+    return _delivered(store, reply) if reply else {"status": "timeout"}
+
+
+def _delivered(store: Store, reply: dict[str, Any]) -> dict[str, Any]:
+    """The hook has the reply: its action is acknowledged."""
+    store.writer.call(lambda c: ledger.transition(c, reply["action_id"], "acknowledged"))
+    status = {"answer": "answered", "deny": "declined", "terminal": "terminal"}[reply["decision"]]
+    out: dict[str, Any] = {"status": status}
+    if reply["decision"] == "answer":
+        out["answers"] = reply["answers"]
+    if reply["decision"] == "deny":
+        out["message"] = reply.get("message")
+    return out
+
+
+def release_hook(store: Store, attention_id: str) -> dict[str, Any]:
+    """The hook is going away without output (Esc in the terminal, it was stopped, or it gave up): an
+    unanswered question goes back to the terminal. A reply it never delivered is recorded as such, never as
+    delivered."""
+
+    def work(conn: Connection) -> dict[str, Any]:
+        r = _hook_row(conn, attention_id)
+        d = json.loads(r["detail"])
+        if r["state"] in ACTIVE and d.get("answer_in") == "hook":
+            _to_terminal(conn, attention_id, d)
+            return {"status": "closed"}
+        reply = d.get("reply")
+        if not reply or reply["decision"] == "terminal":
+            return {"status": "closed"}
+        action = ledger.get(conn, reply["action_id"])
+        if action is None or action.state == "acknowledged":
+            return {"status": "closed"}  # the hook had it before it went away
+        ledger.transition(
+            conn,
+            reply["action_id"],
+            "failed",
+            error_code="not_delivered",
+            error_message="the question hook stopped before it could pass this on",
+        )
+        conn.execute(
+            update(AttentionItem)
+            .where(AttentionItem.attention_id == attention_id)
+            .values(resolution="not delivered", updated_at=utc_now())
+        )
+        return {"status": "undelivered"}
+
+    return dict(store.writer.call(work))

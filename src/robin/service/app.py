@@ -98,6 +98,10 @@ class PruneBody(BaseModel):
     target_gb: float | None = Field(default=None, ge=0)  # default: below the cap
 
 
+class QuestionsBody(BaseModel):
+    wait_s: int = Field(ge=0, le=540)
+
+
 class WatchBody(BaseModel):
     enabled: bool
 
@@ -716,7 +720,8 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
 
     @app.post(f"{API}/hooks/{{harness}}", status_code=202)
     async def hook(harness: str, request: Request, _: str = Authed) -> dict[str, Any]:
-        """Events from the opt-in hook relay (TR-076). Robin only records them; it never answers a hook."""
+        """Events from the opt-in hook relay (TR-076). Robin only records them; it never answers a hook here.
+        Questions Robin answers come through /hooks/claude/questions."""
         from robin.hooks import ingest as hook_ingest
 
         if harness not in ("claude", "codex", "pi"):
@@ -738,6 +743,45 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
             log.exception("couldn't turn dropped hook events into coverage gaps")
         await runtime.notify()
         return result
+
+    @app.post(f"{API}/hooks/{{harness}}/questions")
+    async def hook_question(harness: str, request: Request, _: str = Authed) -> dict[str, Any]:
+        """Robin's question hook registers a question it will wait on, so it can be answered here."""
+        from robin.hooks import ingest as hook_ingest
+        from robin.runtime import attention
+
+        if harness != "claude":
+            raise ApiError(404, "not_found", f"no question hook for {harness}")
+        raw = await request.body()
+        if len(raw) > HOOK_BODY_MAX:
+            raise ApiError(413, "too_large", "hook event too large", "fix_request")
+        try:
+            body = json.loads(raw)
+        except ValueError as exc:
+            raise ApiError(422, "invalid_request", "hook event isn't JSON", "fix_request") from exc
+        if not isinstance(body, dict):
+            raise ApiError(422, "invalid_request", "hook event must be an object", "fix_request")
+        wait_s = await asyncio.to_thread(attention.question_wait_s, store)
+        try:
+            result = await asyncio.to_thread(hook_ingest.ask, store, harness, body, wait_s)
+        except hook_ingest.HookRejected as exc:
+            raise ApiError(422, "invalid_request", str(exc), "fix_request") from exc
+        await runtime.notify()
+        return result
+
+    @app.get(f"{API}/settings/questions")
+    async def questions_get(_: str = Authed) -> dict[str, Any]:
+        from robin.runtime import attention
+
+        return {"wait_s": await asyncio.to_thread(attention.question_wait_s, store)}
+
+    @app.put(f"{API}/settings/questions")
+    async def questions_put(body: QuestionsBody, _: str = Authed) -> dict[str, Any]:
+        """How long a terminal session's question waits for an answer here before its terminal asks."""
+        from robin.runtime import attention
+
+        wait_s = await asyncio.to_thread(attention.set_question_wait_s, store, body.wait_s)
+        return {"wait_s": wait_s}
 
     @app.get(f"{API}/settings/watch")
     async def watch_get(_: str = Authed) -> dict[str, Any]:
