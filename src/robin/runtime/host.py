@@ -16,6 +16,7 @@ import asyncio
 import json
 import os
 import sys
+import traceback
 import uuid
 from collections.abc import AsyncIterator, Callable, Coroutine
 from typing import Any
@@ -23,10 +24,34 @@ from typing import Any
 from robin.findings.schema import parse_message_blocks, submission_event
 from robin.supervisor.protocol import MAX_LINE
 
+REPORTED: set[str] = set()  # holds "host_error" once one is out, so main() doesn't report a failure twice
+
 
 def emit(event: dict[str, Any]) -> None:
+    if event.get("type") == "host_error":
+        REPORTED.add("host_error")
     sys.stdout.write(json.dumps(event, default=repr, ensure_ascii=False) + "\n")
     sys.stdout.flush()
+
+
+class StderrTail:
+    """Passes a runtime child's stderr through to the host's own, keeping its end for an exit reason."""
+
+    def __init__(self, stream: asyncio.StreamReader | None):
+        self.tail = b""
+        self.task = asyncio.create_task(self._relay(stream)) if stream else None
+
+    async def _relay(self, stream: asyncio.StreamReader) -> None:
+        while chunk := await stream.read(65536):
+            sys.stderr.buffer.write(chunk)
+            sys.stderr.buffer.flush()
+            self.tail = (self.tail + chunk)[-2048:]
+
+    async def exit_reason(self, what: str, returncode: int) -> str:
+        if self.task:  # a grandchild may hold the pipe open: don't wait on it for long
+            await asyncio.wait({self.task}, timeout=1)
+        lines = self.tail.decode(errors="replace").strip().splitlines()
+        return f"{what} exited ({returncode})" + (f": {lines[-1].strip()}" if lines else "")
 
 
 async def stdin_commands() -> AsyncIterator[dict[str, Any]]:
@@ -237,7 +262,14 @@ def main(argv: list[str] | None = None) -> None:
     if args.runtime not in RUNTIMES:
         emit({"type": "host_error", "reason": f"unknown runtime {args.runtime!r}"})
         raise SystemExit(2)
-    asyncio.run(RUNTIMES[args.runtime](args))
+    try:
+        asyncio.run(RUNTIMES[args.runtime](args))
+    except Exception as exc:  # whatever the runtime didn't report itself (a missing binary, say): say why
+        traceback.print_exc()
+        if "host_error" not in REPORTED:
+            reason = str(exc) if isinstance(exc, OSError) and str(exc) else repr(exc)
+            emit({"type": "host_error", "reason": reason})
+        raise SystemExit(1) from None
 
 
 def _load_adapter(name: str) -> None:
