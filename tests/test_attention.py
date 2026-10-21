@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 import pytest
 
 from robin.events.ingest import ensure_session
-from robin.runtime import attention, state
+from robin.runtime import attention, ledger, state
 
 T = datetime(2026, 10, 15, tzinfo=UTC)
 
@@ -315,11 +315,42 @@ def test_releasing_the_hook_hands_an_unanswered_question_back_and_repeats_harmle
     assert item["detail"]["answer_in"] == "terminal"
 
 
-def test_releasing_after_an_answer_keeps_the_answer(store, sid):
+def test_an_answer_the_hook_never_passed_on_is_not_recorded_as_delivered(store, sid):
     aid = waiting(store, sid)
     attention.reply_hook(store, aid, "act-hook-0009", "answer", BOTH)
-    assert attention.release_hook(store, aid) == {"status": "answered", "answers": BOTH}
+    assert attention.release_hook(store, aid) == {"status": "undelivered"}  # Esc came before the hook had it
+    assert attention.get(store, aid)["resolution"] == "not delivered"
+    with store.reader.connect() as c:
+        action = ledger.get(c, "act-hook-0009")
+    assert action is not None and (action.state, action.error_code) == ("failed", "not_delivered")
+
+
+def test_releasing_after_the_hook_took_the_answer_keeps_it_delivered(store, sid):
+    aid = waiting(store, sid)
+    attention.reply_hook(store, aid, "act-hook-0011", "answer", BOTH)
+    assert attention.hook_outcome(store, aid)["status"] == "answered"
+    assert attention.release_hook(store, aid) == {"status": "closed"}
     assert attention.get(store, aid)["resolution"] == "answered"
+    with store.reader.connect() as c:
+        action = ledger.get(c, "act-hook-0011")
+    assert action is not None and action.state == "acknowledged"
+
+
+def test_the_deadline_is_checked_when_the_answer_is_written_not_when_it_was_queued(store, sid, monkeypatch):
+    aid = waiting(store, sid)
+    until = attention.get(store, aid)["detail"]["until"]
+    clock = [until - 1]  # sent a second before the deadline...
+    monkeypatch.setattr(attention.time, "time", lambda: clock[0])
+    queued = store.writer.call
+
+    def late(work):  # ...and written after it, once the writer got to it
+        clock[0] = until + 1
+        return queued(work)
+
+    monkeypatch.setattr(store.writer, "call", late)
+    with pytest.raises(attention.AttentionError) as exc:
+        attention.reply_hook(store, aid, "act-hook-0012", "answer", BOTH)
+    assert exc.value.code == "answer_in_terminal"
 
 
 def test_a_hook_answer_must_answer_every_question(store, sid):

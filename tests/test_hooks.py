@@ -636,3 +636,33 @@ def test_stopping_the_question_hook_hands_the_question_back_to_the_terminal(serv
     after = attention.get(store, item["attention_id"])
     assert after["state"] == "open" and after["allowed_responses"] == []
     assert after["detail"]["answer_in"] == "terminal"
+
+
+def test_a_question_hook_that_loses_robin_hands_the_question_back_before_it_exits(tmp_path, monkeypatch):
+    import signal
+
+    from robin.hooks import ask
+
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "service.json").write_text(json.dumps({"url": "http://127.0.0.1:1"}))
+    (data / "cli.token").write_text("x")
+    calls = []
+
+    def call(self, method, path, body=None, timeout=0):
+        calls.append((method, path))
+        if path == "/hooks/claude/questions":
+            return {"attention_id": "att-1", "until": time.time() + 60}
+        if path.startswith("/attention/att-1/reply"):
+            raise OSError("connection refused")
+        return {"status": "closed"}
+
+    monkeypatch.setattr(ask.Robin, "call", call)
+    monkeypatch.setattr(ask.time, "sleep", lambda s: None)
+    saved = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+    try:
+        assert ask.decide(data, QUESTION) is None  # the terminal asks
+    finally:
+        for s, h in saved.items():
+            signal.signal(s, h)
+    assert calls[-1] == ("POST", "/attention/att-1/release")  # and Robin stops taking answers for it

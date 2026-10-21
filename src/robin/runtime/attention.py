@@ -494,9 +494,11 @@ def reply_hook(
 ) -> ledger.Action:
     """Answer, decline or hand back a question the hook is waiting on. Once only, and never after the hook
     gave up: the deadline is checked in the same transaction that takes the item."""
-    now = time.time() if now is None else now
 
     def work(conn: Connection) -> ledger.Action | str:
+        at = (
+            time.time() if now is None else now
+        )  # in the transaction: a queued write may land past the deadline
         r = _hook_row(conn, attention_id)
         detail = json.loads(r["detail"])
         allowed = json.loads(r["allowed_responses"])
@@ -508,7 +510,7 @@ def reply_hook(
             raise AttentionError(
                 "not_answerable", f"this {r['kind']} is {r['state']} and can't take a response"
             )
-        if now >= float(detail.get("until") or 0):
+        if at >= float(detail.get("until") or 0):
             _to_terminal(conn, attention_id, detail)
             return "expired"
         if decision == "answer":
@@ -589,14 +591,34 @@ def _delivered(store: Store, reply: dict[str, Any]) -> dict[str, Any]:
 
 
 def release_hook(store: Store, attention_id: str) -> dict[str, Any]:
-    """The hook is going away (Esc in the terminal, or it was stopped): an unanswered question goes back to
-    the terminal, so nothing is answered that the hook can no longer deliver."""
+    """The hook is going away without output (Esc in the terminal, it was stopped, or it gave up): an
+    unanswered question goes back to the terminal. A reply it never delivered is recorded as such, never as
+    delivered."""
 
-    def work(conn: Connection) -> None:
+    def work(conn: Connection) -> dict[str, Any]:
         r = _hook_row(conn, attention_id)
         d = json.loads(r["detail"])
         if r["state"] in ACTIVE and d.get("answer_in") == "hook":
             _to_terminal(conn, attention_id, d)
+            return {"status": "closed"}
+        reply = d.get("reply")
+        if not reply or reply["decision"] == "terminal":
+            return {"status": "closed"}
+        action = ledger.get(conn, reply["action_id"])
+        if action is None or action.state == "acknowledged":
+            return {"status": "closed"}  # the hook had it before it went away
+        ledger.transition(
+            conn,
+            reply["action_id"],
+            "failed",
+            error_code="not_delivered",
+            error_message="the question hook stopped before it could pass this on",
+        )
+        conn.execute(
+            update(AttentionItem)
+            .where(AttentionItem.attention_id == attention_id)
+            .values(resolution="not delivered", updated_at=utc_now())
+        )
+        return {"status": "undelivered"}
 
-    store.writer.call(work)
-    return hook_outcome(store, attention_id)
+    return dict(store.writer.call(work))

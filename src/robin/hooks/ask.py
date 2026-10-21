@@ -57,16 +57,28 @@ def decide(data_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | None:
     if not attention_id:
         return None
 
-    def release(*_: Any) -> None:  # Esc in the terminal stops the hook: hand the question back first
-        try:
-            robin.call("POST", f"/attention/{attention_id}/release", timeout=1.0)
-        except Exception:
-            pass
+    def stopped(*_: Any) -> None:  # Esc in the terminal stops the hook: hand the question back first
+        _release(robin, attention_id)
         os._exit(0)
 
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-        signal.signal(sig, release)
+        signal.signal(sig, stopped)
+    out = _wait(robin, attention_id, reg, payload)
+    if out is None:  # the terminal asks: Robin must stop taking answers nothing will deliver
+        _release(robin, attention_id)
+    return out
 
+
+def _release(robin: Robin, attention_id: str) -> None:
+    try:
+        robin.call("POST", f"/attention/{attention_id}/release", timeout=1.0)
+    except Exception:
+        pass  # Robin unreachable: its deadline hands the question to the terminal
+
+
+def _wait(
+    robin: Robin, attention_id: str, reg: dict[str, Any], payload: dict[str, Any]
+) -> dict[str, Any] | None:
     give_up = float(reg.get("until") or 0) + GRACE_S
     failures = 0
     while time.time() < give_up:
