@@ -9,12 +9,11 @@ import argparse
 import asyncio
 import json
 import os
-import sys
 from pathlib import Path
 from typing import Any
 
 from robin.adapters.pi.translate import translate
-from robin.runtime.host import Approvals, emit, runtime, stdin_commands
+from robin.runtime.host import Approvals, StderrTail, emit, runtime, stdin_commands
 from robin.supervisor.protocol import MAX_LINE
 
 EXTENSION = Path(__file__).resolve().parent / "robin_extension.ts"
@@ -33,10 +32,11 @@ async def run_pi(args: argparse.Namespace) -> None:
         cwd=args.cwd,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
-        stderr=sys.stderr,
+        stderr=asyncio.subprocess.PIPE,
         limit=MAX_LINE,
     )
-    state: dict[str, Any] = {"busy": False, "next": 0}
+    stderr = StderrTail(proc.stderr)
+    state: dict[str, Any] = {"busy": False, "next": 0, "closed": None}
     waiting: dict[str, asyncio.Future[dict[str, Any]]] = {}
 
     async def write(msg: dict[str, Any]) -> None:
@@ -45,12 +45,20 @@ async def run_pi(args: argparse.Namespace) -> None:
         await proc.stdin.drain()
 
     async def call(msg: dict[str, Any]) -> dict[str, Any]:
+        if state["closed"]:
+            raise ConnectionError(state["closed"])
         state["next"] += 1
         rid = f"robin-{state['next']}"
         fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
         waiting[rid] = fut
-        await write({**msg, "id": rid})
-        return await asyncio.wait_for(fut, 60)
+        try:
+            await write({**msg, "id": rid})
+        except ConnectionError:  # pi is gone; the pump fails the call with the reason
+            pass
+        try:
+            return await asyncio.wait_for(fut, 60)
+        except TimeoutError:
+            raise TimeoutError(f"pi didn't answer {msg.get('type')} within 60s") from None
 
     async def ui(msg: dict[str, Any]) -> None:
         if msg.get("method") == "confirm" and msg.get("title") == "robin:approval":
@@ -82,7 +90,12 @@ async def run_pi(args: argparse.Namespace) -> None:
                         state["busy"] = False
                         approvals.expire_all("turn ended")
                     emit(event)
-        emit({"type": "host_error", "reason": f"pi exited ({await proc.wait()})"})
+        state["closed"] = reason = await stderr.exit_reason("pi", await proc.wait())
+        for fut in waiting.values():  # calls still waiting fail now, rather than at their timeout
+            if not fut.done():
+                fut.set_exception(ConnectionError(reason))
+        waiting.clear()
+        emit({"type": "host_error", "reason": reason})
 
     pump_task = asyncio.create_task(pump())
     st = await call({"type": "get_state"})

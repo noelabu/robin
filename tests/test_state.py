@@ -56,6 +56,22 @@ def test_host_exit_stops_and_disconnects(store):
     assert (r["runtime_state"], r["connection_state"]) == ("stopped", "disconnected")
 
 
+def test_host_error_before_start_is_failed_not_stopped(store):
+    sid = ensure_session(store, runtime="fake", mode="managed")
+    feed(store, sid, "host_spawned", "host_error", "host_exited")
+    r = row(store, sid)
+    assert (r["runtime_state"], r["connection_state"]) == ("failed", "disconnected")
+
+
+def test_host_error_mid_turn_ends_the_run_failed(store):
+    sid = ensure_session(store, runtime="fake", mode="managed")
+    feed(store, sid, "host_spawned", "session_started", "turn_started", "host_error", "session_stopping")
+    feed(store, sid, "host_exited")
+    assert row(store, sid)["runtime_state"] == "failed"
+    with store.reader.connect() as c:
+        assert c.execute(select(Run.outcome)).scalar_one() == "failed"
+
+
 def test_native_session_id_captured_once_and_never_stolen(store):
     a = ensure_session(store, runtime="fake", mode="managed")
     b = ensure_session(store, runtime="fake", mode="managed")

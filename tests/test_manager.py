@@ -224,6 +224,67 @@ async def test_launch_fails_when_host_exits_before_session_starts(supervised):
     await asyncio.wait_for(task, 5)
 
 
+@pytest.mark.parametrize("runtime", ["codex", "pi"])
+@pytest.mark.parametrize("binary", ["dies", "missing"])
+async def test_launch_whose_runtime_binary_fails_shows_as_failed(supervised, tmp_path, runtime, binary):
+    """A runtime that dies at once (node missing behind the codex shim) or isn't installed fails the launch
+    promptly, with the session failed and a failure item saying why, instead of a silent 60s hang."""
+    import os
+
+    from robin.runtime import attention
+
+    store = supervised
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    if binary == "dies":
+        shim = bin_dir / runtime
+        shim.write_text("#!/bin/sh\necho 'env: node: No such file or directory' >&2\nexit 127\n")
+        shim.chmod(0o755)
+        path = f"{bin_dir}:{os.environ['PATH']}"
+    else:
+        path = str(bin_dir)  # nothing else on PATH, so an installed runtime can't be found either
+    sid = ensure_session(store, runtime=runtime, mode="managed")
+    manager, client, task = await connect(store)
+    await manager.launch(sid, runtime=runtime, cwd=str(tmp_path), action_id="l1", env={"PATH": path})
+
+    def failure():
+        items = [i for i in attention.list_items(store, session_id=sid) if i["kind"] == "failure"]
+        return items[0] if items else None
+
+    await wait_for(
+        lambda: session_row(store, sid)["connection_state"] == "disconnected" and failure() is not None
+    )
+    assert (await manager.get_action("l1")).state == "failed"
+    assert session_row(store, sid)["runtime_state"] == "failed"
+    item = failure()
+    assert item is not None and item["state"] == "open"
+    reason = str(item["detail"]["reason"])
+    if binary == "dies":
+        assert "(127)" in reason and "env: node: No such file or directory" in reason, reason
+    else:
+        assert f"'{runtime}'" in reason, reason
+    await client.close()
+    await asyncio.wait_for(task, 5)
+
+
+async def test_launch_whose_host_dies_silently_shows_as_failed(supervised):
+    """Even with no host_error from the host, a launch that never started marks the session failed."""
+    from robin.runtime import attention
+
+    store = supervised
+    sid = ensure_session(store, runtime="fake", mode="managed")
+    manager, client, task = await connect(store)
+    await manager.launch(  # Python itself can't start, so the host never says a word
+        sid, runtime="fake", cwd=str(store.data_dir), action_id="l1", env={"PYTHONHOME": "/nonexistent"}
+    )
+    await wait_for(lambda: session_row(store, sid)["connection_state"] == "disconnected")
+    await wait_for(lambda: session_row(store, sid)["runtime_state"] == "failed")
+    items = [i for i in attention.list_items(store, session_id=sid) if i["kind"] == "failure"]
+    assert len(items) == 1 and "exited with code" in str(items[0]["detail"]["reason"])
+    await client.close()
+    await asyncio.wait_for(task, 5)
+
+
 def test_adapters_register_into_the_host_main_reads(tmp_path):
     """Regression: hosts launched with -m must see adapter registrations (the double-import bug)."""
     import json

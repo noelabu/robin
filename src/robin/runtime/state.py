@@ -5,7 +5,7 @@ a turn start sets running; waiting_for_input only when the runtime says the requ
 end sets idle without marking any task done. Projections are rebuildable from the event table (TR-004).
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
@@ -45,6 +45,8 @@ def reduce(event: dict[str, Any]) -> StateChange | None:
             return StateChange(runtime_state="waiting_for_input")
         case "approval_answered" | "approval_expired":
             return StateChange(runtime_state="running")
+        case "host_error":
+            return StateChange(runtime_state="failed", run="end", run_outcome="failed")
         case "session_stopping":
             return StateChange(runtime_state="stopped")
         case "host_exited":
@@ -75,6 +77,8 @@ def apply(conn: Connection, session_id: str, cursor: int, at: datetime, event: d
         "waiting_for_input",
     ):
         change = StateChange()  # a request outside a turn adds attention, not a blocking state
+    if change.runtime_state == "stopped" and row.runtime_state == "failed":
+        change = replace(change, runtime_state=None)  # the host going away after a failure keeps it failed
     values: dict[str, Any] = {"state_cursor": cursor, "state_evidence_at": at, "updated_at": at}
     if change.runtime_state:
         values["runtime_state"] = change.runtime_state
