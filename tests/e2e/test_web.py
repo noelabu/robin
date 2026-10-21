@@ -415,3 +415,22 @@ def test_the_map_shows_sessions_and_opens_one_in_sessions(running):
         expect(page.get_by_role("tab", name="Sessions")).to_have_attribute("aria-selected", "true")
         expect(page.locator(".detail")).to_be_visible()
         browser.close()
+
+
+def test_follows_the_system_appearance_unless_a_theme_is_chosen(running):
+    from playwright.sync_api import expect, sync_playwright
+
+    _, port, _ = running
+    with sync_playwright() as p:
+        browser = launch_browser(p)
+        page = browser.new_context(color_scheme="light").new_page()
+        page.goto(f"http://127.0.0.1:{port}/")
+        expect(page.locator("html")).to_have_attribute("data-theme", "light")
+        expect(page.locator("body")).to_have_css("background-color", "rgb(246, 243, 252)")
+
+        chosen = browser.new_context(color_scheme="light").new_page()
+        chosen.add_init_script("try { localStorage.setItem('robin.theme', 'dark') } catch (e) {}")
+        chosen.goto(f"http://127.0.0.1:{port}/")
+        expect(chosen.locator("html")).to_have_attribute("data-theme", "dark")
+        expect(chosen.locator("body")).to_have_css("background-color", "rgb(7, 5, 12)")
+        browser.close()

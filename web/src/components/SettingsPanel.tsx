@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, type NotificationKind, type NotificationSettings, type PrunePlan, type StorageUsage } from "../api";
+import type { ThemeChoice } from "../theme";
 
 const NOTIFY: [NotificationKind, string][] = [
   ["input", "A session needs your input"],
@@ -7,10 +8,21 @@ const NOTIFY: [NotificationKind, string][] = [
   ["finished", "A run finishes"],
 ];
 
+const THEMES: [ThemeChoice, string][] = [
+  ["system", "System"],
+  ["light", "Light"],
+  ["dark", "Dark"],
+];
+
 const gb = (n: number) => `${(n / 1024 ** 3).toFixed(2)} GB`;
 
-/** Storage use against the cap, a cleanup preview before anything is pruned, and history watching. */
-export function SettingsPanel(props: { onClose: () => void; onChanged: () => void }) {
+/** Appearance, storage use against the cap, a cleanup preview before anything is pruned, and history watching. */
+export function SettingsPanel(props: {
+  theme: ThemeChoice;
+  onTheme: (t: ThemeChoice) => void;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
   const [usage, setUsage] = useState<StorageUsage | null>(null);
   const [plan, setPlan] = useState<PrunePlan | null>(null);
   const [watching, setWatching] = useState<boolean | null>(null);
@@ -40,6 +52,22 @@ export function SettingsPanel(props: { onClose: () => void; onChanged: () => voi
       <h2 id="settings-title" tabIndex={-1} ref={(h) => h?.focus()}>
         Settings
       </h2>
+      <h3>Appearance</h3>
+      <fieldset className="notify theme">
+        <legend className="sr-only">Appearance</legend>
+        {THEMES.map(([value, label]) => (
+          <label key={value} className="inline check">
+            <input
+              type="radio"
+              name="theme"
+              value={value}
+              checked={props.theme === value}
+              onChange={() => props.onTheme(value)}
+            />{" "}
+            {label}
+          </label>
+        ))}
+      </fieldset>
       <h3>Storage</h3>
       {usage && (
         <>

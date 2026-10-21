@@ -18,6 +18,7 @@ pytestmark = pytest.mark.skipif(
 ROOT = Path(__file__).resolve().parents[2]
 NEEDED = [
     "robin/web/dist/index.html",
+    "robin/web/dist/theme.js",
     "robin/redact/gitleaks/gitleaks.toml",
     "robin/redact/gitleaks/LICENSE",
     "robin/adapters/pi/robin_extension.ts",

@@ -14,6 +14,7 @@ import { TaskDetail } from "./components/TaskDetail";
 import { MapView } from "./map/MapView";
 import { sessionState, useTick } from "./map/useMap";
 import { inRecency, type Recency, useRecency } from "./recency";
+import { useTheme } from "./theme";
 import { inScope, type Scope } from "./scope";
 import { useWorkspace } from "./useWorkspace";
 
@@ -90,6 +91,7 @@ export function App() {
   const [runtimeFilter, setRuntimeFilter] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [recency, setRecency] = useRecency();
+  const [theme, setTheme] = useTheme();
   const now = useTick(30_000);
   const [notice, setNotice] = useState<string | null>(null);
   const ws = useWorkspace(auth === "ok");
@@ -305,6 +307,8 @@ export function App() {
         )}
         {panel === "settings" && (
           <SettingsPanel
+            theme={theme}
+            onTheme={setTheme}
             onClose={closePanel}
             onChanged={() => void api.storage().then(setStorage).catch(() => undefined)}
           />
