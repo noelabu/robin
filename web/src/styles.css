@@ -1,5 +1,5 @@
 :root {
-  /* One always-dark violet palette for the whole app (Map and Sessions); each folder adds its own hue. */
+  /* One violet palette for the whole app (Map and Sessions), dark here and light below; each folder adds its own hue. */
   --m-bg: #07050c;
   --m-canvas: #090611;
   --m-dot: rgba(180, 140, 255, 0.06);
@@ -23,6 +23,34 @@
   --m-wait: #5fb4ff;
   --m-bad: #ff6b81;
   --m-focus: #3fe6d2;
+  --m-warn-bg: #2a1d12;
+  --m-warn-line: #4a3218;
+  --m-warn-ink: #f0cf9b;
+  --m-need-ink: #ffd9a0;
+  --m-ok-bg: #142219;
+  --m-ok-line: #24432c;
+  --m-ok-ink: #c4e8cc;
+  --m-done-bg: #16301f;
+  --m-done-ink: #9fe0b1;
+  --m-live-bg: #1b1330;
+  --m-live-line: #4a3478;
+  --m-live-ink: #e4d8ff;
+  --m-live-pill: #24183d;
+  --m-pend-bg: #18122a;
+  --m-wire: #5a4884;
+  --m-track: #221a36;
+  --m-track-dash: #3a2d55;
+  --m-box: #6c5e92;
+  --m-panel-top: #100b1b;
+  --m-top-a: #0c0816;
+  --m-sheen-1: #ffffff05;
+  --m-sheen-2: #ffffff08;
+  --m-sh-1: #0006;
+  --m-sh-2: #0008;
+  --m-sh-3: #0009;
+  --m-sh-4: #000a;
+  --m-workflow: #7aa7ff;
+  --m-rt-codex: #d6d4cd;
   /* Folder hues, as in a system map: one per repository. */
   --h-violet: #b48cff;
   --h-cyan: #3fe6d2;
@@ -54,6 +82,70 @@
   --disp: "Chakra Petch", ui-sans-serif, system-ui, sans-serif;
   color-scheme: dark;
   font: 13px/1.5 var(--mono);
+}
+
+:root[data-theme="light"] {
+  --m-bg: #f6f3fc;
+  --m-canvas: #f1edf9;
+  --m-dot: rgba(90, 60, 160, 0.08);
+  --m-panel: #fbf9ff;
+  --m-card: #ffffff;
+  --m-card-sub: #f8f6fd;
+  --m-line: #e3dcf2;
+  --m-line-hi: #cfc4e6;
+  --m-hover: #f0ebfa;
+  --m-select: #e9e2f8;
+  --m-ink: #1d1631;
+  --m-ink-2: #3a3057;
+  --m-muted: #5a4f78;
+  --m-faint: #665c84;
+  --m-field: #8a7cae;
+  --m-accent: #6a3dd1;
+  --m-accent-ink: #ffffff;
+  --m-cta: #f5a23c;
+  --m-amber: #935300;
+  --m-ok: #136a41;
+  --m-wait: #1c63b5;
+  --m-bad: #c0243e;
+  --m-focus: #0b8276;
+  --m-warn-bg: #fdf1e0;
+  --m-warn-line: #e2bf8c;
+  --m-warn-ink: #7a4500;
+  --m-need-ink: #7a4500;
+  --m-ok-bg: #e5f4ea;
+  --m-ok-line: #a9d8bb;
+  --m-ok-ink: #145c39;
+  --m-done-bg: #e5f4ea;
+  --m-done-ink: #145c39;
+  --m-live-bg: #efe8fd;
+  --m-live-line: #c6b3f2;
+  --m-live-ink: #4b2a9e;
+  --m-live-pill: #efe8fd;
+  --m-pend-bg: #efeaf9;
+  --m-wire: #a597c9;
+  --m-track: #e6e0f3;
+  --m-track-dash: #cbbfe3;
+  --m-box: #8a7cae;
+  --m-panel-top: #fdfcff;
+  --m-top-a: #fbf9ff;
+  --m-sheen-1: #2a1a5508;
+  --m-sheen-2: #6a3dd10d;
+  --m-sh-1: #2a1a5514;
+  --m-sh-2: #2a1a551a;
+  --m-sh-3: #2a1a551a;
+  --m-sh-4: #2a1a5524;
+  --m-workflow: #4a7bd9;
+  --m-rt-codex: #6a6478;
+  --h-violet: #6a3dd1;
+  --h-cyan: #0a7369;
+  --h-green: #136a41;
+  --h-blue: #1c63b5;
+  --h-amber: #935300;
+  --h-pink: #b0246f;
+  --h-lime: #4a6e00;
+  --h-peach: #ad4119;
+  --h-yellow: #756300;
+  color-scheme: light;
 }
 
 
@@ -92,8 +184,8 @@ code { font-family: var(--mono); }
 .brand { margin: 0 8px 0 0; white-space: nowrap; }
 .topbar .spacer { flex: 1; }
 .pill { font-size: 12px; padding: 4px 10px; border-radius: 7px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
-.pill.ok { color: #c4e8cc; background: #142219; border-color: #24432c; }
-.pill.warn { color: #f0cf9b; background: #2a1d12; border-color: #4a3218; }
+.pill.ok { color: var(--m-ok-ink); background: var(--m-ok-bg); border-color: var(--m-ok-line); }
+.pill.warn { color: var(--m-warn-ink); background: var(--m-warn-bg); border-color: var(--m-warn-line); }
 
 .sidebar { border-right: 1px solid var(--line); overflow: auto; padding: 10px 10px 8px; background: var(--bg); }
 .session-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
@@ -172,7 +264,7 @@ h2 { font-size: 15px; margin: 0 0 8px; display: flex; gap: 8px; align-items: bas
 .attention { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; }
 .attention .count { font-size: 12px; color: var(--muted); font-weight: 400; }
 .attention-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-.attention-item { border: 1px solid #4a3218; background: var(--card); border-radius: 9px; padding: 10px 12px; }
+.attention-item { border: 1px solid var(--m-warn-line); background: var(--card); border-radius: 9px; padding: 10px 12px; }
 .attention-item.kind-failure { border-left-color: var(--bad); }
 .attention-head { display: flex; gap: 8px; align-items: baseline; }
 .attention-head .kind { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
@@ -200,7 +292,8 @@ button.link { border: 0; background: none; padding: 2px 0; color: var(--accent);
 .filters { display: flex; gap: 10px; flex-wrap: wrap; padding: 8px 0; border-top: 1px solid var(--line); }
 label.inline { display: inline-flex; gap: 6px; align-items: center; margin: 0; font-size: 12px; }
 label.inline select { width: auto; padding: 2px 4px; }
-label.inline input[type="checkbox"] { width: auto; }
+label.inline input[type="checkbox"], label.inline input[type="radio"] { width: auto; }
+.theme label.inline { margin-right: 18px; }
 .feed-head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
 .feed-head h2 { margin-right: auto; }
 .hint.warn { color: var(--warn); }
@@ -319,8 +412,8 @@ button.primary {
 }
 button.primary:hover:not(:disabled) { background: var(--m-cta); filter: brightness(1.12); }
 .recency button { font-family: var(--disp); letter-spacing: .12em; text-transform: uppercase; font-size: 11px; }
-.recency button[aria-pressed="true"] { color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); text-shadow: 0 0 10px #b48cff66; }
-.detail, .feed, .launch, .attention { background: linear-gradient(180deg, #100b1b, var(--panel)); }
+.recency button[aria-pressed="true"] { color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); text-shadow: 0 0 10px color-mix(in srgb, var(--m-accent) 40%, transparent); }
+.detail, .feed, .launch, .attention { background: linear-gradient(180deg, var(--m-panel-top), var(--panel)); }
 body::after {
   content: ""; position: fixed; inset: 0; z-index: 40; pointer-events: none; opacity: .35;
   background: repeating-linear-gradient(0deg, #00000029 0, #00000029 1px, transparent 2px, transparent 3px);
@@ -403,8 +496,8 @@ body::after {
 /* Absolutely positioned screen-reader text must stay inside its scroll box, or it stretches the page. */
 .main, .sidebar, .chat-scroll, .session-scroll { position: relative; }
 .msg.live { grid-template-columns: 18px 1fr; align-items: start; margin-top: 2px; }
-.msg.live .spin { color: var(--m-cta); font: 600 14px/1.5 var(--mono); text-shadow: 0 0 10px color-mix(in srgb, var(--m-cta) 60%, transparent); }
-.msg.live .what { color: var(--m-cta); font-weight: 600; }
+.msg.live .spin { color: var(--m-amber); font: 600 14px/1.5 var(--mono); text-shadow: 0 0 10px color-mix(in srgb, var(--m-cta) 60%, transparent); }
+.msg.live .what { color: var(--m-amber); font-weight: 600; }
 .msg.live .elapsed { color: var(--muted); }
 .msg.live .step {
   display: block; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -414,3 +507,8 @@ body::after {
 label.question-choice { display: flex; gap: 6px; align-items: baseline; margin: 4px 0; font-size: 12px; color: var(--ink); }
 .question-choice input[type="radio"], .question-choice input[type="checkbox"] { width: auto; flex: none; margin: 0; padding: 0; }
 .question-choice input[type="text"] { flex: 1; min-width: 0; padding: 2px 6px; font-size: 12px; }
+
+/* -- light: no neon glows or scanlines -------------------------------------------------------------- */
+:root[data-theme="light"] .recency button[aria-pressed="true"] { text-shadow: none; }
+:root[data-theme="light"] .msg.live .spin { text-shadow: none; }
+:root[data-theme="light"] body::after { display: none; }

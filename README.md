@@ -122,7 +122,7 @@ Tools, todos, file edits, skills, workflows and shells are read for Claude Code;
 
 ### Sessions
 
-The **Sessions** tab lists sessions grouped by folder, each with its title, state and age. A session shows its card and its subagents' cards (click one for its tasks), the controls Robin has for it, and its conversation as a terminal-style chat: each prompt, one dim line folding the work in between, and the reply the turn ended with, with a live line while it runs. The raw, redacted events are a tab away. Enter sends a message; Shift+Enter starts a new line. Robin is always dark (violet), in both tabs.
+The **Sessions** tab lists sessions grouped by folder, each with its title, state and age. A session shows its card and its subagents' cards (click one for its tasks), the controls Robin has for it, and its conversation as a terminal-style chat: each prompt, one dim line folding the work in between, and the reply the turn ended with, with a live line while it runs. The raw, redacted events are a tab away. Enter sends a message; Shift+Enter starts a new line. Robin follows your system's light or dark appearance; choose System, Light or Dark in Settings.
 
 A session started outside Robin can be continued from here: the first message you send takes it over, and Robin resumes it with that message. It's refused, changing nothing, while a terminal may still hold the session (its id on a command line, or a transcript written in the last two minutes).
 

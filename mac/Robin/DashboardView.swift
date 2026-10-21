@@ -26,7 +26,7 @@ struct DashboardView: View {
             }
         }
         .frame(minWidth: 720, minHeight: 480)
-        .background(Color(red: 0.035, green: 0.024, blue: 0.067))
+        .background(Self.backdrop)
         .onAppear {
             NSApp.setActivationPolicy(.regular)
             // An LSUIElement app turned regular can get the generic dock tile; hand it the bundle icon.
@@ -46,6 +46,14 @@ struct DashboardView: View {
             Task { await page.signIn(force: true) }
         }
     }
+
+    // Behind the page while the service starts: the dashboard's background in the system's appearance.
+    private static let backdrop = Color(
+        nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ? NSColor(srgbRed: 0.035, green: 0.024, blue: 0.067, alpha: 1)
+                : NSColor(srgbRed: 0.965, green: 0.953, blue: 0.988, alpha: 1)
+        })
 
     private var waitingTitle: String {
         switch controller.state {

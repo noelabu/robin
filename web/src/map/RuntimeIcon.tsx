@@ -12,7 +12,7 @@ export function RuntimeIcon({ runtime }: { runtime: string }) {
     );
   if (runtime === "codex")
     return (
-      <svg className="map-rt" viewBox="0 0 24 24" fill="none" stroke="#d6d4cd" strokeWidth="1.8" aria-hidden="true">
+      <svg className="map-rt" viewBox="0 0 24 24" fill="none" style={{ stroke: "var(--m-rt-codex)" }} strokeWidth="1.8" aria-hidden="true">
         <circle cx="12" cy="12" r="8.5" />
         <path d="M8.5 10l2.5 2-2.5 2M13 14.5h3" strokeLinecap="round" />
       </svg>
