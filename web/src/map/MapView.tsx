@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { api, type MapCard, type MapCluster, type Session } from "../api";
+import { api, type MapCard, type Session } from "../api";
 import { useApprovals } from "../components/Approval";
 import { RecencySwitch, WIDER } from "../components/RecencySwitch";
-import { inRecency, type Recency } from "../recency";
+import type { Recency } from "../recency";
 import type { FeedItem } from "../useWorkspace";
 import { Canvas, type CanvasHandle } from "./Canvas";
 import { Card } from "./Card";
@@ -11,7 +11,7 @@ import { assignHues, hue } from "./hue";
 import { RuntimeIcon } from "./RuntimeIcon";
 import { TaskPanel } from "./TaskPanel";
 import { ago } from "./time";
-import { liveState, useMap, useTick } from "./useMap";
+import { liveState, narrow, useMap, useTick } from "./useMap";
 
 const SIDEBAR_SESSIONS = 5;
 
@@ -50,31 +50,10 @@ export function MapView(props: {
   const state = (c: MapCard) => liveState(c, ws.sessions[c.session_id], now);
   const filterNow = useTick(30_000); // recency moves slowly; re-filtering every second would re-lay the canvas
   const allCards = useMemo(() => data?.cards ?? [], [data]);
-  const { counts, mains, cards, clusters } = useMemo(() => {
-    const allMains = allCards.filter((c) => !c.parent);
-    // A session whose workflow, shell or subagent still runs counts as working, even between its own turns.
-    const busy = new Set(
-      allCards.filter((c) => c.parent && liveState(c, undefined, filterNow).state === "running").map((c) => c.session_id),
-    );
-    const recent = (c: MapCard, r: Recency) =>
-      c.id === selected ||
-      busy.has(c.session_id) ||
-      inRecency(liveState(c, ws.sessions[c.session_id], filterNow).state, c.last_activity_at, filterNow, r);
-    const counts = {
-      active: allMains.filter((c) => recent(c, "active")).length,
-      today: allMains.filter((c) => recent(c, "today")).length,
-      all: (data?.clusters ?? []).reduce((n, c) => n + c.sessions, 0),
-    };
-    if (recency === "all") return { counts, mains: allMains, cards: allCards, clusters: data?.clusters ?? [] };
-    // Whatever a session started shows with it; a narrowed view has no "+N more", which would page in older sessions.
-    const mains = allMains.filter((c) => recent(c, recency));
-    const kept = new Set(mains.map((c) => c.session_id));
-    const clusters: MapCluster[] = (data?.clusters ?? []).flatMap((cl) => {
-      const n = mains.filter((c) => c.cluster === cl.key).length;
-      return n ? [{ ...cl, sessions: n, shown: n }] : [];
-    });
-    return { counts, mains, cards: allCards.filter((c) => kept.has(c.session_id)), clusters };
-  }, [data, allCards, recency, filterNow, ws.sessions, selected]);
+  const { counts, mains, cards, clusters } = useMemo(
+    () => narrow(data, recency, ws.sessions, filterNow, selected),
+    [data, recency, filterNow, ws.sessions, selected],
+  );
   const lay = useMemo(
     () => layout(map.order, clusters, cards, selected && panelH ? { [selected]: panelH } : {}),
     [map.order, clusters, cards, selected, panelH],

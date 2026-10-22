@@ -40,12 +40,15 @@ export function SessionDetail({
   liveCursor,
   events,
   onOpenSession,
+  compact,
 }: {
   session: Session;
   onChanged?: () => void;
   liveCursor?: number;
   events?: ReactNode;
   onOpenSession?: (id: string) => void;
+  /** Phone: one row of tags, the chat fills the screen, the rest folds under Details. */
+  compact?: boolean;
 }) {
   const [text, setText] = useState("");
   const [status, setStatus] = useState<string | null>(null);
@@ -102,47 +105,124 @@ export function SessionDetail({
     .map((k) => c[k].reason);
 
   const sendLabel = session.runtime_state === "running" ? (session.capabilities.steer_mid_turn ? "Steer" : "Queue follow-up") : "Send";
+  const where = (
+    <>
+      <p className="where">
+        <span>
+          {session.runtime} · {session.mode === "managed" ? "launched by Robin" : "started outside Robin"}
+        </span>
+        <span title={session.execution_cwd ?? undefined}>{session.execution_cwd ?? "no folder"}</span>
+        {session.branch && (
+          <span>
+            ⎇ <code>{session.branch}</code>
+          </span>
+        )}
+        {session.skip_permissions && <span className="warn-text">skip permissions</span>}
+        {session.continued_from && (
+          <button type="button" className="link" onClick={() => onOpenSession?.(session.continued_from!.session_id)}>
+            ← continued from {session.continued_from.runtime}
+          </button>
+        )}
+        {session.continued_in.map((l) => (
+          <button key={l.session_id} type="button" className="link" onClick={() => onOpenSession?.(l.session_id)}>
+            continued in {l.runtime} →
+          </button>
+        ))}
+        {session.last_activity_at && <span>last activity {since(session.last_activity_at, Date.now())} ago</span>}
+        {session.mode === "observed" && c.takeover?.enabled && (
+          <button type="button" className="link" onClick={() => void archive()}>
+            {session.archived ? "Restore" : "Archive"}
+          </button>
+        )}
+      </p>
+      <ContinueDialog session={session} onOpenSession={onOpenSession} />
+    </>
+  );
+  const terminal = session.mode === "managed" && (
+    <div className="terminal">
+      {handedOff ? (
+        <>
+          <p className="hint">
+            {resume ? (
+              <>
+                Continue in a terminal with <code>{resume}</code>.
+              </>
+            ) : (
+              "This session's native id can't be used in a command."
+            )}{" "}
+            Close it before taking control back.
+          </p>
+          <div className="actions">
+            <button type="button" onClick={() => void openTerminal()}>
+              Open in Terminal
+            </button>
+            <button
+              type="button"
+              disabled={!c.reclaim.enabled}
+              title={c.reclaim.reason ?? undefined}
+              onClick={() => void act({ type: "reclaim" }, "Take back control")}
+            >
+              Take back control
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="actions">
+          <button
+            type="button"
+            disabled={!c.handoff.enabled}
+            title={c.handoff.reason ?? "Robin stops its process; you continue the session in a terminal"}
+            onClick={() => void handOff()}
+          >
+            Hand off to terminal
+          </button>
+        </div>
+      )}
+    </div>
+  );
+  const work = session.mode === "managed" && (
+    <>
+      <WorktreePanel sessionId={session.session_id} connected={session.connection_state === "connected"} updatedAt={session.updated_at} />
+      <Runs sessionId={session.session_id} updatedAt={session.updated_at} />
+    </>
+  );
+  const hint = (label: string) => (compact ? "" : `   ↵ ${label.toLowerCase()} · ⇧↵ new line`);
+  const send = compact && (
+    <button type="submit" className="send" aria-label={sendLabel} disabled={!text.trim() || sending}>
+      ↑
+    </button>
+  );
 
   return (
     <section className="detail" aria-labelledby="detail-title">
       <div className="detail-head">
-        <h2 id="detail-title" tabIndex={-1}>
+        <h2 id="detail-title" tabIndex={-1} className={compact ? "sr-only" : undefined}>
           <RuntimeIcon runtime={session.runtime} />
           <span className="detail-title">{session.title || `${session.runtime} · ${session.session_id.slice(0, 8)}`}</span>
           <StateBadge session={session} />
         </h2>
-        <p className="where">
-          <span>
-            {session.runtime} · {session.mode === "managed" ? "launched by Robin" : "started outside Robin"}
-          </span>
-          <span title={session.execution_cwd ?? undefined}>{session.execution_cwd ?? "no folder"}</span>
-          {session.branch && (
-            <span>
-              ⎇ <code>{session.branch}</code>
+        {compact ? (
+          <p className="tags">
+            <StateBadge session={session} />
+            <span className="tag">{session.runtime}</span>
+            <span className="tag" title={session.execution_cwd ?? undefined}>
+              {session.execution_cwd?.split("/").filter(Boolean).at(-1) ?? "no folder"}
+              {session.branch && ` · ${session.branch}`}
             </span>
-          )}
-          {session.skip_permissions && <span className="warn-text">skip permissions</span>}
-          {session.continued_from && (
-            <button type="button" className="link" onClick={() => onOpenSession?.(session.continued_from!.session_id)}>
-              ← continued from {session.continued_from.runtime}
-            </button>
-          )}
-          {session.continued_in.map((l) => (
-            <button key={l.session_id} type="button" className="link" onClick={() => onOpenSession?.(l.session_id)}>
-              continued in {l.runtime} →
-            </button>
-          ))}
-          {session.last_activity_at && <span>last activity {since(session.last_activity_at, Date.now())} ago</span>}
-          {session.mode === "observed" && c.takeover?.enabled && (
-            <button type="button" className="link" onClick={() => void archive()}>
-              {session.archived ? "Restore" : "Archive"}
-            </button>
-          )}
-        </p>
-        <ContinueDialog session={session} onOpenSession={onOpenSession} />
+          </p>
+        ) : (
+          where
+        )}
       </div>
       <details className="facts-box">
         <summary>Details</summary>
+        {compact && (
+          <div className="detail-more">
+            {where}
+            {terminal}
+            {work}
+          </div>
+        )}
         <dl className="facts">
           <dt>Folder</dt>
           <dd>{session.execution_cwd ?? "—"}</dd>
@@ -194,7 +274,7 @@ export function SessionDetail({
         </p>
       )}
 
-      <SessionFlow session={session} onChanged={onChanged} />
+      {!compact && <SessionFlow session={session} onChanged={onChanged} />}
 
       <Conversation
         sessionId={session.session_id}
@@ -202,6 +282,7 @@ export function SessionDetail({
         liveCursor={liveCursor}
         running={sessionState(session, Date.now()).state === "running"}
         events={events}
+        compact={compact}
       />
 
       {session.mode === "observed" && c.takeover?.enabled && (
@@ -223,11 +304,12 @@ export function SessionDetail({
               id="compose"
               value={text}
               onChange={(e) => setText(e.target.value)}
-              rows={2}
+              rows={compact ? 1 : 2}
               readOnly={sending}
-              placeholder="Message this session…   ↵ send · ⇧↵ new line"
-              onKeyDown={enterSends}
+              placeholder={`Message this session…${hint("send")}`}
+              onKeyDown={compact ? undefined : enterSends}
             />
+            {send}
           </div>
           <p className="status" role="status" aria-live="polite">
             {status}
@@ -256,48 +338,7 @@ export function SessionDetail({
         </div>
       )}
 
-      {session.mode === "managed" && (
-        <div className="terminal">
-          {handedOff ? (
-            <>
-              <p className="hint">
-                {resume ? (
-                  <>
-                    Continue in a terminal with <code>{resume}</code>.
-                  </>
-                ) : (
-                  "This session's native id can't be used in a command."
-                )}{" "}
-                Close it before taking control back.
-              </p>
-              <div className="actions">
-                <button type="button" onClick={() => void openTerminal()}>
-                  Open in Terminal
-                </button>
-                <button
-                  type="button"
-                  disabled={!c.reclaim.enabled}
-                  title={c.reclaim.reason ?? undefined}
-                  onClick={() => void act({ type: "reclaim" }, "Take back control")}
-                >
-                  Take back control
-                </button>
-              </div>
-            </>
-          ) : (
-            <div className="actions">
-              <button
-                type="button"
-                disabled={!c.handoff.enabled}
-                title={c.handoff.reason ?? "Robin stops its process; you continue the session in a terminal"}
-                onClick={() => void handOff()}
-              >
-                Hand off to terminal
-              </button>
-            </div>
-          )}
-        </div>
-      )}
+      {!compact && terminal}
 
       {session.mode === "managed" && (
         <form
@@ -316,10 +357,11 @@ export function SessionDetail({
                   id="compose"
                   value={text}
                   onChange={(e) => setText(e.target.value)}
-                  rows={2}
-                  placeholder={`Message this session…${sendLabel === "Queue follow-up" ? " (a turn is running: this is queued)" : ""}   ↵ ${sendLabel.toLowerCase()} · ⇧↵ new line`}
-                  onKeyDown={enterSends}
+                  rows={compact ? 1 : 2}
+                  placeholder={`Message this session…${sendLabel === "Queue follow-up" ? " (a turn is running: this is queued)" : ""}${hint(sendLabel)}`}
+                  onKeyDown={compact ? undefined : enterSends}
                 />
+                {send}
               </div>
             </>
           )}
@@ -359,14 +401,7 @@ export function SessionDetail({
           </p>
         </form>
       )}
-      {session.mode === "managed" && (
-        <WorktreePanel
-          sessionId={session.session_id}
-          connected={session.connection_state === "connected"}
-          updatedAt={session.updated_at}
-        />
-      )}
-      {session.mode === "managed" && <Runs sessionId={session.session_id} updatedAt={session.updated_at} />}
+      {!compact && work}
     </section>
   );
 }

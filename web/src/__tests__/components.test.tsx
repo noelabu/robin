@@ -437,3 +437,22 @@ test("an idle session has no live line", async () => {
   expect(await screen.findByText("All done.")).toBeTruthy();
   expect(document.querySelector(".msg.live")).toBeNull();
 });
+
+test("on a phone a session is tags, the chat and a send button; the rest folds under Details", async () => {
+  const send = vi.spyOn(api, "act").mockResolvedValue({
+    action: { action_id: "a1", session_id: "s1", type: "message", state: "submitted", error: null },
+  });
+  const { container } = render(<SessionDetail session={session({ runtime_state: "idle" })} compact />);
+  expect(container.querySelector(".tags")?.textContent).toContain("app · main");
+  expect(container.querySelector(".flow")).toBeNull();
+  expect(screen.getByRole("tab", { name: "Chat" })).toBeTruthy();
+  expect(container.querySelector(".facts-box")?.contains(screen.getByRole("button", { name: "Hand off to terminal" }))).toBe(true);
+  const box = screen.getByRole("textbox");
+  expect(box.getAttribute("placeholder")).toBe("Message this session…");
+  expect(screen.getByRole("button", { name: "Send" })).toHaveProperty("disabled", true);
+  fireEvent.change(box, { target: { value: "keep going" } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  expect(send).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(send).toHaveBeenCalledWith("s1", { type: "message", text: "keep going" }));
+});
