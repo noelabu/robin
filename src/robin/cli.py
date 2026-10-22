@@ -855,6 +855,33 @@ def cmd_notify(args: argparse.Namespace) -> None:
         print("notifications off")
 
 
+def cmd_remote(args: argparse.Namespace) -> None:
+    """Opt-in access from the owner's other devices over Tailscale, without signing in."""
+    with client(args.data) as c:
+        if args.state == "status":
+            s = call(c, "GET", "/settings/remote")
+        else:
+            s = call(c, "PUT", "/settings/remote", {"enabled": args.state == "on"})
+    if not s["enabled"]:
+        print("remote access off" + (" (phone sessions signed out)" if args.state == "off" else ""))
+    elif not s["listening"]:
+        print(
+            f"remote access on, waiting for Tailscale: {s['problem'] or 'starting'} "
+            "(Robin retries on its own)"
+        )
+    else:
+        first, *others = s["urls"]
+        print(f"remote access on: {first}")
+        if others:
+            print(f"  also {', '.join(others)}")
+        print(
+            f"  devices signed in to Tailscale as {s['owner']} open it without signing in; "
+            "other devices are refused"
+        )
+    if s.get("removed_serve"):
+        print(f"  removed Robin's old `tailscale serve` mapping on {s['removed_serve']}")
+
+
 def _gb(n: int) -> str:
     return f"{n / 1024**3:.2f} GB"
 
@@ -1328,6 +1355,12 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("state", choices=["on", "off", "status"])
     p.add_argument("--kinds", help="input, failed, finished (comma-separated; default: all)")
     p.set_defaults(func=cmd_notify)
+
+    p = sub.add_parser(
+        "remote", parents=[common], help="open Robin from your other devices over Tailscale (opt-in)"
+    )
+    p.add_argument("state", choices=["on", "off", "status"])
+    p.set_defaults(func=cmd_remote)
 
     p = sub.add_parser(
         "storage", parents=[common], help="storage use, and pruning the oldest copied activity"

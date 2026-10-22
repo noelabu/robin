@@ -42,6 +42,7 @@ API = "/api/v1"
 HEARTBEAT_S = 15.0
 STREAM_BATCH = 200
 HOOK_BODY_MAX = 1024 * 1024
+TAILNET_WAIT_S = 10.0  # `robin remote on` waits this long for the first answer from Tailscale
 SNAPSHOT_SESSIONS = 500  # observed sessions in the workspace snapshot; older ones page in
 
 log = logging.getLogger(__name__)
@@ -109,6 +110,10 @@ class WatchBody(BaseModel):
 class NotificationsBody(BaseModel):
     enabled: bool
     kinds: list[Literal["input", "failed", "finished"]] | None = None  # None: all of them
+
+
+class RemoteBody(BaseModel):
+    enabled: bool
 
 
 class RemoveWorktreeBody(BaseModel):
@@ -271,7 +276,14 @@ def _writers(conn: Connection) -> list[Any]:
 
 
 def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
+    from robin import remote
+
     store = runtime.store
+    trust = remote.TailnetTrust()
+
+    def tailnet_changed(me: remote.Tailnet | None, bound: frozenset[str]) -> None:
+        auth.listen_ips = bound
+        auth.remote_names = frozenset(me.names) if me is not None and bound else frozenset()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -280,12 +292,25 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         secure_mkdir(store.data_dir / "hooks")  # the relay notes dropped events here
         await asyncio.to_thread(hook_ingest.drain_drops, store)
         await runtime.start()
+        if (await asyncio.to_thread(remote.settings, store))["enabled"]:
+            listener.start()
+            app.state.legacy_serve = asyncio.create_task(asyncio.to_thread(drop_legacy_serve))
         try:
             yield
         finally:
+            await listener.stop()
             await runtime.stop()
 
     app = FastAPI(title="Robin", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    listener = remote.TailnetListener(app, auth.port, trust, tailnet_changed)
+
+    def drop_legacy_serve() -> str | None:
+        """Robin used to reach the tailnet through `tailscale serve`; that mapping is no longer wanted."""
+        try:
+            return remote.remove_legacy_serve(auth.port)
+        except remote.RemoteError as exc:
+            log.warning("couldn't remove the old tailscale serve mapping: %s", exc.message)
+            return None
 
     @app.exception_handler(ApiError)
     async def _api_error(_: Request, exc: ApiError) -> JSONResponse:
@@ -312,11 +337,28 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
 
     @app.middleware("http")
     async def _guard(request: Request, call_next: Any) -> Response:
-        """Loopback Host and same-origin only, on every request (TR-051)."""
-        if not auth.host_ok(request.headers.get("host")):
-            return _error(403, "bad_host", "requests must address this loopback service", "do_not_retry")
-        if not auth.origin_ok(request.headers.get("origin")):
-            return _error(403, "bad_origin", "cross-site requests are not allowed", "do_not_retry")
+        """Loopback Host and same-origin (TR-051); on the tailnet: this Mac's names, its owner's devices."""
+        local = request.scope.get("server") or ("", 0)
+        request.state.remote = local[0] in auth.listen_ips
+        if request.state.remote:
+            if not auth.remote_host_ok(request.headers.get("host")):
+                return _error(
+                    403, "bad_host", "requests must address this Mac on its tailnet", "do_not_retry"
+                )
+            if not auth.remote_origin_ok(request.headers.get("origin")):
+                return _error(403, "bad_origin", "cross-site requests are not allowed", "do_not_retry")
+            if not await trust.check(request.client.host if request.client else ""):
+                return _error(
+                    403,
+                    "not_your_device",
+                    "only devices signed in to Tailscale as this Mac's owner can open Robin",
+                    "do_not_retry",
+                )
+        else:
+            if not auth.host_ok(request.headers.get("host")):
+                return _error(403, "bad_host", "requests must address this loopback service", "do_not_retry")
+            if not auth.origin_ok(request.headers.get("origin")):
+                return _error(403, "bad_origin", "cross-site requests are not allowed", "do_not_retry")
         response: Response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -328,10 +370,11 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         return response
 
     def authenticated(request: Request) -> str:
-        if auth.cli_ok(request.headers.get("authorization")):
-            return "cli"
+        remote_request = getattr(request.state, "remote", False)
+        if not remote_request and auth.cli_ok(request.headers.get("authorization")):
+            return "cli"  # the CLI token is for this Mac only
         s = auth.browser_session(request.cookies.get(COOKIE))
-        if s is None:
+        if s is None or s.remote != remote_request:
             raise ApiError(
                 401, "unauthenticated", "sign in with the URL printed by `robin`", "reauthenticate"
             )
@@ -344,7 +387,9 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
     # -- auth ------------------------------------------------------------------
 
     @app.post(f"{API}/auth/exchange")
-    async def exchange(body: ExchangeBody, response: Response) -> dict[str, str]:
+    async def exchange(body: ExchangeBody, request: Request, response: Response) -> dict[str, str]:
+        if request.state.remote:
+            raise ApiError(403, "not_here", "sign-in links work on this Mac only", "do_not_retry")
         result = auth.exchange(body.secret)
         if result is None:
             raise ApiError(
@@ -358,14 +403,22 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         return {"csrf_token": csrf}
 
     @app.get(f"{API}/auth/session")
-    async def current_session(request: Request) -> dict[str, str]:
-        """For a page reload: the cookie is still valid, the CSRF token lived only in memory."""
+    async def current_session(request: Request, response: Response) -> dict[str, str]:
+        """For a page reload: the cookie is still valid, the CSRF token lived only in memory.
+
+        On the tailnet the guard already vouched for the device, so a page of Robin's own gets a session here.
+        """
         s = auth.browser_session(request.cookies.get(COOKIE))
-        if s is None:
-            raise ApiError(
-                401, "unauthenticated", "sign in with the URL printed by `robin`", "reauthenticate"
-            )
-        return {"csrf_token": s.csrf}
+        if s is not None and s.remote == request.state.remote:
+            return {"csrf_token": s.csrf}
+        if request.state.remote and request.headers.get("sec-fetch-site", "same-origin") in (
+            "same-origin",
+            "none",
+        ):
+            sid, csrf = auth.trusted_session()
+            response.set_cookie(COOKIE, sid, httponly=True, samesite="strict", secure=False, path="/")
+            return {"csrf_token": csrf}
+        raise ApiError(401, "unauthenticated", "sign in with the URL printed by `robin`", "reauthenticate")
 
     @app.post(f"{API}/auth/bootstrap")
     async def new_bootstrap(request: Request) -> dict[str, str]:
@@ -813,6 +866,40 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         result = await asyncio.to_thread(notifications.set_settings, store, body.enabled, kinds)
         await runtime.notify()
         return result
+
+    def remote_view(enabled: bool, removed_serve: str | None = None) -> dict[str, Any]:
+        me = trust.me if listener.bound else None
+        port = auth.port
+        return {
+            "enabled": enabled,
+            "listening": bool(listener.bound),
+            "urls": [f"http://{n}:{port}" for n in (me.names if me else ())],
+            "owner": me.login if me else None,
+            "problem": listener.problem if enabled else None,
+            "removed_serve": removed_serve,
+        }
+
+    @app.get(f"{API}/settings/remote")
+    async def remote_get(_: str = Authed) -> dict[str, Any]:
+        return remote_view((await asyncio.to_thread(remote.settings, store))["enabled"])
+
+    @app.put(f"{API}/settings/remote")
+    async def remote_put(body: RemoteBody, request: Request, _: str = Authed) -> dict[str, Any]:
+        """Open the dashboard from the owner's other devices over Tailscale; this Mac only."""
+        if request.state.remote:
+            raise ApiError(403, "not_here", "turn remote access on or off on this Mac", "do_not_retry")
+        await asyncio.to_thread(remote.set_settings, store, body.enabled)
+        if body.enabled:
+            listener.start()
+            removed = await asyncio.to_thread(drop_legacy_serve)
+            try:
+                await asyncio.wait_for(listener.ready.wait(), timeout=TAILNET_WAIT_S)
+            except TimeoutError:
+                pass
+            return remote_view(True, removed)
+        await listener.stop()
+        auth.drop_remote_sessions()
+        return remote_view(False, await asyncio.to_thread(drop_legacy_serve))
 
     @app.put(f"{API}/presence")
     async def presence(body: PresenceBody, _: str = Authed) -> dict[str, Any]:

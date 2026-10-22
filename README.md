@@ -202,6 +202,18 @@ robin diagnostics                    # a redacted bundle, previewed before it's 
 robin notify on                      # macOS notifications when a session needs input, fails or finishes
 ```
 
+### From your phone (Tailscale)
+
+```bash
+robin remote on                      # also listen on this Mac's Tailscale addresses
+robin remote status                  # the address to open, and who may open it
+robin remote off                     # stop listening there and sign phones out
+```
+
+Open `http://<this Mac's name>:7333` (e.g. `http://noelas-macbook-pro-2:7333`) on any device signed in to Tailscale as the same user as this Mac; it's signed in without a link. In Safari, Share → Add to Home Screen gives it Robin's icon and opens it full-screen in the phone layout. It's available whenever Robin is running on this Mac; the setting survives restarts, and Robin waits for Tailscale if it isn't connected yet.
+
+Robin asks `tailscale whois` about every device that connects, by its tailnet address (never a header), and refuses other users' devices, shared-in and tagged nodes, and this Mac's own Tailscale address. It never listens on `0.0.0.0`; loopback works as before, and sign-in links and the CLI token work on this Mac only. **Anything running on your own Tailscale devices can open Robin and control its sessions** — that is the trade for not signing in. A device removed from the tailnet is refused within a minute.
+
 Logs are in `<data dir>/logs/robin.log` and never contain prompts, messages or secrets.
 
 ## Tests

@@ -179,6 +179,10 @@ export function App() {
         <p>
           Run <code>robin open</code> in a terminal for a new one.
         </p>
+        <p className="hint">
+          On another device: Robin opens by itself on devices signed in to Tailscale as this Mac's owner, once{" "}
+          <code>robin remote on</code> is set on the Mac.
+        </p>
       </main>
     );
 

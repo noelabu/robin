@@ -5,6 +5,9 @@ it for an HttpOnly, SameSite=Strict session cookie plus a CSRF token for mutatio
 bits, expires after 60 s, and is spent by any exchange attempt, right or wrong; exchanges are rate-limited.
 CLI: a 0600 token file in the data directory, sent as a bearer token. Neither path bypasses task policy.
 Every request must carry a loopback Host, and a browser Origin, if present, must be this service.
+Tailnet (`robin remote on`): requests that arrive on this Mac's Tailscale addresses are checked separately.
+Host and Origin must name this Mac on its tailnet, the peer must be a device of this Mac's owner, and such
+a device gets a session without a link. Those sessions and the loopback ones never stand in for each other.
 """
 
 import hmac
@@ -18,6 +21,7 @@ from robin.paths import secure_touch
 
 BOOTSTRAP_TTL = 60.0
 SESSION_TTL = 12 * 3600.0
+REMOTE_SESSIONS_MAX = 20
 EXCHANGE_LIMIT = 10  # attempts per minute
 COOKIE = "robin_session"
 CSRF_HEADER = "x-robin-csrf"
@@ -27,6 +31,7 @@ CSRF_HEADER = "x-robin-csrf"
 class _Session:
     csrf: str
     expires: float
+    remote: bool = False  # signed in over the tailnet
 
 
 @dataclass
@@ -37,6 +42,8 @@ class Auth:
     _bootstrap_expires: float = 0.0
     _sessions: dict[str, _Session] = field(default_factory=dict)
     _attempts: list[float] = field(default_factory=list)
+    listen_ips: frozenset[str] = frozenset()  # this Mac's Tailscale addresses being served
+    remote_names: frozenset[str] = frozenset()  # how a browser may address them
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     @classmethod
@@ -83,6 +90,27 @@ class Auth:
         if not authorization or not authorization.startswith("Bearer "):
             return False
         return hmac.compare_digest(authorization.removeprefix("Bearer "), self.cli_token)
+
+    def trusted_session(self) -> tuple[str, str]:
+        """A session for a device the tailnet vouched for: (session id, csrf token)."""
+        now = time.monotonic()
+        with self._lock:
+            remote = sorted((s.expires, k) for k, s in self._sessions.items() if s.remote)
+            for _, k in remote[: max(0, len(remote) - REMOTE_SESSIONS_MAX + 1)]:
+                del self._sessions[k]
+            sid, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+            self._sessions[sid] = _Session(csrf, now + SESSION_TTL, remote=True)
+            return sid, csrf
+
+    def drop_remote_sessions(self) -> None:
+        with self._lock:
+            self._sessions = {k: s for k, s in self._sessions.items() if not s.remote}
+
+    def remote_host_ok(self, host: str | None) -> bool:
+        return (host or "").lower() in {f"{n}:{self.port}" for n in self.remote_names}
+
+    def remote_origin_ok(self, origin: str | None) -> bool:
+        return origin is None or origin.lower() in {f"http://{n}:{self.port}" for n in self.remote_names}
 
     def host_ok(self, host: str | None) -> bool:
         return host in {f"127.0.0.1:{self.port}", f"localhost:{self.port}"}

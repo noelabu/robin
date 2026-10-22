@@ -120,3 +120,14 @@ def _no_real_history(tmp_path_factory, monkeypatch):
     for runtime in ("claude", "codex", "pi"):
         (root / runtime).mkdir()
         monkeypatch.setenv(f"ROBIN_HISTORY_{runtime.upper()}", str(root / runtime))
+
+
+@pytest.fixture(autouse=True)
+def _no_real_tailscale(monkeypatch):
+    """Tests never run the real `tailscale` or change the user's serve config."""
+    from robin import remote
+
+    def missing() -> str:
+        raise remote.RemoteError(503, "tailscale_missing", "no tailscale in tests")
+
+    monkeypatch.setattr(remote, "find_cli", missing)
