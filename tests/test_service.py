@@ -978,3 +978,44 @@ def test_home_screen_files_are_served_without_signing_in(service):
         for icon in ("/apple-touch-icon.png", "/icon-192.png", "/icon-512.png"):
             r = c.get(icon)
             assert r.status_code == 200 and r.headers["content-type"] == "image/png", icon
+
+
+def test_remote_sessions_are_capped_and_the_macs_are_never_evicted():
+    from robin.service.auth import REMOTE_SESSIONS_MAX, Auth
+
+    auth = Auth(port=1, cli_token="t")
+    mac = auth.exchange(auth.new_bootstrap())
+    assert mac is not None
+    first = auth.trusted_session()[0]
+    newer = [auth.trusted_session()[0] for _ in range(REMOTE_SESSIONS_MAX)]
+    assert sum(s.remote for s in auth._sessions.values()) == REMOTE_SESSIONS_MAX
+    assert auth.browser_session(first) is None  # the oldest phone session went
+    assert all(auth.browser_session(sid) for sid in newer)
+    assert auth.browser_session(mac[0]) is not None
+
+
+def test_off_keeps_the_macs_own_browser_signed_in(service, monkeypatch):
+    _, port, auth = service
+    Tailnet(monkeypatch)
+    turn_on(port, auth)
+    mac = browser(port, auth)
+    with phone(port, host=f"mac:{port}") as c:
+        c.get("/api/v1/auth/session")
+    cli(port, auth).put("/api/v1/settings/remote", json={"enabled": False})
+    assert mac.get("/api/v1/workspace").status_code == 200
+
+
+def test_loopback_rules_hold_while_remote_is_on(service, monkeypatch):
+    _, port, auth = service
+    Tailnet(monkeypatch)
+    turn_on(port, auth)
+    with phone(port, host=f"mac:{port}") as c:
+        sid = c.get("/api/v1/auth/session").cookies.get("robin_session")
+    with httpx.Client(base_url=base(port), timeout=5) as local:
+        r = local.get("/api/v1/auth/session", headers={"host": f"mac:{port}"})
+        assert r.status_code == 403 and r.json()["error"]["code"] == "bad_host"
+        r = local.get("/api/v1/auth/session", headers={"origin": f"http://mac:{port}"})
+        assert r.status_code == 403 and r.json()["error"]["code"] == "bad_origin"
+        local.cookies.set("robin_session", sid)
+        r = local.get("/api/v1/auth/session")  # a phone's cookie doesn't hand out its CSRF token here
+        assert r.status_code == 401 and "set-cookie" not in r.headers

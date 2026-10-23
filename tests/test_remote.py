@@ -168,3 +168,58 @@ def test_setting_round_trips(store):
     assert remote.settings(store) == {"enabled": False}
     assert remote.set_settings(store, True) == {"enabled": True}
     assert remote.set_settings(store, False) == {"enabled": False}
+
+
+def test_a_refused_device_is_asked_again_sooner_than_a_trusted_one(fake, monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(remote.time, "monotonic", lambda: clock[0])
+    trust = remote.TailnetTrust()
+    trust.reset(me())
+    fake.whois = who(user=99, profile=99)
+    assert asyncio.run(trust.check(PHONE)) is False
+    fake.whois = who()  # the phone is moved to the owner's account
+    clock[0] += remote.REFUSED_TTL + 1
+    assert remote.REFUSED_TTL + 1 < remote.TRUSTED_TTL
+    assert asyncio.run(trust.check(PHONE)) is True
+
+
+async def test_listener_lets_go_when_tailscale_logs_out(monkeypatch):
+    from robin.service.main import free_port
+
+    async def app(scope, receive, send):
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    here = remote.Tailnet(ips=("127.0.0.1",), user_id=ME, login="me@example.com", fqdn=None)
+    up = [True]
+
+    def status():
+        if not up[0]:
+            raise remote.RemoteError(409, "tailscale_logged_out", "Tailscale isn't connected")
+        return here
+
+    monkeypatch.setattr(remote, "tailnet_status", status)
+    monkeypatch.setattr(remote, "POLL_S", 0.01)
+    changes = []
+    port = free_port()
+    trust = remote.TailnetTrust()
+    listener = remote.TailnetListener(app, port, trust, lambda m, b: changes.append((m, b)))
+    listener.start()
+    try:
+        await asyncio.wait_for(listener.ready.wait(), 5)
+        assert listener.bound == {"127.0.0.1"} and trust.me == here
+        assert changes[-1] == (here, frozenset({"127.0.0.1"}))
+        _, w = await asyncio.open_connection("127.0.0.1", port)
+        w.close()
+        up[0] = False
+        for _ in range(500):
+            if changes[-1][0] is None:
+                break
+            await asyncio.sleep(0.01)
+        assert changes[-1] == (None, frozenset())
+        assert listener.bound == frozenset() and trust.me is None
+        assert listener.problem == "Tailscale isn't connected"
+        with pytest.raises(OSError):
+            await asyncio.open_connection("127.0.0.1", port)
+    finally:
+        await listener.stop()

@@ -105,6 +105,13 @@ describe("phone map layout", () => {
     expect(lay.wires[0].kind).toBe("q");
   });
 
+  test("deeply nested children on a narrow phone stay inside the screen's right edge", () => {
+    const chain = ["a", "b", "c", "d"].map((id, i) => card({ id, parent: i ? ["a", "b", "c"][i - 1] : "s1", kind: "subagent" }));
+    const lay = phoneLayout([card(), ...chain], { ...none, width: 240 });
+    for (const r of Object.values(lay.cards)) expect(r.x + r.w).toBeLessThanOrEqual(240 - 12);
+    expect(lay.cards.d.x).toBeGreaterThan(lay.cards.c.x);
+  });
+
   test("sessions stack without overlapping and the height covers them", () => {
     const lay = phoneLayout([card(), child("a"), card({ id: "s2", session_id: "s2" })], none);
     const all = Object.values(lay.cards);
