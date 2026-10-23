@@ -14,6 +14,8 @@ vi.mock("../api", async (orig) => {
       storage: () => new Promise(() => undefined),
       watch: () => new Promise(() => undefined),
       notifications: () => new Promise(() => undefined),
+      remote: () => new Promise(() => undefined),
+      questionWait: () => new Promise(() => undefined),
     },
   };
 });

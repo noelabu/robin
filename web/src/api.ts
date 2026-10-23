@@ -166,6 +166,13 @@ export type Run = {
 
 export type NotificationKind = "input" | "failed" | "finished";
 export type NotificationSettings = { enabled: boolean; kinds: NotificationKind[] };
+export type RemoteSettings = {
+  enabled: boolean;
+  listening: boolean;
+  urls: string[];
+  owner: string | null;
+  problem: string | null;
+};
 
 export type Packet = {
   packet_id: string;
@@ -472,6 +479,7 @@ export const api = {
   watch: () => request<{ enabled: boolean }>("GET", "/settings/watch"),
   setWatch: (enabled: boolean) => request<{ enabled: boolean }>("PUT", "/settings/watch", { enabled }),
   notifications: () => request<NotificationSettings>("GET", "/settings/notifications"),
+  remote: () => request<RemoteSettings>("GET", "/settings/remote"),
   setNotifications: (body: NotificationSettings) =>
     request<NotificationSettings>("PUT", "/settings/notifications", body),
   worktrees: (sessionId: string) =>

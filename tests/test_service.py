@@ -799,3 +799,223 @@ def test_a_managed_question_cannot_be_handed_to_a_terminal(service):
     )
     assert r.status_code == 422 and r.json()["error"]["code"] == "invalid_response"
     c.post(f"/api/v1/sessions/{sid}/actions", json={"type": "stop", "action_id": aid()})
+
+
+class Tailnet:
+    """Tailscale faked at its two calls: this Mac is reachable on ::1, and whois answers `owner`."""
+
+    def __init__(self, monkeypatch):
+        from robin import remote
+
+        self.owner = True
+        self.me = remote.Tailnet(ips=("::1",), user_id=1, login="me@example.com", fqdn="mac.tail1.ts.net")
+        monkeypatch.setattr(remote, "tailnet_status", lambda: self.me)
+        monkeypatch.setattr(remote, "remove_legacy_serve", lambda port: None)
+
+        async def check(_self, ip):
+            return self.owner and ip == "::1"
+
+        monkeypatch.setattr(remote.TailnetTrust, "check", check)
+
+
+def turn_on(port, auth):
+    r = cli(port, auth).put("/api/v1/settings/remote", json={"enabled": True})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def phone(port, **headers):
+    return httpx.Client(base_url=f"http://[::1]:{port}", timeout=5, headers=headers)
+
+
+def test_owners_device_is_signed_in_without_a_link(service, monkeypatch):
+    _, port, auth = service
+    Tailnet(monkeypatch)
+    view = turn_on(port, auth)
+    assert view["listening"] and view["owner"] == "me@example.com"
+    assert view["urls"][:2] == [f"http://mac:{port}", f"http://mac.tail1.ts.net:{port}"]
+    with phone(port, host=f"mac:{port}") as c:
+        assert c.get("/api/v1/workspace").status_code == 401
+        r = c.get("/api/v1/auth/session")
+        assert r.status_code == 200 and "secure" not in r.headers["set-cookie"].lower()
+        assert "samesite=strict" in r.headers["set-cookie"].lower()
+        csrf = r.json()["csrf_token"]
+        assert c.get("/api/v1/workspace").status_code == 200
+        assert c.get("/api/v1/auth/session").json()["csrf_token"] == csrf  # a reload keeps the session
+        assert c.put("/api/v1/presence", json={"session_id": None}).status_code == 403  # no CSRF
+        r = c.put("/api/v1/presence", json={"session_id": None}, headers={CSRF_HEADER: csrf})
+        assert r.status_code == 200
+
+
+def test_other_devices_are_refused_everywhere(service, monkeypatch):
+    _, port, auth = service
+    net = Tailnet(monkeypatch)
+    turn_on(port, auth)
+    net.owner = False
+    with phone(port, host=f"mac:{port}") as c:
+        for path in ("/", "/manifest.webmanifest", "/api/v1/auth/session"):
+            r = c.get(path)
+            assert r.status_code == 403 and r.json()["error"]["code"] == "not_your_device", path
+
+
+@pytest.mark.parametrize(
+    ("host", "origin", "ok"),
+    [
+        ("mac:{port}", None, True),
+        ("MAC.tail1.ts.net:{port}", "http://mac.tail1.ts.net:{port}", True),
+        ("[::1]:{port}", "http://[::1]:{port}", True),
+        ("evil.com:{port}", None, False),  # DNS rebinding
+        ("mac", None, False),
+        ("127.0.0.1:{port}", None, False),
+        ("mac:{port}", "https://mac:{port}", False),
+        ("mac:{port}", "http://evil.com", False),
+    ],
+)
+def test_tailnet_host_and_origin(service, monkeypatch, host, origin, ok):
+    _, port, auth = service
+    Tailnet(monkeypatch)
+    turn_on(port, auth)
+    headers = {"host": host.format(port=port)}
+    if origin:
+        headers["origin"] = origin.format(port=port)
+    with phone(port, **headers) as c:
+        assert (c.get("/api/v1/auth/session").status_code == 200) is ok
+
+
+def test_tailnet_refuses_cli_token_links_and_loopback_cookies(service, monkeypatch):
+    _, port, auth = service
+    Tailnet(monkeypatch)
+    turn_on(port, auth)
+    mac = browser(port, auth)
+    with phone(port, host=f"mac:{port}") as c:
+        bearer = {"authorization": f"Bearer {auth.cli_token}"}
+        assert c.get("/api/v1/workspace", headers=bearer).status_code == 401
+        r = c.post("/api/v1/auth/exchange", json={"secret": auth.new_bootstrap()})
+        assert r.status_code == 403
+        c.cookies.set("robin_session", mac.cookies.get("robin_session"))
+        assert c.get("/api/v1/workspace").status_code == 401  # a Mac session doesn't work here
+        sid = c.get("/api/v1/auth/session").cookies.get("robin_session")
+    with httpx.Client(base_url=base(port), timeout=5, cookies={"robin_session": sid}) as local:
+        assert local.get("/api/v1/workspace").status_code == 401  # nor a phone session on the Mac
+    r = cli(port, auth).put("/api/v1/settings/remote", json={"enabled": True})
+    assert r.status_code == 200
+    with phone(port, host=f"mac:{port}") as c:
+        c.get("/api/v1/auth/session")
+        csrf = c.get("/api/v1/auth/session").json()["csrf_token"]
+        r = c.put("/api/v1/settings/remote", json={"enabled": False}, headers={CSRF_HEADER: csrf})
+        assert r.status_code == 403  # only the Mac turns it off
+
+
+def test_cross_site_requests_dont_get_a_session(service, monkeypatch):
+    _, port, auth = service
+    Tailnet(monkeypatch)
+    turn_on(port, auth)
+    with phone(port, host=f"mac:{port}") as c:
+        assert c.get("/api/v1/auth/session", headers={"sec-fetch-site": "cross-site"}).status_code == 401
+        assert c.get("/api/v1/auth/session", headers={"sec-fetch-site": "same-site"}).status_code == 401
+
+
+def test_off_stops_listening_and_signs_phones_out(service, monkeypatch):
+    store, port, auth = service
+    from robin import remote
+
+    Tailnet(monkeypatch)
+    turn_on(port, auth)
+    with phone(port, host=f"mac:{port}") as c:
+        c.get("/api/v1/auth/session")
+    assert any(s.remote for s in auth._sessions.values())
+    view = cli(port, auth).put("/api/v1/settings/remote", json={"enabled": False}).json()
+    assert view == {
+        "enabled": False,
+        "listening": False,
+        "urls": [],
+        "owner": None,
+        "problem": None,
+        "removed_serve": None,
+    }
+    assert not any(s.remote for s in auth._sessions.values()) and auth.listen_ips == frozenset()
+    assert remote.settings(store) == {"enabled": False}
+    with pytest.raises(httpx.ConnectError), phone(port, host=f"mac:{port}") as c:
+        c.get("/api/v1/auth/session")
+
+
+def test_waits_for_tailscale_and_survives_a_restart(service, monkeypatch):
+    store, port, auth = service
+    from robin import remote
+
+    net = Tailnet(monkeypatch)
+
+    def logged_out():
+        raise remote.RemoteError(409, "tailscale_logged_out", "Tailscale isn't connected")
+
+    monkeypatch.setattr(remote, "tailnet_status", logged_out)
+    view = turn_on(port, auth)
+    assert view["enabled"] and not view["listening"] and view["problem"] == "Tailscale isn't connected"
+    assert remote.settings(store) == {"enabled": True}
+    cli(port, auth).put("/api/v1/settings/remote", json={"enabled": False})
+
+    remote.set_settings(store, True)  # on, as a restart finds it
+    monkeypatch.setattr(remote, "tailnet_status", lambda: net.me)
+    restarted, rauth = build(store, free_port())
+    thread = threading.Thread(target=lambda: asyncio.run(restarted.serve()), daemon=True)
+    thread.start()
+    try:
+        deadline = time.time() + 5
+        while not rauth.listen_ips and time.time() < deadline:
+            time.sleep(0.02)
+        assert rauth.listen_ips == frozenset({"::1"})
+    finally:
+        restarted.should_exit = True
+        thread.join(10)
+
+
+def test_home_screen_files_are_served_without_signing_in(service):
+    _, port, _ = service
+    with httpx.Client(base_url=base(port), timeout=5) as c:
+        m = c.get("/manifest.webmanifest")
+        assert m.status_code == 200 and m.json()["display"] == "standalone"
+        assert m.headers["content-type"].startswith("application/manifest+json")
+        for icon in ("/apple-touch-icon.png", "/icon-192.png", "/icon-512.png"):
+            r = c.get(icon)
+            assert r.status_code == 200 and r.headers["content-type"] == "image/png", icon
+
+
+def test_remote_sessions_are_capped_and_the_macs_are_never_evicted():
+    from robin.service.auth import REMOTE_SESSIONS_MAX, Auth
+
+    auth = Auth(port=1, cli_token="t")
+    mac = auth.exchange(auth.new_bootstrap())
+    assert mac is not None
+    first = auth.trusted_session()[0]
+    newer = [auth.trusted_session()[0] for _ in range(REMOTE_SESSIONS_MAX)]
+    assert sum(s.remote for s in auth._sessions.values()) == REMOTE_SESSIONS_MAX
+    assert auth.browser_session(first) is None  # the oldest phone session went
+    assert all(auth.browser_session(sid) for sid in newer)
+    assert auth.browser_session(mac[0]) is not None
+
+
+def test_off_keeps_the_macs_own_browser_signed_in(service, monkeypatch):
+    _, port, auth = service
+    Tailnet(monkeypatch)
+    turn_on(port, auth)
+    mac = browser(port, auth)
+    with phone(port, host=f"mac:{port}") as c:
+        c.get("/api/v1/auth/session")
+    cli(port, auth).put("/api/v1/settings/remote", json={"enabled": False})
+    assert mac.get("/api/v1/workspace").status_code == 200
+
+
+def test_loopback_rules_hold_while_remote_is_on(service, monkeypatch):
+    _, port, auth = service
+    Tailnet(monkeypatch)
+    turn_on(port, auth)
+    with phone(port, host=f"mac:{port}") as c:
+        sid = c.get("/api/v1/auth/session").cookies.get("robin_session")
+    with httpx.Client(base_url=base(port), timeout=5) as local:
+        r = local.get("/api/v1/auth/session", headers={"host": f"mac:{port}"})
+        assert r.status_code == 403 and r.json()["error"]["code"] == "bad_host"
+        r = local.get("/api/v1/auth/session", headers={"origin": f"http://mac:{port}"})
+        assert r.status_code == 403 and r.json()["error"]["code"] == "bad_origin"
+        local.cookies.set("robin_session", sid)
+        r = local.get("/api/v1/auth/session")  # a phone's cookie doesn't hand out its CSRF token here
+        assert r.status_code == 401 and "set-cookie" not in r.headers

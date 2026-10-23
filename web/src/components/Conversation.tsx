@@ -17,6 +17,7 @@ export function Conversation(props: {
   liveCursor: number | undefined; // the session's newest event: a change means there may be more to show
   running?: boolean; // the session is working now: the chat ends with a live line
   events: ReactNode;
+  compact?: boolean; // phone: the tabs are the heading
 }) {
   const [tab, setTab] = useState<"chat" | "events">("chat");
   const [messages, setMessages] = useState<ConversationMessage[] | null>(null);
@@ -54,10 +55,10 @@ export function Conversation(props: {
   return (
     <section className="chat" aria-label="Conversation">
       <div className="chat-head">
-        <h3>Conversation</h3>
+        <h3 className={props.compact ? "sr-only" : undefined}>Conversation</h3>
         <div className="chat-tabs" role="tablist" aria-label="Show">
           <button role="tab" aria-selected={tab === "chat"} onClick={() => setTab("chat")}>
-            Conversation
+            {props.compact ? "Chat" : "Conversation"}
           </button>
           <button role="tab" aria-selected={tab === "events"} onClick={() => setTab("events")}>
             Events

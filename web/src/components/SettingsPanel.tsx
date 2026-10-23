@@ -1,5 +1,13 @@
 import { useEffect, useState } from "react";
-import { api, ApiError, type NotificationKind, type NotificationSettings, type PrunePlan, type StorageUsage } from "../api";
+import {
+  api,
+  ApiError,
+  type NotificationKind,
+  type NotificationSettings,
+  type PrunePlan,
+  type RemoteSettings,
+  type StorageUsage,
+} from "../api";
 import type { ThemeChoice } from "../theme";
 
 const NOTIFY: [NotificationKind, string][] = [
@@ -28,6 +36,7 @@ export function SettingsPanel(props: {
   const [watching, setWatching] = useState<boolean | null>(null);
   const [notify, setNotify] = useState<NotificationSettings | null>(null);
   const [waitMin, setWaitMin] = useState<string | null>(null);
+  const [remote, setRemote] = useState<RemoteSettings | null>(null);
   const [status, setStatus] = useState<string | null>(null);
 
   const load = () => {
@@ -35,6 +44,7 @@ export function SettingsPanel(props: {
     void api.watch().then((w) => setWatching(w.enabled));
     void api.notifications().then(setNotify);
     void api.questionWait().then((q) => setWaitMin(String(q.wait_s / 60)));
+    void api.remote().then(setRemote);
   };
   useEffect(load, []);
 
@@ -192,6 +202,24 @@ export function SettingsPanel(props: {
           ))}
         </fieldset>
       )}
+      <h3>Phone</h3>
+      {remote &&
+        (remote.listening ? (
+          <>
+            <p>
+              On: open <code>{remote.urls[0]}</code> on any device signed in to Tailscale as {remote.owner}.
+            </p>
+            <p className="hint">
+              In Safari: Share → Add to Home Screen. Other Tailscale users and shared devices are refused.
+            </p>
+          </>
+        ) : (
+          <p className="hint">
+            {remote.enabled
+              ? `On, waiting for Tailscale: ${remote.problem ?? "starting"}`
+              : "Run `robin remote on` to open Robin from your phone over Tailscale."}
+          </p>
+        ))}
       <div className="actions">
         <button onClick={props.onClose}>Close</button>
       </div>

@@ -12,10 +12,12 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { SessionList } from "./components/SessionList";
 import { TaskDetail } from "./components/TaskDetail";
 import { MapView } from "./map/MapView";
+import { PhoneShell, type PhoneTab } from "./phone/PhoneShell";
 import { sessionState, useTick } from "./map/useMap";
 import { inRecency, type Recency, useRecency } from "./recency";
 import { useTheme } from "./theme";
 import { inScope, type Scope } from "./scope";
+import { useIsPhone } from "./useMediaQuery";
 import { useWorkspace } from "./useWorkspace";
 
 const ACTIVE_FIRST = (a: Session, b: Session) => b.updated_at.localeCompare(a.updated_at);
@@ -46,6 +48,8 @@ function ViewTabs({ view, onView }: { view: View; onView: (v: View) => void }) {
 
 export function App() {
   const [auth, setAuth] = useState<"checking" | "ok" | "signed_out">("checking");
+  const phone = useIsPhone();
+  const [tab, setTab] = useState<PhoneTab>("inbox");
   const [view, setViewState] = useState<View>(savedView);
   const [projectsOpen, setProjectsOpen] = useState(() => {
     try {
@@ -132,14 +136,15 @@ export function App() {
   // The open session stays listed, e.g. an older one opened from the Map.
   const sessions = filtered.filter((s) => s.session_id === selected || recent(s, recency));
   const writers = all.filter((s) => !s.archived && !["stopped", "failed"].includes(s.runtime_state) && s.mode === "managed");
+  // A phone shows the list until a session is picked; the desktop opens the newest.
   const current: Session | undefined = selected
     ? ws.sessions[selected]
-    : scope.kind === "task"
+    : phone || scope.kind === "task"
       ? undefined
       : sessions[0];
 
   // The session on screen, so the service keeps its notifications quiet while the dashboard is visible.
-  const shown = auth === "ok" && view === "sessions" ? (current?.session_id ?? null) : null;
+  const shown = auth === "ok" && (phone ? tab === "sessions" : view === "sessions") ? (current?.session_id ?? null) : null;
   useEffect(() => {
     if (auth !== "ok") return;
     const report = () => void api.presence(document.visibilityState === "visible" ? shown : null).catch(() => {});
@@ -174,7 +179,63 @@ export function App() {
         <p>
           Run <code>robin open</code> in a terminal for a new one.
         </p>
+        <p className="hint">
+          On another device: Robin opens by itself on devices signed in to Tailscale as this Mac's owner, once{" "}
+          <code>robin remote on</code> is set on the Mac.
+        </p>
       </main>
+    );
+
+  // From the Map or the Inbox: show the session in Sessions, loading it if it's older than what's listed.
+  const openFromAnywhere = (id: string) => {
+    setView("sessions");
+    setTab("sessions");
+    setScope({ kind: "all" });
+    setPanel("none");
+    openSession(id);
+    void ws.ensure(id).catch(() => setNotice("That session couldn't be loaded."));
+  };
+  const detail = current && (
+    <SessionDetail
+      key={current.session_id}
+      session={current}
+      onChanged={() => void ws.reload()}
+      compact={phone}
+      onOpenSession={(id) => {
+        void ws.reload();
+        openSession(id);
+      }}
+      liveCursor={ws.feed.find((i) => i.session_id === current.session_id)?.global_cursor}
+      events={<ActivityFeed items={ws.feed} scope={feedScope} sessions={ws.sessions} ready={ws.ready} />}
+    />
+  );
+
+  if (phone)
+    return (
+      <PhoneShell
+        ws={ws}
+        tab={tab}
+        onTab={setTab}
+        sessions={sessions}
+        filtered={filtered.length}
+        counts={counts}
+        recency={recency}
+        onRecency={setRecency}
+        selected={current}
+        onSelect={setSelected}
+        detail={detail}
+        writers={writers}
+        theme={theme}
+        onTheme={setTheme}
+        onStorageChanged={() => void api.storage().then(setStorage).catch(() => undefined)}
+        notice={notice}
+        onOpenSession={openFromAnywhere}
+        onLaunched={(sid, warnings) => {
+          setNotice(warnings.length ? warnings.join(" ") : null);
+          setTab("sessions");
+          openSession(sid);
+        }}
+      />
     );
 
   const tabs = <ViewTabs view={view} onView={setView} />;
@@ -185,13 +246,7 @@ export function App() {
         tabs={tabs}
         recency={recency}
         onRecency={setRecency}
-        onOpenSession={(id) => {
-          setView("sessions");
-          setScope({ kind: "all" });
-          setPanel("none");
-          openSession(id);
-          void ws.ensure(id).catch(() => setNotice("That session couldn't be loaded."));
-        }}
+        onOpenSession={openFromAnywhere}
         onOpenAttention={() => setView("sessions")}
         onChanged={() => void ws.reload()}
       />
@@ -334,19 +389,7 @@ export function App() {
             onChanged={() => void ws.reload()}
           />
         )}
-        {current ? (
-          <SessionDetail
-            key={current.session_id}
-            session={current}
-            onChanged={() => void ws.reload()}
-            onOpenSession={(id) => {
-              void ws.reload();
-              openSession(id);
-            }}
-            liveCursor={ws.feed.find((i) => i.session_id === current.session_id)?.global_cursor}
-            events={<ActivityFeed items={ws.feed} scope={feedScope} sessions={ws.sessions} ready={ws.ready} />}
-          />
-        ) : (
+        {detail || (
           panel === "none" &&
           !task && (
             <p className="empty">

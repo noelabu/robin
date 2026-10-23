@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type MapCard, type MapCluster, type MapNow, type MapState, type Session } from "../api";
+import { inRecency, type Recency } from "../recency";
 import type { FeedItem } from "../useWorkspace";
 import { stableOrder } from "./layout";
 
@@ -7,7 +8,7 @@ const DEBOUNCE_MS = 750;
 const RUNNING_WINDOW_MS = 60_000; // matches the server: inferred "working" lasts this long after activity
 const LIVE_FAMILIES = new Set(["tool", "file", "message", "session"]);
 
-type MapData = { clusters: MapCluster[]; cards: MapCard[]; now: MapNow | null; pending: number };
+export type MapData = { clusters: MapCluster[]; cards: MapCard[]; now: MapNow | null; pending: number };
 
 /** A card's state now: what the runtime reported, or else inferred from how recent its activity is. */
 export function liveState(card: MapCard, session: Session | undefined, now: number): { state: MapState; inferred: boolean } {
@@ -25,6 +26,41 @@ export function sessionState(s: Session, now: number): { state: MapState; inferr
   if (s.runtime_state !== "unknown") return { state: s.runtime_state, inferred: false };
   const last = s.last_activity_at ? Date.parse(s.last_activity_at) : 0;
   return { state: now - last < RUNNING_WINDOW_MS ? "running" : "idle", inferred: true };
+}
+
+/**
+ * The Map narrowed to a recency: sessions (main cards) that are recent, with whatever they started, and the
+ * folders that still hold one. `keep` is a card that stays shown whatever its age (the one that's open).
+ */
+export function narrow(
+  data: MapData | null,
+  recency: Recency,
+  sessions: Record<string, Session>,
+  now: number,
+  keep: string | null,
+): { counts: Record<Recency, number>; mains: MapCard[]; cards: MapCard[]; clusters: MapCluster[] } {
+  const allCards = data?.cards ?? [];
+  const allMains = allCards.filter((c) => !c.parent);
+  // A session whose workflow, shell or subagent still runs counts as working, even between its own turns.
+  const busy = new Set(
+    allCards.filter((c) => c.parent && liveState(c, undefined, now).state === "running").map((c) => c.session_id),
+  );
+  const recent = (c: MapCard, r: Recency) =>
+    c.id === keep || busy.has(c.session_id) || inRecency(liveState(c, sessions[c.session_id], now).state, c.last_activity_at, now, r);
+  const counts = {
+    active: allMains.filter((c) => recent(c, "active")).length,
+    today: allMains.filter((c) => recent(c, "today")).length,
+    all: (data?.clusters ?? []).reduce((n, c) => n + c.sessions, 0),
+  };
+  if (recency === "all") return { counts, mains: allMains, cards: allCards, clusters: data?.clusters ?? [] };
+  // Whatever a session started shows with it; a narrowed view has no "+N more", which would page in older sessions.
+  const mains = allMains.filter((c) => recent(c, recency));
+  const kept = new Set(mains.map((c) => c.session_id));
+  const clusters: MapCluster[] = (data?.clusters ?? []).flatMap((cl) => {
+    const n = mains.filter((c) => c.cluster === cl.key).length;
+    return n ? [{ ...cl, sessions: n, shown: n }] : [];
+  });
+  return { counts, mains, cards: allCards.filter((c) => kept.has(c.session_id)), clusters };
 }
 
 /** The Map's data: a snapshot, then cards refreshed for the sessions the event stream says changed. */

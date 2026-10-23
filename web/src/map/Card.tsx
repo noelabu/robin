@@ -73,6 +73,8 @@ export function Card(props: {
   selected: boolean;
   permission?: boolean; // a permission request is waiting on the user
   question?: boolean; // the agent asked the user something
+  className?: string;
+  compact?: boolean; // the phone Map: a workflow counts its agents instead of listing phases
   onOpen: (card: MapCard) => void;
   onFocus: (rect: Rect) => void;
 }) {
@@ -97,7 +99,7 @@ export function Card(props: {
   const finished = (card.shells_done ?? 0) + (card.groups_done ?? 0);
   return (
     <button
-      className={`map-card ${sub ? "sub" : ""} ${job ? kind : ""} ${mini ? "mini" : ""} ${state} ${props.selected ? "open" : ""} ${props.permission ? "permission" : props.question ? "question" : ""}`}
+      className={`map-card ${sub ? "sub" : ""} ${job ? kind : ""} ${mini ? "mini" : ""} ${state} ${props.selected ? "open" : ""} ${props.permission ? "permission" : props.question ? "question" : ""} ${props.className ?? ""}`}
       style={{ ...hue(card.cluster), left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
       aria-expanded={props.selected}
       data-card={card.id}
@@ -136,7 +138,12 @@ export function Card(props: {
       {kind === "skill" && (card.inner?.length || card.args) && (
         <span className="inner">{card.inner?.length ? `→ ${card.inner.join(" → ")}` : card.args}</span>
       )}
-      {kind === "workflow" && <Phases phases={card.phases ?? []} />}
+      {kind === "workflow" &&
+        (props.compact ? (
+          <span className="phases">{(card.phases ?? []).reduce((n, p) => n + p.total, 0) + card.subagents_hidden} agents ›</span>
+        ) : (
+          <Phases phases={card.phases ?? []} />
+        ))}
       {kind === "shell" && (card.target || card.summary) && (
         <span className="cmd" title={card.target ?? undefined}>
           {card.status && card.summary ? card.summary : card.target}

@@ -227,3 +227,23 @@ async def test_the_chat_answers_a_question_against_the_real_service(served, caps
             lambda: 'Answers: {"Which database?": "Postgres", "Which features?": "Auth, Search"}' in shown()
         )
         assert shown().count("You  ask") == 1
+
+
+def test_remote_on_status_off(served, capsys, monkeypatch):
+    from robin import remote
+
+    store, _ = served
+    d = str(store.data_dir)
+    me = remote.Tailnet(ips=("::1",), user_id=1, login="me@example.com", fqdn="mac.tail1.ts.net")
+    monkeypatch.setattr(remote, "tailnet_status", lambda: me)
+    monkeypatch.setattr(remote, "remove_legacy_serve", lambda port: "https://mac.tail1.ts.net")
+    out = run(capsys, "remote", "on", "--data", d)
+    port = remote.json.loads((store.data_dir / "service.json").read_text())["port"]
+    assert out.splitlines()[0] == f"remote access on: http://mac:{port}"
+    assert f"also http://mac.tail1.ts.net:{port}" in out
+    assert "signed in to Tailscale as me@example.com open it without signing in" in out
+    assert "removed Robin's old `tailscale serve` mapping on https://mac.tail1.ts.net" in out
+    assert f"remote access on: http://mac:{port}" in run(capsys, "remote", "status", "--data", d)
+    assert run(capsys, "remote", "off", "--data", d).splitlines()[0] == (
+        "remote access off (phone sessions signed out)"
+    )
