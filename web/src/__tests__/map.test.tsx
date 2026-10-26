@@ -243,11 +243,10 @@ describe("map view", () => {
       />,
     );
 
-  test("cards, the now card, folders, and the header status", async () => {
+  test("cards, folders, and the header status", async () => {
     const onOpenAttention = vi.fn();
     mount({ onOpenAttention });
     expect(await screen.findByText("Look around")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Now: claude Edit" })).toBeTruthy();
     expect(screen.getByText(/Working · 5s ago/)).toBeTruthy();
     expect(screen.getByText("watching")).toBeTruthy();
     fireEvent.click(await screen.findByText("1 needs you"));

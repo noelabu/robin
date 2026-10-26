@@ -8,7 +8,6 @@ import { Canvas, type CanvasHandle } from "./Canvas";
 import { Card } from "./Card";
 import { layout, PANEL_GAP } from "./layout";
 import { assignHues, hue } from "./hue";
-import { RuntimeIcon } from "./RuntimeIcon";
 import { TaskPanel } from "./TaskPanel";
 import { ago } from "./time";
 import { liveState, narrow, useMap, useTick } from "./useMap";
@@ -16,7 +15,6 @@ import { liveState, narrow, useMap, useTick } from "./useMap";
 const SIDEBAR_SESSIONS = 5;
 
 /** A file path shows as its name; a command or pattern as written. */
-const shortTarget = (t: string | null) => (t && !/\s/.test(t) && t.includes("/") ? t.split("/").pop() : (t ?? ""));
 
 /** Every session at a glance: cards clustered by repository on a pan-and-zoom canvas (read-only). */
 export function MapView(props: {
@@ -67,8 +65,6 @@ export function MapView(props: {
   );
   const latest = mains.reduce<string | null>((m, c) => (c.last_activity_at && (!m || c.last_activity_at > m) ? c.last_activity_at : m), null);
   const sel = selected ? cards.find((c) => c.id === selected) : undefined;
-  const clusterPath = (key: string) => data?.clusters.find((c) => c.key === key)?.path ?? key;
-  const nowCard = data?.now;
 
   const open = (id: string) => {
     if (selected === id) return close();
@@ -173,24 +169,6 @@ export function MapView(props: {
         onBackground={close}
         overlay={
           <>
-            {nowCard && (
-              <button className="map-now" onClick={() => open(nowCard.card_id)} aria-label={`Now: ${nowCard.runtime} ${nowCard.tool}`}>
-                <span className="hd">
-                  <RuntimeIcon runtime={nowCard.runtime} />
-                  <b>{nowCard.runtime}</b>
-                  <span className="ctx">
-                    {ago(nowCard.turn_started_at ?? nowCard.action_at, now)} · in {clusterPath(nowCard.cluster).split("/").pop()}
-                  </span>
-                </span>
-                <p>{nowCard.title ?? "Untitled session"}</p>
-                <span className="act">
-                  <span title={nowCard.target ?? undefined}>
-                    {nowCard.tool} {shortTarget(nowCard.target)}
-                  </span>
-                  <span>{ago(nowCard.action_at, now)}</span>
-                </span>
-              </button>
-            )}
             {data && data.pending > 0 && (
               <div className="map-banner" role="status">
                 Reading history… {data.pending.toLocaleString()} events left
