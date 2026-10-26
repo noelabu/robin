@@ -11,6 +11,7 @@ import {
   type SessionActivity,
 } from "../api";
 import { ApprovalBox, QuestionBox } from "../components/Approval";
+import { Changes } from "../components/Changes";
 import { ago } from "./time";
 
 const SHOWN_FILES = 12;
@@ -163,6 +164,7 @@ export function TaskPanel(props: {
   approvals?: AttentionItem[]; // permission requests waiting on the user, shown first
   questions?: AttentionItem[]; // questions the agent asked, answered in its terminal
   onAnswered?: () => void;
+  compact?: boolean; // phone: a diff opens full screen
 }) {
   const { card, now } = props;
   const [detail, setDetail] = useState<SessionActivity | null>(null);
@@ -318,6 +320,9 @@ export function TaskPanel(props: {
             <p className="tp-none">{lane?.current ? `Last: ${lane.current.tool} ${lane.current.target ?? ""}` : "No file edits"}</p>
           )}
         </div>
+      )}
+      {kind === "session" && !card.parent && (
+        <Changes sessionId={card.session_id} updatedAt={card.last_activity_at ?? ""} compact={props.compact} />
       )}
       {detail && kind === "session" && <BackgroundWork detail={detail} sessionId={card.session_id} now={now} />}
       {props.actions !== false && !card.parent && (props.onOpenSession || s) && (

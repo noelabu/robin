@@ -33,13 +33,78 @@ def test_a_run_owns_only_the_changes_it_made(tmp_path):
     end = gitctx.snapshot(str(root))
 
     files, truncated = gitctx.changes(start, end)
-    assert files == [
-        {"path": "b.txt", "change": "modified"},
-        {"path": "c.txt", "change": "added"},
-        {"path": "d.txt", "change": "deleted"},
-        {"path": "e.txt", "change": "added"},
+    assert [(f["path"], f["change"]) for f in files] == [
+        ("b.txt", "modified"),
+        ("c.txt", "added"),
+        ("d.txt", "deleted"),
+        ("e.txt", "added"),
     ]
     assert not truncated
+    by = {f["path"]: f for f in files}
+    assert by["c.txt"]["before"] is None and by["d.txt"]["after"] is None
+    assert (
+        blob(root, by["b.txt"]["before"]) == "b.txt\n"
+        and blob(root, by["b.txt"]["after"]) == "changed by the run\n"
+    )
+
+
+def blob(root, oid):
+    return subprocess.run(
+        ["git", "cat-file", "blob", oid], cwd=root, capture_output=True, text=True, check=True
+    ).stdout
+
+
+def test_a_file_dirty_at_the_start_keeps_its_starting_content(tmp_path):
+    root = repo(tmp_path / "r")
+    (root / "a.txt").write_text("edited before the run\n")
+    start = gitctx.snapshot(str(root), write=True)
+    (root / "a.txt").write_text("edited by the run\n")
+    (f,), _ = gitctx.changes(start, gitctx.snapshot(str(root)))
+    assert (
+        blob(root, f["before"]) == "edited before the run\n"
+        and blob(root, f["after"]) == "edited by the run\n"
+    )
+
+
+def test_a_large_file_is_hashed_but_not_kept(tmp_path, monkeypatch):
+    root = repo(tmp_path / "r")
+    monkeypatch.setattr(gitctx, "KEEP_MAX", 10)
+    (root / "a.txt").write_text("more than ten bytes\n")
+    start = gitctx.snapshot(str(root), write=True)
+    oid = start.dirty["a.txt"]
+    assert oid and subprocess.run(["git", "cat-file", "-e", oid], cwd=root).returncode != 0
+
+
+def test_a_store_robin_cant_write_still_gets_a_snapshot(tmp_path, monkeypatch):
+    root = repo(tmp_path / "r")
+    (root / "a.txt").write_text("dirty\n")
+    real = gitctx._git
+    monkeypatch.setattr(gitctx, "_git", lambda cwd, *a, **kw: None if "-w" in a else real(cwd, *a, **kw))
+    start = gitctx.snapshot(str(root), write=True)
+    assert start and start.dirty["a.txt"]
+
+
+def test_a_symlink_is_hashed_as_its_link_never_followed(tmp_path):
+    root = repo(tmp_path / "r")
+    secret = tmp_path / "outside.txt"
+    secret.write_text("outside the repository\n")
+    (root / "link").symlink_to(secret)
+    start = gitctx.snapshot(str(root), write=True)
+    link_blob = blob(root, start.dirty["link"])
+    assert link_blob == str(secret)
+    target = subprocess.run(
+        ["git", "hash-object", str(secret)], cwd=root, capture_output=True, text=True
+    ).stdout.strip()
+    assert subprocess.run(["git", "cat-file", "-e", target], cwd=root).returncode != 0
+
+
+def test_a_symlink_whose_target_changed_isnt_a_change(tmp_path):
+    root = repo(tmp_path / "r")
+    (root / "link").symlink_to("a.txt")  # untracked, so in the start snapshot
+    start = gitctx.snapshot(str(root))
+    (root / "a.txt").write_text("the link's target changed\n")
+    files, _ = gitctx.changes(start, gitctx.snapshot(str(root)))
+    assert [f["path"] for f in files] == ["a.txt"]
 
 
 def test_a_folder_outside_git_has_no_context(tmp_path):
@@ -68,8 +133,16 @@ def test_runs_record_their_git_context_and_label_a_shared_folder(api):
     )
     g = run["git"]
     assert g["base_commit"] == head.strip() and g["branch"] == "main" and g["dirty_at_start"] == 0
-    assert g["changed_files"] == [{"path": "b.txt", "change": "modified"}]
+    assert [(f["path"], f["change"]) for f in g["changed_files"]] == [("b.txt", "modified")]
     assert g["shared_folder"] and not g["start_late"]  # the other session was working in the same folder
+
+    diff = c.get(f"/sessions/{sid}/runs/{run['run_id']}/diff", params={"path": "b.txt"}).json()
+    assert diff["status"] == "ok" and (diff["added"], diff["removed"]) == (1, 1)
+    assert diff["hunks"][0]["lines"] == ["-b.txt", "+changed"]
+    for path, code in (("a.txt", "not_changed"), ("../b.txt", "bad_path"), ("/etc/hosts", "bad_path")):
+        r = c.get(f"/sessions/{sid}/runs/{run['run_id']}/diff", params={"path": path})
+        assert r.json()["error"]["code"] == code
+    assert c.get(f"/sessions/{sid}/runs/nope/diff", params={"path": "b.txt"}).status_code == 404
 
 
 def test_a_session_outside_git_has_runs_without_git_context(api, tmp_path):

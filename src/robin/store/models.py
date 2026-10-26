@@ -615,7 +615,7 @@ class RunGit(Base):
     start_captured_at: Mapped[datetime] = mapped_column(UTCDateTime)
     end_commit: Mapped[str | None] = mapped_column(String)
     end_dirty: Mapped[int | None] = mapped_column(Integer)
-    changed_files: Mapped[str | None] = mapped_column(Text)  # JSON [{path, change}]
+    changed_files: Mapped[str | None] = mapped_column(Text)  # JSON [{path, change, before, after}]
     shared_folder: Mapped[int] = mapped_column(Integer, server_default=text("0"))  # others wrote there too
     truncated: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     end_captured_at: Mapped[datetime | None] = mapped_column(UTCDateTime)

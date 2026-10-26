@@ -3,18 +3,21 @@
 The service calls `capture` after events commit. A run gets its start snapshot as soon as Robin sees it
 running; a snapshot taken a while after the run began is marked late, because the run may already have
 changed files. A run that started and ended before Robin could look gets its repository and end state only,
-and its changed files are unknown rather than guessed.
+and its changed files are unknown rather than guessed. The blobs on both sides of each change are kept, so a
+changed file's diff can be shown (`file_diff`).
 """
 
 import json
 import logging
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import insert, select, update
 
-from robin import gitctx
+from robin import gitctx, gitdiff
 from robin.ids import utc_now
+from robin.redact.scanner import RuleSet
 from robin.store import Store
 from robin.store.models import Run, RunGit
 from robin.store.models import Session as SessionRow
@@ -61,7 +64,7 @@ def _start(store: Store, r: Any) -> None:
     now = utc_now()
     values: dict[str, Any] = {"run_id": r["run_id"], "start_captured_at": now}
     try:
-        snap = gitctx.snapshot(r["execution_cwd"])
+        snap = gitctx.snapshot(r["execution_cwd"], write=r["ended_at"] is None)
     except gitctx.GitFailed as exc:  # a repository whose state couldn't be read: unknown, not clean
         snap = None
         values |= {"repo_root": exc.root, "start_late": 1}
@@ -172,3 +175,29 @@ def _view(r: Any) -> dict[str, Any]:
         "task_id": r["task_id"],
         "git": git,
     }
+
+
+def file_diff(store: Store, rules: RuleSet, session_id: str, run_id: str, path: str) -> dict[str, Any] | None:
+    """One changed file's diff from a run of the session, or None when there's no such run.
+
+    Raises gitdiff.NotListed for a path that isn't among the run's changed files: nothing else is read."""
+    with store.reader.connect() as conn:
+        row = conn.execute(
+            select(RunGit.repo_root, RunGit.changed_files)
+            .select_from(Run)
+            .outerjoin(RunGit, RunGit.run_id == Run.run_id)
+            .where(Run.run_id == run_id, Run.session_id == session_id)
+        ).first()
+    if row is None:
+        return None
+    files = json.loads(row.changed_files) if row.changed_files else []
+    entry = next((f for f in files if f["path"] == path), None)
+    if entry is None:
+        raise gitdiff.NotListed(path)
+    if "before" not in entry:  # recorded before Robin kept blobs
+        diff = gitdiff.outcome("not_recorded")
+    elif not Path(row.repo_root).is_dir():
+        diff = gitdiff.outcome("unavailable")
+    else:
+        diff = gitdiff.blob_diff(rules, row.repo_root, entry["before"], entry["after"])
+    return {"path": path, "change": entry["change"], **diff}

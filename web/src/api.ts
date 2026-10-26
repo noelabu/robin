@@ -150,7 +150,8 @@ export type RunGit = {
   dirty_at_start: number | null;
   dirty_at_end: number | null;
   end_commit: string | null;
-  changed_files: { path: string; change: "added" | "modified" | "deleted" }[] | null;
+  // before/after: the kept blobs (null where the file didn't exist); missing on runs from before they were kept
+  changed_files: { path: string; change: "added" | "modified" | "deleted"; before?: string | null; after?: string | null }[] | null;
   truncated: boolean;
   start_late: boolean;
   shared_folder: boolean;
@@ -163,6 +164,34 @@ export type Run = {
   task_id: string | null;
   git: RunGit | null;
 };
+
+export type DiffHunk = {
+  old_start: number;
+  old_lines: number;
+  new_start: number;
+  new_lines: number;
+  header: string;
+  lines: string[]; // each starts with " ", "+", "-" or "\\"
+};
+export type FileDiff = {
+  path: string;
+  change: string | null;
+  status: "ok" | "binary" | "too_large" | "not_recorded" | "unavailable" | "unknown";
+  added: number;
+  removed: number;
+  truncated: boolean;
+  hunks: DiffHunk[];
+};
+export type ChangedFile = {
+  path: string;
+  change: "added" | "modified" | "deleted" | "untracked";
+  added: number | null;
+  removed: number | null;
+  binary?: boolean;
+};
+export type Changes =
+  | { state: "ok"; repo_root: string; branch: string | null; head: string | null; truncated: boolean; files: ChangedFile[] }
+  | { state: "not_repo" | "missing" | "no_folder" | "unknown" };
 
 export type NotificationKind = "input" | "failed" | "finished";
 export type NotificationSettings = { enabled: boolean; kinds: NotificationKind[] };
@@ -490,6 +519,11 @@ export const api = {
       discard_changes: discardChanges,
     }),
   runs: (sessionId: string) => request<{ runs: Run[] }>("GET", `/sessions/${sessionId}/runs`),
+  runDiff: (sessionId: string, runId: string, path: string) =>
+    request<FileDiff>("GET", `/sessions/${sessionId}/runs/${runId}/diff?path=${encodeURIComponent(path)}`),
+  changes: (sessionId: string) => request<Changes>("GET", `/sessions/${sessionId}/changes`),
+  changesDiff: (sessionId: string, path: string) =>
+    request<FileDiff>("GET", `/sessions/${sessionId}/changes/diff?path=${encodeURIComponent(path)}`),
   conversation: (sessionId: string) =>
     request<{ messages: ConversationMessage[] }>("GET", `/sessions/${sessionId}/conversation`),
   presence: (session_id: string | null) => request<{ ok: boolean }>("PUT", "/presence", { session_id }),

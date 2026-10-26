@@ -162,6 +162,7 @@ export function PhoneMap(props: {
             session={ws.sessions[sel.session_id]}
             now={now}
             onHeight={() => undefined}
+            compact
             onOpenSession={(id) => {
               setSheet(null);
               props.onOpenSession(id);
