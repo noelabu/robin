@@ -35,6 +35,7 @@ export function PhoneMap(props: {
   const [sheet, setSheet] = useState<string | null>(null);
   const board = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(320);
+  const [heights, setHeights] = useState<Readonly<Record<string, number>>>({});
 
   useLayoutEffect(() => {
     const measure = () => setWidth(board.current?.clientWidth || 320);
@@ -57,7 +58,16 @@ export function PhoneMap(props: {
   assignHues(ordered.map((c) => c.key));
   const folder = pickFolder(ordered, needCounts, chosen);
   const shown = cards.filter((c) => c.cluster === folder);
-  const lay = phoneLayout(shown, { width, open, needs });
+  const lay = phoneLayout(shown, { width, open, needs, heights });
+
+  // Cards are as tall as what they show (phone.css); the layout places them by what was measured.
+  useLayoutEffect(() => {
+    const next: Record<string, number> = {};
+    board.current?.querySelectorAll<HTMLElement>(".map-card:not(.small)").forEach((el) => {
+      if (el.dataset.card && el.offsetHeight) next[el.dataset.card] = el.offsetHeight;
+    });
+    if (Object.keys(next).some((id) => next[id] !== heights[id])) setHeights((h) => ({ ...h, ...next }));
+  });
   const sel = sheet ? cards.find((c) => c.id === sheet) : undefined;
   const toggle = (id: string) =>
     setOpen((o) => {

@@ -1,6 +1,7 @@
 /* -- phone: one screen at a time behind a bottom tab bar ------------------------------------------- */
+/* inset alone fills the screen: in a home-screen app iOS reports 100dvh short of it */
 .phone-app {
-  position: fixed; inset: 0; height: 100dvh; display: flex; flex-direction: column; background: var(--canvas);
+  position: fixed; inset: 0; display: flex; flex-direction: column; background: var(--canvas);
 }
 /* iOS zooms into any field smaller than 16px */
 .phone-app input, .phone-app textarea, .phone-app select { font-size: 16px; }
@@ -122,6 +123,8 @@
 .ph-wires .q path.head { fill: var(--m-amber); }
 .ph-wires .wf path { stroke: var(--m-workflow); }
 .ph-wires .wf path.head { fill: var(--m-workflow); }
+/* as tall as the content: the canvas's fixed heights leave room for a second title line a phone rarely needs */
+.ph-board .map-card:not(.small) { height: auto !important; }
 .ph-board .map-card.small { padding-bottom: 8px; }
 .ph-board .map-card.small .line { display: none; }
 .ph-fold {

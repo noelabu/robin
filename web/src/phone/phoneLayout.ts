@@ -20,11 +20,12 @@ const finished = (c: MapCard) => c.status === "completed" || c.status === "kille
 /**
  * One folder's cards top to bottom for a phone: each session full width, what it started below it, inset,
  * on a wire. Finished children fold into a pill that opens into a two-column grid; a workflow's agents are
- * left to the workflow card's summary.
+ * left to the workflow card's summary. A card takes its measured height when there is one (`heights`), else
+ * the canvas's.
  */
 export function phoneLayout(
   cards: MapCard[],
-  opts: { width: number; open: ReadonlySet<string>; needs: (c: MapCard) => boolean },
+  opts: { width: number; open: ReadonlySet<string>; needs: (c: MapCard) => boolean; heights?: Readonly<Record<string, number>> },
 ): PhoneLayout {
   const byId = new Map(cards.map((c) => [c.id, c]));
   const kids = new Map<string, MapCard[]>();
@@ -44,7 +45,7 @@ export function phoneLayout(
     const hangers: { rect: Rect; kind: PhoneWire["kind"] }[] = [];
     const q = opts.needs(card) ? "q" : "";
     for (const c of live) {
-      const cr = { x: cx, y: y + GAP, w: cw, h: size(c, card).h };
+      const cr = { x: cx, y: y + GAP, w: cw, h: opts.heights?.[c.id] ?? size(c, card).h };
       hangers.push({ rect: cr, kind: q || (c.kind === "workflow" ? "wf" : "") });
       y = place(c, cr);
     }
@@ -103,7 +104,7 @@ export function phoneLayout(
 
   let y = PAD;
   for (const c of cards.filter((c) => !c.parent)) {
-    y = place(c, { x: PAD, y, w: opts.width - 2 * PAD, h: CARD.h }) + SESSION_GAP;
+    y = place(c, { x: PAD, y, w: opts.width - 2 * PAD, h: opts.heights?.[c.id] ?? CARD.h }) + SESSION_GAP;
   }
   out.height = Math.max(y - SESSION_GAP + PAD, 0);
   return out;

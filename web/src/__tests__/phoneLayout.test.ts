@@ -43,6 +43,16 @@ const overlaps = (a: { x: number; y: number; w: number; h: number }, b: typeof a
 const none = { width: 320, open: new Set<string>(), needs: () => false };
 
 describe("phone map layout", () => {
+  test("cards take their measured heights, and what hangs below follows them", () => {
+    const tall = phoneLayout([card(), child("a"), card({ id: "s2", session_id: "s2" })], none);
+    const fit = phoneLayout([card(), child("a"), card({ id: "s2", session_id: "s2" })], { ...none, heights: { s1: 90, a: 60 } });
+    expect(fit.cards.s1.h).toBe(90);
+    expect(fit.cards.a.h).toBe(60);
+    expect(fit.cards.a.y).toBe(tall.cards.a.y - (tall.cards.s1.h - 90));
+    expect(fit.cards.s2.y).toBe(fit.cards.a.y + 60 + (tall.cards.s2.y - tall.cards.a.y - tall.cards.a.h));
+    expect(fit.cards.s2.h).toBe(tall.cards.s2.h); // not measured yet: the canvas's height
+  });
+
   test("a child hangs centred below its session on one wire from the session's bottom", () => {
     const lay = phoneLayout([card(), child("ship", { kind: "skill" })], none);
     const s = lay.cards.s1;
