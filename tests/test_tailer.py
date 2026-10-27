@@ -2,7 +2,7 @@ import json
 import os
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from robin.events.ingest import read_events, read_payload
 from robin.events.tailer import JsonlTailer, MappedRecord
@@ -215,6 +215,40 @@ def test_restart_resumes_from_checkpoint(store, session_id, jsonl):
     r = t2.poll_once()
     t2.close()
     assert (r.inserted, r.duplicates) == (1, 0)
+
+
+
+def bump_file_dev(store):
+    store.writer.call(lambda c: c.execute(update(SourceCheckpoint).values(file_dev=SourceCheckpoint.file_dev + 1)))
+
+
+def test_dev_change_alone_keeps_generation(store, session_id, jsonl):
+    """APFS st_dev isn't stable across reboots: same inode, new dev must resume, not re-import."""
+    jsonl.write_bytes(rec(1) + rec(2))
+    JsonlTailer(store, jsonl, session_id=session_id, runtime="claude").poll_once()
+    bump_file_dev(store)
+    with open(jsonl, "ab") as f:
+        f.write(rec(3))
+    t2 = JsonlTailer(store, jsonl, session_id=session_id, runtime="claude")
+    r = t2.poll_once()
+    t2.close()
+    assert r.new_generations == [] and r.inserted == 1
+    assert generations(store) == [(0, "initial", "active")]
+    with store.reader.connect() as c:
+        assert c.execute(select(SourceCheckpoint.file_dev)).scalar() == jsonl.stat().st_dev
+
+
+def test_rotation_after_dev_change_drains_old(store, jsonl, tailer):
+    jsonl.write_bytes(rec(1))
+    tailer.poll_once()
+    with open(jsonl, "ab") as f:  # appended after the last poll, before rotation
+        f.write(rec(2))
+    bump_file_dev(store)
+    os.rename(jsonl, jsonl.with_suffix(".old"))
+    jsonl.write_bytes(rec(3))
+    r = tailer.poll_once()
+    assert r.new_generations == ["rotated"] and r.generation == 1
+    assert [p["i"] for p in payloads(store)] == [1, 2, 3]
 
 
 @pytest.mark.slow

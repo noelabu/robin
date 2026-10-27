@@ -16,6 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import update
+
 from robin.events.envelope import EvidenceKind, NewEvent
 from robin.events.ingest import (
     Checkpoint,
@@ -27,7 +29,9 @@ from robin.events.ingest import (
     open_generation,
     read_checkpoint,
 )
+from robin.ids import utc_now
 from robin.store import Store
+from robin.store.models import SourceCheckpoint
 
 ANCHOR_BYTES = 4096
 
@@ -95,7 +99,7 @@ class JsonlTailer:
         self.batch_records = batch_records
         self.batch_bytes = batch_bytes
         self._fd: int | None = None
-        self._fd_ident: tuple[int, int] | None = None
+        self._fd_ident: int | None = None
 
     def close(self) -> None:
         if self._fd is not None:
@@ -112,7 +116,7 @@ class JsonlTailer:
         try:
             st = os.fstat(fd)
             ident = (st.st_dev, st.st_ino)
-            if self._fd is not None and self._fd_ident == ident:
+            if self._fd is not None and self._fd_ident == _file_id(st):
                 os.close(fd)  # same file: keep the descriptor we already hold
                 fd = self._fd
             with self.store.reader.connect() as conn:
@@ -120,17 +124,19 @@ class JsonlTailer:
 
             if cp is None:
                 cp = self._new_generation(ident, "initial", result)
-            elif (cp.file_dev, cp.file_ino) != ident:
+            elif cp.file_ino != _file_id(st):
                 self._drain_rotated(cp, result)
                 cp = self._new_generation(ident, "rotated", result)
             elif st.st_size < cp.offset:
                 cp = self._new_generation(ident, "truncated", result)
             elif cp.offset > 0 and cp.anchor_hash != _anchor(fd, cp.offset):
                 cp = self._new_generation(ident, "rewritten", result)
+            elif cp.file_dev != st.st_dev:
+                self._update_dev(cp, st.st_dev)
 
             if self._fd is not None and self._fd != fd:
                 os.close(self._fd)
-            self._fd, self._fd_ident = fd, ident
+            self._fd, self._fd_ident = fd, _file_id(st)
         except BaseException:
             if fd != self._fd:
                 os.close(fd)
@@ -161,6 +167,16 @@ class JsonlTailer:
         result.new_generations.append(reason)
         return cp
 
+    def _update_dev(self, cp: Checkpoint, file_dev: int) -> None:
+        """Same inode on a new st_dev (APFS renumbers devices across reboots): record it, keep the offset."""
+        self.store.writer.call(
+            lambda conn: conn.execute(
+                update(SourceCheckpoint)
+                .where(SourceCheckpoint.source_id == cp.source_id, SourceCheckpoint.generation == cp.generation)
+                .values(file_dev=file_dev, updated_at=utc_now())
+            )
+        )
+
     def _drain_rotated(self, cp: Checkpoint | None, result: PollResult) -> None:
         """Read the old inode to EOF if we still hold it, so nothing appended before rotation is lost."""
         if self._fd is None:
@@ -168,7 +184,7 @@ class JsonlTailer:
         if cp is None:
             with self.store.reader.connect() as conn:
                 cp = read_checkpoint(conn, self.source_id)
-        if cp is not None and (cp.file_dev, cp.file_ino) == self._fd_ident:
+        if cp is not None and cp.file_ino == self._fd_ident:
             self._drain(self._fd, cp, result, final=True)
         os.close(self._fd)
         self._fd, self._fd_ident = None, None
@@ -323,6 +339,11 @@ class JsonlTailer:
             evidence_kind=mapped.evidence_kind,
             payload=line,
         )
+
+
+def _file_id(st: os.stat_result) -> int:
+    """A file is its inode: APFS st_dev isn't stable across reboots, so a dev change alone isn't a rotation."""
+    return st.st_ino
 
 
 def _anchor(fd: int, offset: int) -> str:
