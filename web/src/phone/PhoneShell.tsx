@@ -59,18 +59,6 @@ export function PhoneShell(props: {
   useEffect(() => {
     void api.attention().then((a) => setWaiting(a.items.length)).catch(() => undefined);
   }, [ws.attentionVersion]);
-  useEffect(() => {
-    // a home-screen app fills the screen, but iOS sizes a fixed inset: 0 box short of it by the top inset
-    if (!window.matchMedia?.("(display-mode: standalone)").matches) return;
-    const fit = () => {
-      const portrait = window.matchMedia("(orientation: portrait)").matches;
-      const h = portrait ? Math.max(window.screen.width, window.screen.height) : Math.min(window.screen.width, window.screen.height);
-      document.documentElement.style.setProperty("--ph-screen-h", `${h}px`);
-    };
-    fit();
-    window.addEventListener("resize", fit);
-    return () => window.removeEventListener("resize", fit);
-  }, []);
 
   let screen: ReactNode;
   if (tab === "inbox")
