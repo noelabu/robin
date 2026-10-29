@@ -1,0 +1,649 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Robin light UI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #faf8f4;
+    --surface: #ffffff;
+    --sunk: #f3f0ea;
+    --line: #ece7de;
+    --line-2: #e0d9cc;
+    --ink: #23211d;
+    --ink-2: #4a463f;
+    --muted: #6f695f;
+    --faint: #9a9488;
+    --egg: #8fd3cf;
+    --teal: #1f6f6b;
+    --teal-2: #175a57;
+    --teal-soft: #e4f4f2;
+    --teal-ink: #143f3c;
+    --teal-time: #5b8c88;
+    --coral: #c94f33;
+    --coral-soft: #fdeee8;
+    --sage: #3c7650;
+    --sage-soft: #e9f3ea;
+    --amber: #9a5d06;
+    --amber-soft: #fbf2df;
+    --lilac: #5a4fa0;
+    --lilac-soft: #efecfa;
+    --sky: #2d5f97;
+    --sky-soft: #e6eff9;
+    --rose: #a33d6a;
+    --rose-soft: #faeaf1;
+    --sh-1: 0 1px 2px rgba(60, 50, 30, .05), 0 2px 8px rgba(60, 50, 30, .04);
+    --sh-2: 0 1px 2px rgba(60, 50, 30, .05), 0 10px 30px rgba(60, 50, 30, .08);
+    --sans: "Figtree", ui-sans-serif, sans-serif;
+    --serif: "Instrument Serif", Georgia, serif;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: #e9e5dd; color: var(--ink); font: 14px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+
+  /* -- mockup chrome ------------------------------------------------------------------------- */
+  .deck { max-width: 1500px; margin: 0 auto; padding: 28px 16px 64px; }
+  .deck-head { display: flex; align-items: end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+  .deck-head h1 { font: 400 34px/1.1 var(--serif); margin: 0; }
+  .deck-head p { margin: 4px 0 0; color: var(--muted); max-width: 64ch; }
+  .deck-tabs { display: flex; gap: 4px; background: #fffaf2; border: 1px solid var(--line-2); border-radius: 999px; padding: 4px; }
+  .deck-tabs button { border: 0; background: none; padding: 6px 14px; border-radius: 999px; color: var(--muted); font-weight: 500; }
+  .deck-tabs button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+  .screen { display: none; }
+  .screen.on { display: block; animation: rise .45s cubic-bezier(.2, .7, .2, 1); }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+  .window {
+    background: var(--paper); border-radius: 16px; overflow: hidden; height: 880px;
+    box-shadow: 0 1px 0 #fff inset, 0 30px 80px rgba(60, 50, 30, .18), 0 0 0 1px rgba(60, 50, 30, .08);
+    display: grid; grid-template-rows: 60px 1fr;
+  }
+
+  /* -- top bar ------------------------------------------------------------------------------- */
+  .top {
+    display: grid; grid-template-columns: 260px 1fr auto; align-items: center; gap: 16px; padding: 0 18px;
+    border-bottom: 1px solid var(--line); background: rgba(255, 255, 255, .7); backdrop-filter: blur(8px);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand b { font: 400 26px/1 var(--serif); letter-spacing: -.01em; }
+  .seg { justify-self: center; display: flex; background: var(--sunk); border-radius: 10px; padding: 3px; gap: 2px; }
+  .seg button { border: 0; background: none; padding: 6px 16px; border-radius: 8px; font-weight: 500; color: var(--muted); }
+  .seg button.on { background: var(--surface); color: var(--ink); box-shadow: var(--sh-1); }
+  .top-r { display: flex; align-items: center; gap: 10px; }
+  .search {
+    display: flex; align-items: center; gap: 8px; width: 260px; padding: 7px 10px; border-radius: 10px;
+    background: var(--sunk); color: var(--faint); font-size: 13px;
+  }
+  .search kbd { margin-left: auto; font: 500 11px var(--sans); color: var(--muted); background: var(--surface); border: 1px solid var(--line-2); border-radius: 5px; padding: 0 5px; }
+  .icon-btn { position: relative; width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); display: grid; place-items: center; }
+  .icon-btn .badge { position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--coral); color: #fff; font: 700 11px/18px var(--sans); text-align: center; border: 2px solid var(--paper); }
+  .btn { border: 1px solid var(--line-2); background: var(--surface); border-radius: 10px; padding: 7px 14px; font-weight: 600; }
+  .btn.primary { background: var(--teal); border-color: var(--teal); color: #fff; box-shadow: 0 1px 2px color-mix(in srgb, var(--teal-2) 30%, transparent); }
+  .btn.primary:hover { background: var(--teal-2); }
+  .btn.ghost { background: none; }
+  .btn.sm { padding: 4px 10px; font-size: 13px; border-radius: 8px; }
+
+  /* -- shared bits --------------------------------------------------------------------------- */
+  .body { display: grid; grid-template-columns: 260px 1fr; min-height: 0; }
+  .rail { border-right: 1px solid var(--line); padding: 16px 12px; overflow: auto; background: #fcfbf8; }
+  .rail h4 { margin: 18px 8px 8px; font: 600 12px var(--sans); color: var(--muted); }
+  .filter { display: flex; background: var(--sunk); border-radius: 9px; padding: 3px; }
+  .filter button { flex: 1; border: 0; background: none; padding: 5px 0; border-radius: 7px; font-size: 13px; color: var(--muted); font-weight: 500; }
+  .filter button.on { background: var(--surface); color: var(--ink); box-shadow: var(--sh-1); }
+  .filter button small { color: var(--faint); margin-left: 3px; font-weight: 500; }
+  .folder { display: flex; align-items: center; gap: 9px; padding: 7px 8px; border-radius: 8px; font-weight: 600; font-size: 13.5px; }
+  .folder:hover { background: var(--sunk); }
+  .folder .n { margin-left: auto; font-weight: 500; color: var(--faint); font-size: 12px; }
+  .dot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+  .sess { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 26px; border-radius: 8px; font-size: 13px; color: var(--ink-2); }
+  .sess span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sess .t { margin-left: auto; color: var(--faint); font-size: 12px; flex: none; }
+  .sess.sel { background: var(--surface); box-shadow: var(--sh-1); color: var(--ink); }
+  .live { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); flex: none; box-shadow: 0 0 0 0 color-mix(in srgb, var(--teal) 40%, transparent); animation: pulse 2s infinite; }
+  .live.coral { background: var(--coral); animation-name: pulse-c; }
+  @keyframes pulse { 70% { box-shadow: 0 0 0 6px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+  @keyframes pulse-c { 0% { box-shadow: 0 0 0 0 rgba(201, 79, 51, .45); } 70% { box-shadow: 0 0 0 6px rgba(201, 79, 51, 0); } 100% { box-shadow: 0 0 0 0 rgba(201, 79, 51, 0); } }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font: 600 12px var(--sans); }
+  .pill.work { background: var(--teal-soft); color: var(--teal); }
+  .pill.ask { background: var(--coral-soft); color: var(--coral); }
+  .pill.done { background: var(--sage-soft); color: var(--sage); }
+  .pill.wait { background: var(--amber-soft); color: var(--amber); }
+  .pill.idle { background: var(--sunk); color: var(--muted); }
+  .rt { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); font-weight: 500; }
+  .rt i { width: 18px; height: 18px; border-radius: 6px; display: grid; place-items: center; font-style: normal; font-size: 11px; font-weight: 700; }
+  .rt .claude { background: #fbe9e1; color: #c1603e; }
+  .rt .codex { background: #ecebe7; color: #3d3b37; }
+  .rt .pi { background: var(--lilac-soft); color: var(--lilac); }
+  .file { font: 400 11.5px var(--mono); color: var(--ink-2); background: var(--sunk); border-radius: 6px; padding: 1px 6px; white-space: nowrap; }
+  .file.add { color: var(--sage); }
+  .bar { height: 5px; border-radius: 3px; background: var(--sunk); overflow: hidden; }
+  .bar > i { display: block; height: 100%; border-radius: 3px; background: var(--teal); }
+
+  /* -- map ----------------------------------------------------------------------------------- */
+  .canvas {
+    position: relative; overflow: hidden;
+    background-color: var(--paper);
+    background-image: radial-gradient(rgba(60, 50, 30, .09) 1px, transparent 1.3px);
+    background-size: 24px 24px;
+  }
+  .island { position: absolute; z-index: 0; border-radius: 22px; padding: 14px 16px 18px; }
+  .island-h { display: flex; align-items: baseline; gap: 10px; margin: 0 4px 12px; }
+  .island-h b { font: 400 22px/1 var(--serif); }
+  .island-h span { font: 400 12px var(--mono); color: var(--muted); }
+  .island-h em { margin-left: auto; font-style: normal; font-size: 12px; color: var(--muted); font-weight: 500; }
+  .card {
+    position: absolute; width: 290px; background: var(--surface); border-radius: 14px; padding: 13px 14px 12px;
+    box-shadow: var(--sh-2); border: 1px solid rgba(60, 50, 30, .06); transition: transform .2s, box-shadow .2s;
+  }
+  .card:hover { transform: translateY(-2px); box-shadow: 0 2px 4px rgba(60, 50, 30, .05), 0 16px 40px rgba(60, 50, 30, .12); }
+  .card.ask { box-shadow: 0 0 0 2px var(--coral), 0 12px 30px rgba(201, 79, 51, .16); }
+  .card.sel { box-shadow: 0 0 0 2px var(--teal), 0 12px 30px color-mix(in srgb, var(--teal) 16%, transparent); }
+  .card-h { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .card h3 { margin: 0 0 10px; font: 600 15px/1.35 var(--sans); letter-spacing: -.005em; }
+  .card .meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .card .meta .bar { flex: 1; }
+  .card .files { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 10px; }
+  .card .ask-box { margin-top: 10px; background: var(--coral-soft); border-radius: 10px; padding: 9px 10px; font-size: 12.5px; }
+  .card .ask-box code { display: block; font: 400 11.5px var(--mono); margin: 4px 0 8px; color: var(--ink); }
+  .card .ask-box .row { display: flex; gap: 6px; }
+  .mini { width: 210px; padding: 10px 12px; border-radius: 12px; }
+  .mini .k { font-size: 11.5px; font-weight: 600; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .mini .v { font-size: 13px; font-weight: 600; margin-top: 3px; }
+  .mini .s { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .k .glyph { width: 16px; height: 16px; border-radius: 5px; display: grid; place-items: center; font-size: 10px; }
+  .wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+  .card { z-index: 2; }
+  .wires path { fill: none; stroke: #cfc7b8; stroke-width: 1.5; }
+  .wires path.on { stroke: var(--egg); stroke-width: 2; stroke-dasharray: 4 6; animation: flow 1.2s linear infinite; }
+  @keyframes flow { to { stroke-dashoffset: -20; } }
+  .zoom { position: absolute; left: 18px; bottom: 18px; display: flex; align-items: center; background: var(--surface); border-radius: 10px; box-shadow: var(--sh-1); border: 1px solid var(--line); }
+  .zoom button { border: 0; background: none; width: 34px; height: 32px; color: var(--muted); font-size: 16px; }
+  .zoom span { font-size: 12px; color: var(--muted); width: 44px; text-align: center; }
+  .toast {
+    position: absolute; right: 18px; bottom: 18px; width: 320px; background: var(--surface); border-radius: 14px; box-shadow: var(--sh-2);
+    border: 1px solid var(--line); padding: 12px 14px; display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: center;
+  }
+  .toast .k { font-size: 12px; color: var(--muted); }
+  .toast .v { grid-column: 2; font-size: 13px; font-weight: 500; }
+  .toast .v code { font: 400 12px var(--mono); background: var(--sunk); padding: 0 5px; border-radius: 5px; }
+
+  /* -- sessions ------------------------------------------------------------------------------ */
+  .three { display: grid; grid-template-columns: 260px 1fr 320px; min-height: 0; }
+  .convo { display: grid; grid-template-rows: auto 1fr auto; min-height: 0; background: var(--surface); }
+  .convo-h { padding: 18px 28px 14px; border-bottom: 1px solid var(--line); }
+  .convo-h h2 { margin: 6px 0 6px; font: 400 28px/1.15 var(--serif); letter-spacing: -.005em; }
+  .convo-h .sub { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; font-size: 12.5px; color: var(--muted); }
+  .convo-h .sub code { font: 400 12px var(--mono); }
+  .stream { overflow: auto; padding: 22px 28px; display: grid; gap: 18px; align-content: start; }
+  .you { justify-self: end; max-width: 72%; background: var(--teal-soft); color: var(--teal-ink); border-radius: 16px 16px 4px 16px; padding: 10px 14px; }
+  .you small { display: block; text-align: right; color: var(--teal-time); font-size: 11px; margin-top: 4px; }
+  .worked { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+  .worked::before { content: ""; width: 14px; height: 1px; background: var(--line-2); }
+  .worked b { font-weight: 600; color: var(--ink-2); }
+  .worked .tools { display: flex; gap: 4px; }
+  .worked .tools span { background: var(--sunk); border-radius: 6px; padding: 0 6px; font-size: 11.5px; }
+  .reply { max-width: 82%; line-height: 1.6; }
+  .reply h5 { font: 600 14px var(--sans); margin: 12px 0 4px; }
+  .reply p { margin: 0 0 8px; }
+  .reply ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+  .reply code { font: 400 12.5px var(--mono); background: var(--sunk); border-radius: 5px; padding: 0 5px; }
+  .running { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--teal); font-weight: 500; }
+  .running .step { color: var(--muted); font-weight: 400; font: 400 12px var(--mono); }
+  .composer { padding: 14px 28px 20px; }
+  .composer-box { border: 1px solid var(--line-2); border-radius: 14px; background: var(--surface); box-shadow: var(--sh-1); padding: 12px 14px 10px; }
+  .composer-box .placeholder { color: var(--faint); min-height: 40px; }
+  .composer-box .row { display: flex; align-items: center; gap: 8px; }
+  .composer-box .row .hint { font-size: 12px; color: var(--faint); }
+  .composer-box .row .btn.primary { margin-left: auto; }
+  .inspect { border-left: 1px solid var(--line); padding: 18px 18px; overflow: auto; background: #fcfbf8; display: grid; gap: 14px; align-content: start; }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; box-shadow: var(--sh-1); }
+  .panel h6 { margin: 0 0 10px; font: 600 12.5px var(--sans); color: var(--muted); display: flex; justify-content: space-between; }
+  .panel h6 a { color: var(--teal); text-decoration: none; font-weight: 600; }
+  .todo { display: flex; gap: 9px; align-items: flex-start; font-size: 13px; padding: 4px 0; }
+  .todo .b { width: 16px; height: 16px; border-radius: 5px; border: 1.5px solid var(--line-2); flex: none; margin-top: 2px; display: grid; place-items: center; }
+  .todo.ok .b { background: var(--sage); border-color: var(--sage); color: #fff; font-size: 10px; }
+  .todo.ok span { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--line-2); }
+  .todo.now .b { border-color: var(--teal); }
+  .todo.now .b::after { content: ""; width: 6px; height: 6px; border-radius: 2px; background: var(--teal); }
+  .todo.now span { font-weight: 600; }
+  .facts { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 13px; margin: 0; }
+  .facts dt { color: var(--muted); }
+  .facts dd { margin: 0; text-align: right; }
+  .facts code { font: 400 12px var(--mono); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .attn { background: var(--coral-soft); border: 1px solid #f4cfc3; border-radius: 14px; padding: 14px; }
+  .attn h6 { margin: 0 0 6px; font: 600 12.5px var(--sans); color: var(--coral); display: flex; align-items: center; gap: 8px; }
+  .attn p { margin: 0 0 8px; font-size: 13px; }
+  .attn code { display: block; font: 400 12px var(--mono); background: rgba(255, 255, 255, .7); border-radius: 8px; padding: 7px 9px; margin-bottom: 10px; }
+  .attn .btn.primary { background: var(--coral); border-color: var(--coral); }
+
+  /* -- phone --------------------------------------------------------------------------------- */
+  .phones { display: flex; gap: 36px; justify-content: center; flex-wrap: wrap; padding: 30px 0 10px; }
+  .phone-wrap { display: grid; gap: 12px; justify-items: center; }
+  .phone-wrap > p { margin: 0; font: 400 20px var(--serif); }
+  .phone {
+    width: 360px; height: 760px; border-radius: 46px; background: #1b1a18; padding: 11px;
+    box-shadow: 0 30px 70px rgba(60, 50, 30, .25);
+  }
+  .ph { width: 100%; height: 100%; border-radius: 36px; overflow: hidden; background: var(--paper); display: grid; grid-template-rows: 44px auto 1fr 74px; position: relative; }
+  .ph-status { display: flex; justify-content: space-between; align-items: center; padding: 0 26px; font: 600 14px var(--sans); }
+  .ph-head { padding: 6px 20px 12px; display: flex; align-items: center; justify-content: space-between; }
+  .ph-head b { font: 400 30px/1 var(--serif); }
+  .ph-main { overflow: hidden; padding: 0 14px; display: grid; gap: 10px; align-content: start; }
+  .ph-tabs { border-top: 1px solid var(--line); background: rgba(255, 255, 255, .85); display: grid; grid-template-columns: repeat(4, 1fr); padding: 8px 6px 18px; }
+  .ph-tabs div { display: grid; justify-items: center; gap: 3px; font-size: 11px; color: var(--faint); font-weight: 500; }
+  .ph-tabs div.on { color: var(--teal); }
+  .ph-tabs svg { width: 22px; height: 22px; }
+  .ph-card { background: var(--surface); border-radius: 16px; padding: 13px 14px; box-shadow: var(--sh-1); border: 1px solid rgba(60, 50, 30, .05); }
+  .ph-card h3 { margin: 6px 0 4px; font: 600 15px/1.35 var(--sans); }
+  .ph-card .sm { font-size: 12.5px; color: var(--muted); }
+  .ph-sec { font: 600 12.5px var(--sans); color: var(--muted); margin: 8px 6px 0; }
+  .ph-big { padding: 16px; border-radius: 18px; }
+  .ph-big .opts { display: grid; gap: 6px; margin: 10px 0; }
+  .ph-big .opts div { border: 1px solid var(--line-2); border-radius: 12px; padding: 9px 12px; font-size: 13.5px; background: var(--surface); }
+  .ph-big .opts div.on { border-color: var(--teal); background: var(--teal-soft); color: var(--teal-ink); font-weight: 600; }
+  .ph-big .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .ph-big .row .btn { padding: 10px; border-radius: 12px; }
+  .ph-chat { display: grid; gap: 12px; padding-top: 4px; }
+  .ph-chat .you { max-width: 85%; font-size: 13.5px; }
+  .ph-chat .reply { max-width: 100%; font-size: 13.5px; }
+  .ph-compose { position: absolute; left: 12px; right: 12px; bottom: 86px; background: var(--surface); border: 1px solid var(--line-2); border-radius: 22px; padding: 10px 10px 10px 16px; display: flex; align-items: center; box-shadow: var(--sh-2); color: var(--faint); font-size: 14px; }
+  .ph-compose span { margin-left: auto; width: 32px; height: 32px; border-radius: 50%; background: var(--teal); display: grid; place-items: center; color: #fff; }
+  .ph-row { display: flex; align-items: center; gap: 8px; }
+  .ph-row .t { margin-left: auto; font-size: 12px; color: var(--faint); }
+
+
+  /* accent themes: --egg is the pastel, --teal the deep shade (white text on it is 4.5:1 or more) */
+  body[data-accent="lavender"] { --egg: #c9bff0; --teal: #5b4fa6; --teal-2: #4a3f8f; --teal-soft: #efecfa; --teal-ink: #2e2766; --teal-time: #7d74b8; }
+  body[data-accent="sage"] { --egg: #b9d8b4; --teal: #3f6e45; --teal-2: #335a38; --teal-soft: #ebf4e8; --teal-ink: #24402a; --teal-time: #6f9472; }
+  body[data-accent="peach"] { --egg: #f6c7a6; --teal: #a4502a; --teal-2: #8a4220; --teal-soft: #fdf0e6; --teal-ink: #5a2a12; --teal-time: #b07a5c; }
+  body[data-accent="rose"] { --egg: #f1bfd0; --teal: #a33d6a; --teal-2: #8a3158; --teal-soft: #fbeaf1; --teal-ink: #561f37; --teal-time: #b17090; }
+  body[data-accent="sky"] { --egg: #b8cdf2; --teal: #3a5fa8; --teal-2: #2f4f8f; --teal-soft: #e9effb; --teal-ink: #1f3563; --teal-time: #6f86b5; }
+  body[data-accent="butter"] { --egg: #f2dc8f; --teal: #7d6410; --teal-2: #67520c; --teal-soft: #fbf5df; --teal-ink: #453708; --teal-time: #9c8a4c; }
+  .accents { display: flex; align-items: center; gap: 6px; background: #fffaf2; border: 1px solid var(--line-2); border-radius: 999px; padding: 5px 10px 5px 12px; }
+  .accents > span { font-size: 12.5px; color: var(--muted); margin-right: 4px; }
+  .accents button {
+    width: 26px; height: 26px; border-radius: 50%; border: 0; padding: 0; position: relative;
+    background: linear-gradient(135deg, var(--a) 55%, var(--b) 55%); box-shadow: 0 0 0 1px rgba(0, 0, 0, .08) inset;
+  }
+  .accents button[aria-pressed="true"] { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--b); }
+  .deck-r { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+  /* -- notes --------------------------------------------------------------------------------- */
+  .notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 22px; }
+  .note { background: #fffaf2; border: 1px solid var(--line-2); border-radius: 14px; padding: 14px 16px; font-size: 13px; color: var(--ink-2); }
+  .note b { display: block; font: 400 20px var(--serif); color: var(--ink); margin-bottom: 4px; }
+  .sw { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .sw span { width: 26px; height: 26px; border-radius: 8px; border: 1px solid rgba(0, 0, 0, .06); }
+
+  @media (max-width: 1100px) {
+    .window { height: auto; }
+    .three { grid-template-columns: 1fr; }
+    .rail, .inspect { display: none; }
+    .body { grid-template-columns: 1fr; }
+    .canvas { height: 760px; }
+    .top { grid-template-columns: 1fr auto; }
+    .seg, .search { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body data-accent="lavender">
+<div class="deck">
+  <div class="deck-head">
+    <div>
+      <h1>Robin, light</h1>
+      <p>A light mode with its own look: warm paper, pastel tones, rounded cards, sentence case. Pick the accent colour on the right. Static mockup with sample data.</p>
+    </div>
+    <div class="deck-r">
+    <div class="accents" role="group" aria-label="Accent colour">
+      <span id="accent-name">Lavender</span>
+      <button aria-pressed="false" data-a="egg" title="Robin's egg" style="--a:#8fd3cf; --b:#1f6f6b"></button>
+      <button aria-pressed="true" data-a="lavender" title="Lavender" style="--a:#c9bff0; --b:#5b4fa6"></button>
+      <button aria-pressed="false" data-a="sage" title="Sage" style="--a:#b9d8b4; --b:#3f6e45"></button>
+      <button aria-pressed="false" data-a="peach" title="Peach" style="--a:#f6c7a6; --b:#a4502a"></button>
+      <button aria-pressed="false" data-a="rose" title="Rose" style="--a:#f1bfd0; --b:#a33d6a"></button>
+      <button aria-pressed="false" data-a="sky" title="Sky" style="--a:#b8cdf2; --b:#3a5fa8"></button>
+      <button aria-pressed="false" data-a="butter" title="Butter" style="--a:#f2dc8f; --b:#7d6410"></button>
+    </div>
+    <div class="deck-tabs" role="group" aria-label="Screens">
+      <button aria-pressed="true" data-s="map">Map</button>
+      <button aria-pressed="false" data-s="sessions">Sessions</button>
+      <button aria-pressed="false" data-s="phone">Phone</button>
+      <button aria-pressed="false" data-s="system">System</button>
+    </div>
+    </div>
+  </div>
+
+  <!-- ================================================================ MAP -->
+  <section class="screen on" id="map">
+    <div class="window">
+      <header class="top">
+        <div class="brand">
+          <svg width="26" height="30" viewBox="0 0 26 30" aria-hidden="true"><ellipse cx="13" cy="16" rx="11.5" ry="13.5" style="fill:var(--egg)"/><circle cx="9" cy="11" r="1.3" style="fill:var(--teal)" opacity=".55"/><circle cx="16" cy="9" r=".9" style="fill:var(--teal)" opacity=".5"/><circle cx="17" cy="19" r="1.5" style="fill:var(--teal)" opacity=".45"/><circle cx="8.5" cy="21" r="1" style="fill:var(--teal)" opacity=".5"/><ellipse cx="9" cy="9" rx="3" ry="4" fill="#fff" opacity=".35"/></svg>
+          <b>Robin</b>
+        </div>
+        <div class="seg"><button class="on">Map</button><button>Sessions</button></div>
+        <div class="top-r">
+          <div class="search"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Search sessions<kbd>⌘K</kbd></div>
+          <button class="icon-btn" aria-label="Needs attention"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10 21a2 2 0 0 0 4 0"/></svg><span class="badge">2</span></button>
+          <button class="btn primary">New session</button>
+        </div>
+      </header>
+      <div class="body">
+        <aside class="rail">
+          <div class="filter"><button class="on">Active<small>4</small></button><button>Today<small>12</small></button><button>All<small>623</small></button></div>
+          <h4>Folders</h4>
+          <div class="folder"><i class="dot" style="background:#8fd3cf"></i>robin<span class="n">2</span></div>
+          <div class="sess sel"><i class="live"></i><span>Softer light theme</span><span class="t">now</span></div>
+          <div class="sess"><i class="live coral"></i><span>Web push for phone alerts</span><span class="t">1m</span></div>
+          <div class="folder"><i class="dot" style="background:#b8cdf2"></i>boost-api<span class="n">1</span></div>
+          <div class="sess"><i class="live"></i><span>Fix duplicate invoice upsert</span><span class="t">4m</span></div>
+          <div class="folder"><i class="dot" style="background:#f3c9a0"></i>extract-svc<span class="n">1</span></div>
+          <div class="sess"><i class="live"></i><span>Benchmark OCR v3</span><span class="t">9m</span></div>
+          <h4>Earlier today</h4>
+          <div class="sess"><span>Rewrite the README</span><span class="t">2h</span></div>
+          <div class="sess"><span>Phone app status bar</span><span class="t">3h</span></div>
+          <div class="sess"><span>Inode-based tailing</span><span class="t">5h</span></div>
+        </aside>
+
+        <div class="canvas">
+          <svg class="wires" aria-hidden="true">
+            <path class="on" d="M346 168 C 390 168, 390 136, 430 136"/>
+            <path class="on" d="M346 168 C 390 168, 390 232, 430 232"/>
+            <path d="M640 136 C 670 136, 670 136, 700 136"/>
+            <path class="on" d="M346 418 C 390 418, 390 428, 430 428"/>
+            <path class="on" d="M788 672 C 805 672, 805 660, 820 660"/>
+          </svg>
+
+          <div class="island" style="left:28px; top:22px; width:900px; height:500px; background:linear-gradient(160deg, #e6f5f3, #eef8f6 60%, #f3faf8);">
+            <div class="island-h"><b>robin</b><span>~/Documents/Personal/robin</span><em>2 sessions · main</em></div>
+          </div>
+          <div class="card sel" style="left:56px; top:82px;">
+            <div class="card-h"><span class="rt"><i class="claude">✳</i>claude · now</span><span class="pill work"><i class="live"></i>Working</span></div>
+            <h3>Softer, cleaner light theme for the dashboard</h3>
+            <div class="meta"><span>3 of 5</span><div class="bar"><i style="width:60%"></i></div></div>
+            <div class="files"><span class="file">styles.css</span><span class="file">map.css</span><span class="file add">light-ui-mockup.html</span></div>
+          </div>
+          <div class="card mini" style="left:430px; top:96px;">
+            <div class="k"><span class="glyph" style="background:var(--lilac-soft);color:var(--lilac)">◆</span>Skill</div>
+            <div class="v">frontend-design</div>
+            <div class="s">Building the mockup</div>
+          </div>
+          <div class="card mini" style="left:430px; top:192px;">
+            <div class="k"><span class="glyph" style="background:var(--sky-soft);color:var(--sky)">▸</span>Shell</div>
+            <div class="v" style="font:500 12px var(--mono)">npx vitest run</div>
+            <div class="s">177 passed</div>
+          </div>
+          <div class="card mini" style="left:700px; top:96px; opacity:.75">
+            <div class="k"><span class="glyph" style="background:var(--sage-soft);color:var(--sage)">✓</span>Subagent</div>
+            <div class="v">Explore</div>
+            <div class="s">Done · 41s</div>
+          </div>
+
+          <div class="card ask" style="left:56px; top:330px;">
+            <div class="card-h"><span class="rt"><i class="codex">›_</i>codex · 1m</span><span class="pill ask"><i class="live coral"></i>Needs approval</span></div>
+            <h3>Web push alerts for the phone app</h3>
+            <div class="ask-box">Run this command?
+              <code>uv add pywebpush</code>
+              <div class="row"><button class="btn sm primary" style="background:var(--coral);border-color:var(--coral)">Approve</button><button class="btn sm">Deny</button></div>
+            </div>
+          </div>
+          <div class="card mini" style="left:430px; top:388px;">
+            <div class="k"><span class="glyph" style="background:var(--amber-soft);color:var(--amber)">⌁</span>Workflow</div>
+            <div class="v">review-lite</div>
+            <div class="s">Find 2/3 · Verify 0/2</div>
+          </div>
+
+          <div class="island" style="left:28px; top:548px; width:420px; height:250px; background:linear-gradient(160deg, #e6eff9, #f0f5fc);">
+            <div class="island-h"><b>boost-api</b><span>~/work/boost-api</span></div>
+          </div>
+          <div class="card" style="left:56px; top:604px;">
+            <div class="card-h"><span class="rt"><i class="claude">✳</i>claude · 4m</span><span class="pill work"><i class="live"></i>Working</span></div>
+            <h3>Fix duplicate invoice upsert</h3>
+            <div class="meta"><span>1 of 4</span><div class="bar"><i style="width:25%; background:var(--sky)"></i></div></div>
+            <div class="files"><span class="file">invoices/upsert.py</span></div>
+          </div>
+
+          <div class="island" style="left:470px; top:548px; width:640px; height:250px; background:linear-gradient(160deg, #fbf0e3, #fcf5ec);">
+            <div class="island-h"><b>extract-svc</b><span>~/work/extract-svc</span><em>worktree · robin/ocr-v3</em></div>
+          </div>
+          <div class="card" style="left:498px; top:604px;">
+            <div class="card-h"><span class="rt"><i class="pi">π</i>pi · 9m</span><span class="pill work"><i class="live"></i>Working</span></div>
+            <h3>Benchmark OCR v3 against the golden set</h3>
+            <div class="meta"><span>2 of 3</span><div class="bar"><i style="width:66%; background:#c88a3c"></i></div></div>
+            <div class="files"><span class="file">bench/run.py</span><span class="file">results.jsonl</span></div>
+          </div>
+          <div class="card mini" style="left:820px; top:620px;">
+            <div class="k"><span class="glyph" style="background:var(--sky-soft);color:var(--sky)">▸</span>Shell</div>
+            <div class="v" style="font:500 12px var(--mono)">python bench/run.py</div>
+            <div class="s">412 / 600 docs</div>
+          </div>
+
+          <div class="zoom"><button>−</button><span>100%</span><button>+</button></div>
+          <div class="toast">
+            <span class="rt"><i class="claude">✳</i></span><span class="k">Latest · robin · just now</span>
+            <span class="v">Edited <code>web/src/styles.css</code></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================ SESSIONS -->
+  <section class="screen" id="sessions">
+    <div class="window">
+      <header class="top">
+        <div class="brand">
+          <svg width="26" height="30" viewBox="0 0 26 30" aria-hidden="true"><ellipse cx="13" cy="16" rx="11.5" ry="13.5" style="fill:var(--egg)"/><circle cx="9" cy="11" r="1.3" style="fill:var(--teal)" opacity=".55"/><circle cx="16" cy="9" r=".9" style="fill:var(--teal)" opacity=".5"/><circle cx="17" cy="19" r="1.5" style="fill:var(--teal)" opacity=".45"/><circle cx="8.5" cy="21" r="1" style="fill:var(--teal)" opacity=".5"/><ellipse cx="9" cy="9" rx="3" ry="4" fill="#fff" opacity=".35"/></svg>
+          <b>Robin</b>
+        </div>
+        <div class="seg"><button>Map</button><button class="on">Sessions</button></div>
+        <div class="top-r">
+          <div class="search"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Search sessions<kbd>⌘K</kbd></div>
+          <button class="icon-btn" aria-label="Needs attention"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10 21a2 2 0 0 0 4 0"/></svg><span class="badge">2</span></button>
+          <button class="btn primary">New session</button>
+        </div>
+      </header>
+      <div class="three">
+        <aside class="rail">
+          <div class="filter"><button class="on">Active<small>4</small></button><button>Today<small>12</small></button><button>All<small>516</small></button></div>
+          <h4>robin</h4>
+          <div class="sess sel" style="padding-left:8px"><i class="live"></i><span>Softer light theme</span><span class="t">now</span></div>
+          <div class="sess" style="padding-left:8px"><i class="live coral"></i><span>Web push for phone alerts</span><span class="t">1m</span></div>
+          <h4>boost-api</h4>
+          <div class="sess" style="padding-left:8px"><i class="live"></i><span>Fix duplicate invoice upsert</span><span class="t">4m</span></div>
+          <h4>extract-svc</h4>
+          <div class="sess" style="padding-left:8px"><i class="live"></i><span>Benchmark OCR v3</span><span class="t">9m</span></div>
+        </aside>
+
+        <main class="convo">
+          <div class="convo-h">
+            <span class="pill work"><i class="live"></i>Working · 2m 14s</span>
+            <h2>Softer, cleaner light theme for the dashboard</h2>
+            <div class="sub"><span class="rt"><i class="claude">✳</i>claude</span><code>~/Documents/Personal/robin</code><span>⎇ main</span><span>started outside Robin</span></div>
+          </div>
+          <div class="stream">
+            <div class="you">can you make robin in the light mode version have a much lighter, softer, cleaner UI<small>1:30 PM</small></div>
+            <div class="worked"><b>Worked 4m</b><span class="tools"><span>Read 6</span><span>Edit 4</span><span>Bash 9</span></span></div>
+            <div class="reply">
+              <p>Light mode now has a softer, cleaner look. The layout, fonts and dark mode are unchanged. All 177 web tests pass.</p>
+              <h5>What changed</h5>
+              <ol>
+                <li><b>Surfaces:</b> near-white neutrals in place of the lavender tint.</li>
+                <li><b>Map cards:</b> plain white, folder colour only on the edge and the bar.</li>
+                <li><b>Accent:</b> a calmer indigo; a softer amber launch button.</li>
+              </ol>
+            </div>
+            <div class="you">no what i want is a complete new ui for light mode<small>1:52 PM</small></div>
+            <div class="running"><i class="live"></i>Designing the mockup<span class="step">Write docs/design/light-ui-mockup.html</span></div>
+          </div>
+          <div class="composer">
+            <div class="composer-box">
+              <div class="placeholder">Message this session…</div>
+              <div class="row"><button class="btn sm ghost">＋ Attach</button><span class="hint">↵ send · ⇧↵ new line · queued while it works</span><button class="btn sm primary">Send</button></div>
+            </div>
+          </div>
+        </main>
+
+        <aside class="inspect">
+          <div class="attn">
+            <h6><i class="live coral"></i>Needs approval · Web push for phone alerts</h6>
+            <p>codex wants to run a command.</p>
+            <code>uv add pywebpush</code>
+            <div class="actions"><button class="btn sm primary">Approve</button><button class="btn sm">Deny</button><button class="btn sm ghost">Open</button></div>
+          </div>
+          <div class="panel">
+            <h6>Tasks <span>3 of 5</span></h6>
+            <div class="todo ok"><i class="b">✓</i><span>Read the current light theme</span></div>
+            <div class="todo ok"><i class="b">✓</i><span>Swap the palette</span></div>
+            <div class="todo ok"><i class="b">✓</i><span>Before and after screenshots</span></div>
+            <div class="todo now"><i class="b"></i><span>Design a new light UI</span></div>
+            <div class="todo"><i class="b"></i><span>Build it into the dashboard</span></div>
+          </div>
+          <div class="panel">
+            <h6>Files changed <a href="#">View diff</a></h6>
+            <div style="display:grid; gap:6px">
+              <div class="ph-row"><span class="file">web/src/styles.css</span><span class="t" style="color:var(--sage)">+58 −54</span></div>
+              <div class="ph-row"><span class="file">web/src/map/map.css</span><span class="t" style="color:var(--sage)">+12 −1</span></div>
+              <div class="ph-row"><span class="file add">docs/design/light-ui-mockup.html</span><span class="t" style="color:var(--sage)">new</span></div>
+            </div>
+          </div>
+          <div class="panel">
+            <h6>Session</h6>
+            <dl class="facts">
+              <dt>Runtime</dt><dd>Claude Code</dd>
+              <dt>Control</dt><dd>Observed</dd>
+              <dt>Branch</dt><dd><code>main</code></dd>
+              <dt>Started</dt><dd>1:12 PM</dd>
+            </dl>
+          </div>
+          <div class="actions"><button class="btn sm">Continue in Codex</button><button class="btn sm">Open in terminal</button><button class="btn sm ghost">Archive</button></div>
+        </aside>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================ PHONE -->
+  <section class="screen" id="phone">
+    <div class="phones">
+      <div class="phone-wrap">
+        <div class="phone"><div class="ph">
+          <div class="ph-status"><span>9:41</span><span>●●● ▮</span></div>
+          <div class="ph-head"><b>Inbox</b><span class="pill ask">2 waiting</span></div>
+          <div class="ph-main">
+            <div class="ph-card ph-big" style="background:var(--coral-soft); border-color:#f4cfc3">
+              <div class="ph-row"><span class="rt"><i class="codex">›_</i>codex · robin</span><span class="t">1m</span></div>
+              <h3>Run <span style="font:500 13px var(--mono)">uv add pywebpush</span>?</h3>
+              <div class="sm">Web push for phone alerts</div>
+              <div class="row" style="margin-top:12px"><button class="btn primary" style="background:var(--coral);border-color:var(--coral)">Approve</button><button class="btn">Deny</button></div>
+            </div>
+            <div class="ph-card ph-big">
+              <div class="ph-row"><span class="rt"><i class="claude">✳</i>claude · boost-api</span><span class="t">3m</span></div>
+              <h3>Which constraint should the upsert target?</h3>
+              <div class="opts"><div class="on">invoice_number + tenant_id</div><div>external_id</div><div>Something else…</div></div>
+              <button class="btn primary" style="width:100%; padding:10px; border-radius:12px">Send answer</button>
+            </div>
+            <div class="ph-sec">Working now</div>
+            <div class="ph-card"><div class="ph-row"><i class="live"></i><b style="font-size:14px">Softer light theme</b><span class="t">now</span></div></div>
+          </div>
+          <nav class="ph-tabs">
+            <div class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 13h4l2 3h4l2-3h4"/><path d="M5 5h14l1 8v6H4v-6z"/></svg>Inbox</div>
+            <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Sessions</div>
+            <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="7" height="7" rx="2"/><rect x="14" y="13" width="7" height="7" rx="2"/><path d="M10 7.5h2a2 2 0 0 1 2 2v3.5"/></svg>Map</div>
+            <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4"/></svg>Settings</div>
+          </nav>
+        </div></div>
+        <p>Inbox</p>
+      </div>
+
+      <div class="phone-wrap">
+        <div class="phone"><div class="ph">
+          <div class="ph-status"><span>9:41</span><span>●●● ▮</span></div>
+          <div class="ph-head"><b>Sessions</b><span style="color:var(--teal); font-weight:600">＋ New</span></div>
+          <div class="ph-main">
+            <div class="filter"><button class="on">Active<small>4</small></button><button>Today<small>12</small></button><button>All</button></div>
+            <div class="ph-sec">robin</div>
+            <div class="ph-card"><div class="ph-row"><span class="rt"><i class="claude">✳</i>claude</span><span class="pill work" style="margin-left:auto"><i class="live"></i>Working</span></div><h3>Softer light theme</h3><div class="meta" style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted)"><span>3 of 5</span><div class="bar" style="flex:1"><i style="width:60%"></i></div></div></div>
+            <div class="ph-card" style="box-shadow:0 0 0 2px var(--coral)"><div class="ph-row"><span class="rt"><i class="codex">›_</i>codex</span><span class="pill ask" style="margin-left:auto">Needs approval</span></div><h3>Web push for phone alerts</h3></div>
+            <div class="ph-sec">boost-api</div>
+            <div class="ph-card"><div class="ph-row"><span class="rt"><i class="claude">✳</i>claude</span><span class="pill work" style="margin-left:auto"><i class="live"></i>Working</span></div><h3>Fix duplicate invoice upsert</h3></div>
+            <div class="ph-sec">extract-svc</div>
+            <div class="ph-card"><div class="ph-row"><span class="rt"><i class="pi">π</i>pi</span><span class="pill done" style="margin-left:auto">Done</span></div><h3>Benchmark OCR v3</h3></div>
+          </div>
+          <nav class="ph-tabs">
+            <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 13h4l2 3h4l2-3h4"/><path d="M5 5h14l1 8v6H4v-6z"/></svg>Inbox</div>
+            <div class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Sessions</div>
+            <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="7" height="7" rx="2"/><rect x="14" y="13" width="7" height="7" rx="2"/><path d="M10 7.5h2a2 2 0 0 1 2 2v3.5"/></svg>Map</div>
+            <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4"/></svg>Settings</div>
+          </nav>
+        </div></div>
+        <p>Sessions</p>
+      </div>
+
+      <div class="phone-wrap">
+        <div class="phone"><div class="ph">
+          <div class="ph-status"><span>9:41</span><span>●●● ▮</span></div>
+          <div class="ph-head" style="display:block"><span style="color:var(--teal); font-weight:600; font-size:14px">‹ Sessions</span><b style="display:block; font-size:24px; margin-top:6px">Softer light theme</b></div>
+          <div class="ph-main">
+            <div class="ph-chat">
+              <div class="you">make light mode a much softer, cleaner UI</div>
+              <div class="worked"><b>Worked 4m</b><span class="tools"><span>Edit 4</span><span>Bash 9</span></span></div>
+              <div class="reply">Light mode now has a softer look. Surfaces are near-white, Map cards are plain white, and the folder colour shows only on the edge.</div>
+              <div class="you">no, a complete new UI for light mode</div>
+              <div class="running"><i class="live"></i>Designing the mockup</div>
+            </div>
+          </div>
+          <div class="ph-compose">Message…<span>↑</span></div>
+          <nav class="ph-tabs">
+            <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 13h4l2 3h4l2-3h4"/><path d="M5 5h14l1 8v6H4v-6z"/></svg>Inbox</div>
+            <div class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Sessions</div>
+            <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="7" height="7" rx="2"/><rect x="14" y="13" width="7" height="7" rx="2"/><path d="M10 7.5h2a2 2 0 0 1 2 2v3.5"/></svg>Map</div>
+            <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4"/></svg>Settings</div>
+          </nav>
+        </div></div>
+        <p>Session</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================ SYSTEM -->
+  <section class="screen" id="system">
+    <div class="notes">
+      <div class="note"><b>Surfaces</b>Warm paper for the canvas, white for cards and the conversation, a sunk beige for fields and chips.
+        <div class="sw"><span style="background:#faf8f4"></span><span style="background:#ffffff"></span><span style="background:#f3f0ea"></span><span style="background:#ece7de"></span></div></div>
+      <div class="note"><b>Accent</b>The pastel for the mark and live wires; its deep shade for buttons, links and "working". Switch it at the top.
+        <div class="sw"><span style="background:var(--egg)"></span><span style="background:var(--teal)"></span><span style="background:var(--teal-soft)"></span></div></div>
+      <div class="note"><b>States</b>Coral asks (approval, question), teal works, sage is done, amber waits. Each has a soft fill for pills.
+        <div class="sw"><span style="background:#c94f33"></span><span style="background:#1f6f6b"></span><span style="background:#3c7650"></span><span style="background:#9a5d06"></span></div></div>
+      <div class="note"><b>Folders</b>Pastel islands in place of dashed frames; the hue also marks the folder in the sidebar and the card's progress bar.
+        <div class="sw"><span style="background:#e6f5f3"></span><span style="background:#efecfa"></span><span style="background:#fbf0e3"></span><span style="background:#faeaf1"></span><span style="background:#e6eff9"></span></div></div>
+      <div class="note"><b>Type</b><span style="font:400 22px var(--serif)">Instrument Serif</span> for titles · <span style="font-weight:600">Figtree</span> for the interface · <span style="font:400 12.5px var(--mono)">JetBrains Mono</span> only for paths, commands and code. Sentence case throughout.</div>
+      <div class="note"><b>Shape</b>14px cards, 22px islands, 10px controls, pill status chips. Soft warm shadows; no glows, scanlines or uppercase tracking.</div>
+    </div>
+  </section>
+</div>
+<script>
+  const tabs = document.querySelectorAll(".deck-tabs button");
+  tabs.forEach((t) => t.addEventListener("click", () => {
+    tabs.forEach((x) => x.setAttribute("aria-pressed", String(x === t)));
+    document.querySelectorAll(".screen").forEach((s) => s.classList.toggle("on", s.id === t.dataset.s));
+  }));
+
+  const accents = document.querySelectorAll(".accents button");
+  const pick = (a) => {
+    accents.forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.a === a)));
+    if (a === "egg") delete document.body.dataset.accent; else document.body.dataset.accent = a;
+    document.getElementById("accent-name").textContent = document.querySelector(`.accents button[data-a="${a}"]`).title;
+    try { localStorage.setItem("robin-mock-accent-v2", a); } catch {}
+  };
+  accents.forEach((b) => b.addEventListener("click", () => pick(b.dataset.a)));
+  try { const a = localStorage.getItem("robin-mock-accent-v2"); if (a && document.querySelector(`.accents button[data-a="${a}"]`)) pick(a); } catch {}
+</script>
+</body>
+</html>

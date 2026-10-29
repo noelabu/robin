@@ -256,7 +256,7 @@ export function App() {
     <div className="shell">
       <header className="topbar">
         <h1 className="brand" aria-label="Robin">
-          ROB<i>I</i>N
+          Rob<i>i</i>n
         </h1>
         {tabs}
         <SearchBox

@@ -88,7 +88,7 @@ export function MapView(props: {
         <div className="map-brand">
           <div>
             <h1 className="brand" aria-label="Robin">
-              ROB<i>I</i>N
+              Rob<i>i</i>n
             </h1>
             <small>
               {data ? `${data.clusters.length} folders · ${data.clusters.reduce((n, c) => n + c.sessions, 0)} sessions` : "Map"}
