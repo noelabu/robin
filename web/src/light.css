@@ -19,21 +19,11 @@ html:root[data-theme="light"] * { text-transform: none; letter-spacing: normal; 
   font-family: var(--sans);
 }
 
-/* -- the wordmark: "Robin" in serif beside a speckled egg ------------------------------------------- */
+/* -- the wordmark: "Robin" in serif ------------------------------------------- */
 :root[data-theme="light"] :is(.brand, .map-brand h1) {
   display: inline-block; font: 400 26px/1 var(--serif); color: var(--m-ink); letter-spacing: -.01em; white-space: nowrap;
 }
 :root[data-theme="light"] .brand i { color: inherit; }
-:root[data-theme="light"] .brand::before {
-  content: ""; display: inline-block; width: 20px; height: 24px; margin-right: 10px; vertical-align: -4px; border-radius: 50%;
-  background:
-    radial-gradient(circle at 34% 30%, #ffffff8c 0 18%, transparent 19%),
-    radial-gradient(circle at 36% 40%, color-mix(in srgb, var(--m-accent) 55%, transparent) 0 5%, transparent 6%),
-    radial-gradient(circle at 64% 30%, color-mix(in srgb, var(--m-accent) 50%, transparent) 0 4%, transparent 5%),
-    radial-gradient(circle at 66% 64%, color-mix(in srgb, var(--m-accent) 45%, transparent) 0 6%, transparent 7%),
-    radial-gradient(circle at 32% 72%, color-mix(in srgb, var(--m-accent) 50%, transparent) 0 4%, transparent 5%),
-    var(--m-egg);
-}
 :root[data-theme="light"] .map-brand h1 { font-size: 23px; }
 :root[data-theme="light"] .map-brand small { font: 500 11.5px var(--sans); color: var(--m-faint); margin-top: 2px; }
 :root[data-theme="light"] .ph-bar .brand { font-size: 28px; }
