@@ -6,6 +6,7 @@ import { SessionFlow } from "../map/SessionFlow";
 import { ContinueDialog } from "./ContinueDialog";
 import { Conversation } from "./Conversation";
 import { Runs } from "./Runs";
+import { Changes } from "./Changes";
 import { WorktreePanel } from "./WorktreePanel";
 import { sessionState } from "../map/useMap";
 import { LABEL, StateBadge } from "./StateBadge";
@@ -183,9 +184,10 @@ export function SessionDetail({
   const work = session.mode === "managed" && (
     <>
       <WorktreePanel sessionId={session.session_id} connected={session.connection_state === "connected"} updatedAt={session.updated_at} />
-      <Runs sessionId={session.session_id} updatedAt={session.updated_at} />
+      <Runs sessionId={session.session_id} updatedAt={session.updated_at} compact={compact} />
     </>
   );
+  const changes = <Changes sessionId={session.session_id} updatedAt={session.updated_at} compact={compact} />;
   const hint = (label: string) => (compact ? "" : `   ↵ ${label.toLowerCase()} · ⇧↵ new line`);
   const send = compact && (
     <button type="submit" className="send" aria-label={sendLabel} disabled={!text.trim() || sending}>
@@ -221,6 +223,7 @@ export function SessionDetail({
             {where}
             {terminal}
             {work}
+            {changes}
           </div>
         )}
         <dl className="facts">
@@ -402,6 +405,7 @@ export function SessionDetail({
         </form>
       )}
       {!compact && work}
+      {!compact && changes}
     </section>
   );
 }

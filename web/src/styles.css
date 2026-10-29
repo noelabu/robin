@@ -375,6 +375,26 @@ button.pill { cursor: pointer; background: transparent; }
 .facts-box { margin-top: 12px; font-size: 12px; color: var(--muted); }
 .facts-box > summary { cursor: pointer; color: var(--faint); }
 .facts-box .facts { margin-top: 8px; }
+
+/* -- changed files and their diffs ---------------------------------------------------------------- */
+ul.changed { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 2px; }
+ul.changed > li { overflow-wrap: anywhere; }
+.file-diff { margin: 6px 0 10px; }
+.diff-bar { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 4px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; padding: 2px 8px; background: none; color: var(--muted); font-size: 11px; }
+.seg button[aria-pressed="true"] { background: var(--line); color: var(--ink); }
+.diff-scroll { max-height: 60vh; overflow: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+table.diff { border-collapse: collapse; width: 100%; font: 12px/1.45 var(--mono); color: var(--ink); }
+table.diff td { padding: 0 6px; vertical-align: top; white-space: pre; }
+table.diff td.code { width: 100%; }
+table.diff.split td.code { width: 50%; white-space: pre-wrap; overflow-wrap: anywhere; }
+table.diff td.ln { color: var(--faint); text-align: right; user-select: none; min-width: 3ch; }
+table.diff .hunk td { color: var(--faint); background: var(--panel); padding: 2px 6px; white-space: pre-wrap; }
+table.diff .add, table.diff td.add { background: color-mix(in srgb, var(--ok) 14%, transparent); }
+table.diff .del, table.diff td.del { background: color-mix(in srgb, var(--bad) 14%, transparent); }
+table.diff .note td, table.diff td.note { color: var(--faint); }
+table.diff td.empty { background: var(--panel); }
 .readonly-note {
   margin-top: 14px; padding: 12px 14px; border-radius: 10px; background: var(--card); border: 1px dashed var(--line-hi);
   display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; color: var(--muted);

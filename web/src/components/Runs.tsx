@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type Run, type RunGit } from "../api";
+import { FileDiff } from "./Diff";
 
 const short = (sha: string | null) => (sha ? sha.slice(0, 10) : "no commits yet");
 
@@ -11,9 +12,10 @@ function startLine(g: RunGit): string {
   return `${branch} at ${short(g.base_commit)} · ${dirty}`;
 }
 
-/** Each run's Git context (FR-050): base commit, working-tree state, and the files it changed. */
-export function Runs(props: { sessionId: string; updatedAt: string }) {
+/** Each run's Git context (FR-050): base commit, working-tree state, and the files it changed; a file opens its diff. */
+export function Runs(props: { sessionId: string; updatedAt: string; compact?: boolean }) {
   const [runs, setRuns] = useState<Run[] | null>(null);
+  const [shown, setShown] = useState<string | null>(null); // run id and path
   useEffect(() => {
     let live = true;
     void api.runs(props.sessionId).then((r) => live && setRuns(r.runs)).catch(() => {});
@@ -46,11 +48,30 @@ export function Runs(props: { sessionId: string; updatedAt: string }) {
                   </p>
                 ) : r.git.changed_files.length ? (
                   <ul className="changed">
-                    {r.git.changed_files.map((f) => (
-                      <li key={f.path}>
-                        <code>{f.path}</code> {f.change}
-                      </li>
-                    ))}
+                    {r.git.changed_files.map((f) => {
+                      const id = `${r.run_id}\0${f.path}`;
+                      return (
+                        <li key={f.path}>
+                          <button
+                            type="button"
+                            className="link"
+                            aria-expanded={props.compact ? undefined : shown === id}
+                            onClick={() => setShown(shown === id ? null : id)}
+                          >
+                            <code>{f.path}</code>
+                          </button>{" "}
+                          {f.change}
+                          {shown === id && (
+                            <FileDiff
+                              path={f.path}
+                              compact={props.compact}
+                              load={() => api.runDiff(props.sessionId, r.run_id, f.path)}
+                              onClose={() => setShown(null)}
+                            />
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 ) : (
                   <p className="muted">No files changed.</p>

@@ -99,6 +99,10 @@
 }
 .ph-grab { width: 38px; height: 4px; border-radius: 2px; background: var(--line-hi); justify-self: center; }
 .ph-sheet .launch, .ph-sheet .task-panel { border: 0; padding: 0; background: none; box-shadow: none; }
+.ph-sheet.full { top: 0; max-height: 100dvh; border-radius: 0; padding-top: max(8px, env(safe-area-inset-top)); align-content: start; }
+.ph-sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; font: 12px var(--mono); }
+.ph-sheet-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ph-sheet.full .diff-scroll { max-height: none; }
 
 /* -- the Map: one folder, its cards top to bottom -------------------------------------------------- */
 .ph-map { flex: 1; min-height: 0; display: flex; flex-direction: column; }

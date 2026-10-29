@@ -29,6 +29,7 @@ from robin import activity, retrieval
 from robin.continuation.flow import links_for
 from robin.events.ingest import ensure_session, read_events
 from robin.paths import ExecutionCwd, secure_mkdir
+from robin.redact.scanner import for_data_dir
 from robin.runtime.capabilities import RUNTIME_CAPABILITIES, capabilities_for
 from robin.runtime.ledger import Action, ActionConflict, ActionRejected
 from robin.service.auth import COOKIE, CSRF_HEADER, Auth
@@ -572,6 +573,57 @@ def create_app(runtime: ServiceRuntime, auth: Auth) -> FastAPI:
         from robin.workspace import rungit
 
         return {"runs": await asyncio.to_thread(rungit.for_session, store, session_id, limit)}
+
+    def _diff_path(path: str) -> str:
+        # only paths on record are read; this just turns away what can't be one
+        if not path or "\0" in path or path.startswith("/") or ".." in path.split("/"):
+            raise ApiError(400, "bad_path", "path must be a repository-relative file path", "fix_request")
+        return path
+
+    def _folder(session_id: str) -> str | None:
+        with store.reader.connect() as conn:
+            row = conn.execute(
+                select(SessionRow.execution_cwd).where(SessionRow.session_id == session_id)
+            ).first()
+        if row is None:
+            raise ApiError(404, "not_found", f"no session {session_id}")
+        return row.execution_cwd
+
+    @app.get(f"{API}/sessions/{{session_id}}/runs/{{run_id}}/diff")
+    async def run_diff(session_id: str, run_id: str, path: str, _: str = Authed) -> Any:
+        """One file a run changed, as it was at the run's start and end, secrets redacted."""
+        from robin import gitdiff
+        from robin.workspace import rungit
+
+        rules = for_data_dir(store.data_dir)
+        try:
+            diff = await asyncio.to_thread(
+                rungit.file_diff, store, rules, session_id, run_id, _diff_path(path)
+            )
+        except gitdiff.NotListed:
+            raise ApiError(404, "not_changed", "that file isn't among this run's changed files") from None
+        if diff is None:
+            raise ApiError(404, "not_found", f"no run {run_id} in session {session_id}")
+        return diff
+
+    @app.get(f"{API}/sessions/{{session_id}}/changes")
+    async def session_changes(session_id: str, _: str = Authed) -> Any:
+        """The files in the session folder's repository that differ from HEAD."""
+        from robin import gitdiff
+
+        return await asyncio.to_thread(gitdiff.worktree, _folder(session_id))
+
+    @app.get(f"{API}/sessions/{{session_id}}/changes/diff")
+    async def session_change_diff(session_id: str, path: str, _: str = Authed) -> Any:
+        """One file from the session's changes against HEAD, secrets redacted."""
+        from robin import gitdiff
+
+        cwd, rules = _folder(session_id), for_data_dir(store.data_dir)
+        try:
+            diff = await asyncio.to_thread(gitdiff.worktree_diff, rules, cwd, _diff_path(path))
+        except gitdiff.NotListed:
+            raise ApiError(404, "not_changed", "that file isn't among this session's changes") from None
+        return {"path": path, **diff}
 
     @app.post(f"{API}/sessions/launch", status_code=202)
     async def launch(body: LaunchBody, _: str = Authed) -> dict[str, Any]:
