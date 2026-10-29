@@ -67,7 +67,7 @@ export function PhoneShell(props: {
         <Bar
           title={
             <h1 className="brand" aria-label="Robin">
-              ROB<i>I</i>N
+              Rob<i>i</i>n
             </h1>
           }
         >

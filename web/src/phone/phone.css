@@ -135,21 +135,4 @@
 }
 .ph-empty { margin: 24px 16px; color: var(--muted); display: grid; gap: 8px; justify-items: start; }
 
-/* light: plain white cards with a soft shadow; colour only in the edge, the chip and the wire */
-:root[data-theme="light"] .ph-board .map-card {
-  background: #fff; border-color: var(--line); box-shadow: 0 1px 2px #2a1a5512, 0 6px 16px #2a1a550f;
-}
-:root[data-theme="light"] .ph-board .map-card h3 { color: var(--ink); }
-:root[data-theme="light"] .ph-board .map-card.question,
-:root[data-theme="light"] .ph-board .map-card.waiting_for_input { border-color: #f0b45a; box-shadow: 0 0 0 1px #f0b45a66, 0 8px 22px #e9a23b26; }
-:root[data-theme="light"] .ph-board .map-card.question .map-bar > i { background: #f0a23c; }
-:root[data-theme="light"] .ph-board .map-card.running { border-color: var(--line-hi); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent), 0 6px 18px #6a3dd11a; }
-:root[data-theme="light"] .ph-board .map-card.running h3 { color: var(--accent); }
-:root[data-theme="light"] .ph-board .map-card.skill { border-left: 3px solid var(--accent); }
-:root[data-theme="light"] .ph-board .map-chip.running { color: var(--accent); }
-:root[data-theme="light"] .ph-wires .q path { stroke: #e9a23b; }
-:root[data-theme="light"] .ph-wires .q path.head { fill: #e9a23b; }
-:root[data-theme="light"] .ph-fold { background: #fff; }
-:root[data-theme="light"] .ph-board .map-card.running::after { display: none; }
-:root[data-theme="light"] .ph-board .map-card.running .map-bar > i { background: var(--accent); }
 .ph-sheet button { min-height: 40px; }

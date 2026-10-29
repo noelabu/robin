@@ -265,7 +265,7 @@ button.map-pill.need { background: var(--m-warn-bg); border: 1px solid var(--m-w
 
 /* -- HUD: display type, tabs, grid, glowing cards ------------------------------------------------- */
 /* The wordmark: ROBIN in display type, its I in the accent. */
-.map-brand h1, .brand { font-family: var(--disp); font-weight: 700; font-size: 16px; letter-spacing: .04em; color: var(--m-ink); }
+.map-brand h1, .brand { font-family: var(--disp); font-weight: 700; font-size: 16px; letter-spacing: .04em; color: var(--m-ink); text-transform: uppercase; }
 .brand i { font-style: normal; color: var(--m-accent); }
 .map-brand small { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
 .map-top, .topbar { background: linear-gradient(180deg, var(--m-top-a), var(--m-bg)); }
@@ -427,33 +427,3 @@ button.map-pill.need { background: var(--m-warn-bg); border: 1px solid var(--m-w
 .tp-agents .run { color: var(--m-accent); }
 .tp-agents .bad { color: var(--m-bad); }
 .tp-pad { padding: 8px 10px; }
-
-/* -- light: soft shadows and rings in place of the neon glows ---------------------------------------- */
-:root[data-theme="light"] .view-tabs button[aria-selected="true"]::after,
-:root[data-theme="light"] .map-pill.live .dot,
-:root[data-theme="light"] .map-card.running .map-bar > i,
-:root[data-theme="light"] .map-folder .name::before,
-:root[data-theme="light"] .session-group > span:first-child::before { box-shadow: none; }
-:root[data-theme="light"] .map-chip.running,
-:root[data-theme="light"] .map-chip.permission,
-:root[data-theme="light"] .map-chip.question,
-:root[data-theme="light"] .map-ping { text-shadow: none; }
-:root[data-theme="light"] .map-wires path.live,
-:root[data-theme="light"] .map-packet { filter: none; }
-:root[data-theme="light"] .map-card.running {
-  box-shadow: 0 0 0 1px var(--hue), 0 4px 14px color-mix(in srgb, var(--hue) 18%, transparent);
-}
-:root[data-theme="light"] .map-card.waiting_for_input { box-shadow: 0 4px 14px color-mix(in srgb, var(--m-wait) 15%, transparent); }
-:root[data-theme="light"] .map-card.failed { box-shadow: 0 4px 14px color-mix(in srgb, var(--m-bad) 15%, transparent); }
-:root[data-theme="light"] .map-card.open {
-  box-shadow: 0 0 0 1px var(--hue), 0 6px 18px color-mix(in srgb, var(--hue) 20%, transparent);
-}
-:root[data-theme="light"] .map-frame { border-color: color-mix(in srgb, var(--hue) 55%, transparent); }
-:root[data-theme="light"] .map-card.permission {
-  box-shadow: 0 0 0 1px var(--m-bad), 0 4px 16px color-mix(in srgb, var(--m-bad) 22%, transparent);
-  animation-name: map-alert-light;
-}
-@keyframes map-alert-light { 50% { box-shadow: 0 0 0 1px var(--m-bad), 0 2px 8px color-mix(in srgb, var(--m-bad) 10%, transparent); } }
-:root[data-theme="light"] .map-card.question {
-  box-shadow: 0 0 0 1px var(--m-amber), 0 4px 16px color-mix(in srgb, var(--m-amber) 22%, transparent);
-}
